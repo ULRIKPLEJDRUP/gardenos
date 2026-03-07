@@ -283,6 +283,10 @@ export type PlantSpecies = {
   /** Short description / growing tips */
   description?: string;
 
+  // ── Placement logic ──
+  /** Override auto-detected placements. If empty/undefined, getDefaultPlacements() is used. */
+  allowedPlacements?: PlacementType[];
+
   // ── Metadata ──
   /** Data source (manual, import, ai) */
   source?: "manual" | "import" | "ai" | "builtin";
@@ -293,6 +297,104 @@ export type PlantSpecies = {
 // ---------------------------------------------------------------------------
 // Plant Instance – what's actually planted in a bed/row on the map
 // ---------------------------------------------------------------------------
+
+/** Where a plant can be placed on the map */
+export type PlacementType = "element" | "row" | "seedbed" | "container";
+
+export const PLACEMENT_LABELS: Record<PlacementType, string> = {
+  element: "Element (enkelt plante)",
+  row: "Række",
+  seedbed: "Såbed",
+  container: "Container / krukke",
+};
+
+export const PLACEMENT_ICONS: Record<PlacementType, string> = {
+  element: "📍",
+  row: "📏",
+  seedbed: "🌱",
+  container: "🪴",
+};
+
+/**
+ * Smart default placements based on plant characteristics.
+ * Rules:
+ * - Trees → element only (single points on map)
+ * - Bushes → element only
+ * - Perennial vegetables (artiskok, rabarber) → element, container
+ * - Root vegetables → row, seedbed (classic row or broadcast sowing)
+ * - Legumes → row, seedbed
+ * - Leafy greens → row, seedbed, container
+ * - Brassica (kål) → row, element (large plants)
+ * - Nightshades (tomat, peber) → row, element, container (often staked individually)
+ * - Cucurbits (squash, agurk) → element, row (need space)
+ * - Alliums (løg, hvidløg) → row, seedbed
+ * - Herbs → seedbed, row, container, element
+ * - Flowers → element, row, seedbed
+ * - Cover crops → seedbed, row
+ * - Fruit → element, container
+ */
+export function getDefaultPlacements(species: PlantSpecies): PlacementType[] {
+  // If the species has explicit overrides, use those
+  if (species.allowedPlacements && species.allowedPlacements.length > 0) {
+    return species.allowedPlacements;
+  }
+
+  const { category, subCategory, lifecycle } = species;
+
+  // Trees are always individual elements
+  if (category === "tree") return ["element"];
+  // Bushes are always individual elements
+  if (category === "bush") return ["element"];
+
+  // Fruit (berry bushes, fruit trees) – mainly element
+  if (category === "fruit") return ["element", "container"];
+
+  // Cover crops are broadcast-sown
+  if (category === "cover-crop" || category === "soil-amendment") return ["seedbed", "row"];
+
+  // Herbs – flexible
+  if (category === "herb") return ["seedbed", "row", "container", "element"];
+
+  // Flowers – flexible
+  if (category === "flower") return ["element", "row", "seedbed", "container"];
+
+  // Vegetables: sub-category matters
+  if (category === "vegetable") {
+    // Perennial vegetables (artiskok, rabarber) are big, individual
+    if (lifecycle === "perennial") return ["element", "container"];
+
+    switch (subCategory) {
+      case "root":     return ["row", "seedbed"]; // gulerødder, rødbeder, radiser
+      case "legume":   return ["row", "seedbed"]; // ærter, bønner
+      case "leafy":    return ["row", "seedbed", "container"]; // salat, spinat
+      case "allium":   return ["row", "seedbed"]; // løg, hvidløg, porrer
+      case "brassica": return ["row", "element"]; // kål – store planter i rækker
+      case "nightshade": return ["row", "element", "container"]; // tomat, peber
+      case "cucurbit": return ["element", "row"]; // squash, græskar, agurk
+      default:         return ["row", "seedbed", "element", "container"];
+    }
+  }
+
+  // Fallback – allow everything
+  return ["element", "row", "seedbed", "container"];
+}
+
+/** Check if a plant species can be placed in a given feature category */
+export function canPlaceInCategory(
+  species: PlantSpecies,
+  featureCategory: string,
+): boolean {
+  // Areas can hold anything (they're containers of beds)
+  if (featureCategory === "area") return true;
+  const allowed = getDefaultPlacements(species);
+  return allowed.includes(featureCategory as PlacementType);
+}
+
+/** Get the recommended (primary) placement for a species */
+export function getPrimaryPlacement(species: PlantSpecies): PlacementType {
+  return getDefaultPlacements(species)[0];
+}
+
 export type PlantInstance = {
   /** Unique instance id */
   id: string;
