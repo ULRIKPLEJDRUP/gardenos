@@ -6,6 +6,28 @@ import "leaflet-draw";
 import "leaflet-path-drag";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { MapContainer, TileLayer, WMSTileLayer, useMap, useMapEvents } from "react-leaflet";
+import {
+  getAllPlants,
+  getPlantById,
+  getVariety,
+  getVarietiesForSpecies,
+  getInstancesForFeature,
+  addPlantInstance,
+  removePlantInstance,
+  checkCompanions,
+  checkRotation,
+  formatMonthRange,
+  type CompanionCheck,
+} from "../lib/plantStore";
+import type { PlantSpecies, PlantInstance, PlantCategory, PlantVariety } from "../lib/plantTypes";
+import {
+  PLANT_CATEGORY_LABELS,
+  LIGHT_LABELS,
+  WATER_LABELS,
+  LIFECYCLE_LABELS,
+  PLANT_FAMILY_LABELS,
+  DIFFICULTY_LABELS,
+} from "../lib/plantTypes";
 
 // ---------------------------------------------------------------------------
 // NOTE: We no longer use Leaflet.draw's L.EditToolbar.Edit for editing.
@@ -918,7 +940,16 @@ export function GardenMapClient() {
   const [newKindText, setNewKindText] = useState("");
   const [newKindError, setNewKindError] = useState<string | null>(null);
   const [undoStack, setUndoStack] = useState<UndoSnapshot[]>([]);
-  const [sidebarTab, setSidebarTab] = useState<"create" | "content" | "groups" | "view">("create");
+  const [sidebarTab, setSidebarTab] = useState<"create" | "content" | "groups" | "plants" | "view">("create");
+
+  // ── Plant knowledge system state ──
+  const [plantSearch, setPlantSearch] = useState("");
+  const [plantCategoryFilter, setPlantCategoryFilter] = useState<PlantCategory | "all">("all");
+  const [expandedPlantId, setExpandedPlantId] = useState<string | null>(null);
+  const [plantInstancesVersion, setPlantInstancesVersion] = useState(0);
+  const [bedPlantSearch, setBedPlantSearch] = useState("");
+  const [showBedPlantPicker, setShowBedPlantPicker] = useState(false);
+  const [bedPickerSpeciesId, setBedPickerSpeciesId] = useState<string | null>(null);
   const [isEditing, setIsEditing] = useState(false);
   const [multiSelectedIds, setMultiSelectedIds] = useState<Set<string>>(new Set());
   const multiSelectedIdsRef = useRef<Set<string>>(new Set());
@@ -2526,6 +2557,61 @@ export function GardenMapClient() {
   const selectedCategory = selected?.feature.properties?.category;
   const selectedGroupId = selected?.feature.properties?.groupId;
 
+  // ── Plant computed values ──
+  const allPlants = useMemo(() => getAllPlants(), []);
+
+  const filteredPlants = useMemo(() => {
+    let list = allPlants;
+    if (plantCategoryFilter !== "all") {
+      list = list.filter((p) => p.category === plantCategoryFilter);
+    }
+    if (plantSearch.trim()) {
+      const q = plantSearch.trim().toLowerCase();
+      list = list.filter(
+        (p) =>
+          p.name.toLowerCase().includes(q) ||
+          (p.latinName?.toLowerCase().includes(q) ?? false) ||
+          p.id.includes(q),
+      );
+    }
+    return list;
+  }, [allPlants, plantCategoryFilter, plantSearch]);
+
+  const selectedFeatureId = selected?.feature.properties?.gardenosId ?? "";
+
+  const selectedFeatureInstances = useMemo(() => {
+    if (!selected) return [] as (PlantInstance & { species?: PlantSpecies })[];
+    const _v = plantInstancesVersion; // reactivity trigger
+    return getInstancesForFeature(selectedFeatureId).map((inst) => ({
+      ...inst,
+      species: getPlantById(inst.speciesId),
+    }));
+  }, [selected, selectedFeatureId, plantInstancesVersion]);
+
+  const selectedCompanionChecks = useMemo(() => {
+    if (!selected) return [] as CompanionCheck[];
+    const _v = plantInstancesVersion;
+    return checkCompanions(selectedFeatureId);
+  }, [selected, selectedFeatureId, plantInstancesVersion]);
+
+  const selectedRotationWarnings = useMemo(() => {
+    if (!selected) return [] as { plant: PlantSpecies; lastSeason: number; minYears: number }[];
+    const _v = plantInstancesVersion;
+    return checkRotation(selectedFeatureId, new Date().getFullYear());
+  }, [selected, selectedFeatureId, plantInstancesVersion]);
+
+  const bedPlantResults = useMemo(() => {
+    if (!bedPlantSearch.trim()) return allPlants.slice(0, 20);
+    const q = bedPlantSearch.trim().toLowerCase();
+    return allPlants
+      .filter(
+        (p) =>
+          p.name.toLowerCase().includes(q) ||
+          (p.latinName?.toLowerCase().includes(q) ?? false),
+      )
+      .slice(0, 20);
+  }, [allPlants, bedPlantSearch]);
+
   const groupMemberCount = useMemo(() => {
     if (!selectedGroupId || !layoutForContainment?.features?.length) return 0;
     return layoutForContainment.features.filter(
@@ -2719,66 +2805,84 @@ export function GardenMapClient() {
   }, [selected, selectedCategory, selectedIsPolygon]);
 
   return (
-    <div className="grid h-[calc(100vh-0px)] w-full grid-cols-1 grid-rows-[auto_1fr] md:grid-cols-[1fr_320px]">
-      <div className="col-span-1 row-start-1 flex items-center justify-between gap-2 border-b border-foreground/10 bg-background p-2 md:col-span-2">
-        <div className="flex items-center gap-2">
-          <button
-            type="button"
-            className="rounded-md border border-foreground/20 bg-background px-3 py-2 text-sm hover:bg-foreground/5"
-            onClick={enterSelectMode}
-            title="Afbryd tegning/redigering (Esc)"
-          >
-            Markér
-          </button>
-          <button
-            type="button"
-            className="rounded-md border border-foreground/20 bg-background px-3 py-2 text-sm hover:bg-foreground/5 disabled:opacity-50"
-            onClick={toggleEditMode}
-            disabled={!selected}
-            title={
-              isEditing
-                ? "Stop redigering og gem"
-                : "Redigér form og flyt (vælg først en figur på kortet)"
-            }
-          >
-            {isEditing ? "Færdig" : "Redigér/flyt"}
-          </button>
-          <button
-            type="button"
-            className="rounded-md border border-foreground/20 bg-background px-3 py-2 text-sm hover:bg-foreground/5 disabled:opacity-50"
-            onClick={undo}
-            disabled={undoStack.length === 0}
-            title="Fortryd (Cmd/Ctrl+Z)"
-          >
-            Fortryd
-          </button>
-          {multiSelectedIds.size >= 2 ? (
+    <div className="grid h-[calc(100vh-0px)] w-full grid-cols-1 grid-rows-[auto_1fr] md:grid-cols-[1fr_340px]">
+      <div className="col-span-1 row-start-1 flex items-center justify-between gap-2 border-b border-border bg-toolbar-bg px-3 py-2 md:col-span-2 shadow-sm">
+        <div className="flex items-center gap-3">
+          <div className="flex items-center gap-1.5 mr-1">
+            <span className="text-lg leading-none">🌿</span>
+            <span className="text-sm font-bold tracking-tight text-accent">GardenOS</span>
+          </div>
+          <div className="h-5 w-px bg-border" />
+          <div className="flex items-center gap-1">
             <button
               type="button"
-              className="rounded-md border border-foreground/20 bg-background px-3 py-2 text-sm font-medium hover:bg-foreground/5"
-              onClick={groupMultiSelected}
-              title="Bind de valgte elementer sammen i en gruppe"
+              className={`rounded-md px-2.5 py-1.5 text-xs font-medium transition-colors ${
+                drawMode === "select" && !isEditing
+                  ? "bg-accent text-white shadow-sm"
+                  : "text-foreground/70 hover:bg-foreground/5"
+              }`}
+              onClick={enterSelectMode}
+              title="Afbryd tegning/redigering (Esc)"
             >
-              Gruppér ({multiSelectedIds.size})
+              ◎ Markér
             </button>
-          ) : null}
-          {selectedGroupId ? (
             <button
               type="button"
-              className="rounded-md border border-foreground/20 bg-background px-3 py-2 text-sm hover:bg-foreground/5"
-              onClick={ungroupSelected}
-              title="Opløs gruppen for det valgte element"
+              className={`rounded-md px-2.5 py-1.5 text-xs font-medium transition-colors disabled:opacity-40 ${
+                isEditing
+                  ? "bg-amber-500 text-white shadow-sm"
+                  : "text-foreground/70 hover:bg-foreground/5"
+              }`}
+              onClick={toggleEditMode}
+              disabled={!selected}
+              title={
+                isEditing
+                  ? "Stop redigering og gem"
+                  : "Redigér form og flyt (vælg først en figur på kortet)"
+              }
             >
-              Opløs gruppe
+              ✏️ {isEditing ? "Færdig" : "Redigér"}
             </button>
-          ) : null}
+          </div>
+          <div className="h-5 w-px bg-border" />
+          <div className="flex items-center gap-1">
+            <button
+              type="button"
+              className="rounded-md px-2.5 py-1.5 text-xs text-foreground/60 hover:bg-foreground/5 transition-colors disabled:opacity-40"
+              onClick={undo}
+              disabled={undoStack.length === 0}
+              title="Fortryd (Cmd/Ctrl+Z)"
+            >
+              ↩ Fortryd
+            </button>
+            {multiSelectedIds.size >= 2 ? (
+              <button
+                type="button"
+                className="rounded-md bg-accent/10 px-2.5 py-1.5 text-xs font-medium text-accent hover:bg-accent/20 transition-colors"
+                onClick={groupMultiSelected}
+                title="Bind de valgte elementer sammen i en gruppe"
+              >
+                ⊞ Gruppér ({multiSelectedIds.size})
+              </button>
+            ) : null}
+            {selectedGroupId ? (
+              <button
+                type="button"
+                className="rounded-md px-2.5 py-1.5 text-xs text-foreground/60 hover:bg-foreground/5 transition-colors"
+                onClick={ungroupSelected}
+                title="Opløs gruppen for det valgte element"
+              >
+                ⊟ Opløs
+              </button>
+            ) : null}
+          </div>
         </div>
-        <div className="text-xs text-foreground/60">
+        <div className="text-[11px] text-muted font-medium">
           {multiSelectedIds.size > 0
             ? `${multiSelectedIds.size} valgt — Shift+klik for flere`
             : drawMode === "select"
-            ? "Markér"
-            : "Tegner…"}
+            ? "◎ Markér"
+            : "✎ Tegner…"}
         </div>
       </div>
       <style>{`
@@ -2982,71 +3086,83 @@ export function GardenMapClient() {
         ) : null}
       </div>
 
-      <aside className="row-start-2 border-t border-foreground/10 bg-background p-4 md:border-l md:border-t-0">
-        <h2 className="text-base font-semibold">Detaljer</h2>
-
-        <div className="mt-3 grid grid-cols-4 gap-2">
-          <button
-            type="button"
-            className={`rounded-md border px-3 py-2 text-sm ${
-              sidebarTab === "create"
-                ? "border-foreground/30 bg-foreground/5"
-                : "border-foreground/20 bg-background hover:bg-foreground/5"
-            }`}
-            onClick={() => { setSidebarTab("create"); setHighlightedGroupId(null); }}
-          >
-            Opret
-          </button>
-          <button
-            type="button"
-            className={`rounded-md border px-3 py-2 text-sm ${
-              sidebarTab === "content"
-                ? "border-foreground/30 bg-foreground/5"
-                : "border-foreground/20 bg-background hover:bg-foreground/5"
-            } ${selected ? "" : "opacity-50"}`}
-            onClick={() => { setSidebarTab("content"); setHighlightedGroupId(null); }}
-            disabled={!selected}
-            title={selected ? "" : "Vælg noget på kortet for at se indhold"}
-          >
-            Indhold
-          </button>
-          <button
-            type="button"
-            className={`rounded-md border px-3 py-2 text-sm ${
-              sidebarTab === "groups"
-                ? "border-foreground/30 bg-foreground/5"
-                : "border-foreground/20 bg-background hover:bg-foreground/5"
-            }`}
-            onClick={() => setSidebarTab("groups")}
-          >
-            Grupper{allGroups.length > 0 ? ` (${allGroups.length})` : ""}
-          </button>
-          <button
-            type="button"
-            className={`rounded-md border px-3 py-2 text-sm ${
-              sidebarTab === "view"
-                ? "border-foreground/30 bg-foreground/5"
-                : "border-foreground/20 bg-background hover:bg-foreground/5"
-            }`}
-            onClick={() => { setSidebarTab("view"); setHighlightedGroupId(null); }}
-          >
-            Visning
-          </button>
+      <aside className="row-start-2 flex flex-col border-t border-border bg-sidebar-bg md:border-l md:border-t-0 overflow-hidden">
+        <div className="px-4 pt-3 pb-1">
+          <div className="flex gap-1 rounded-lg bg-background p-1 border border-border-light shadow-sm">
+            <button
+              type="button"
+              className={`flex-1 rounded-md px-1 py-1.5 text-[11px] font-medium transition-all ${
+                sidebarTab === "create"
+                  ? "bg-accent text-white shadow-sm"
+                  : "text-foreground/60 hover:bg-foreground/5 hover:text-foreground/80"
+              }`}
+              onClick={() => { setSidebarTab("create"); setHighlightedGroupId(null); }}
+            >
+              ＋ Opret
+            </button>
+            <button
+              type="button"
+              className={`flex-1 rounded-md px-1 py-1.5 text-[11px] font-medium transition-all ${
+                sidebarTab === "content"
+                  ? "bg-accent text-white shadow-sm"
+                  : "text-foreground/60 hover:bg-foreground/5 hover:text-foreground/80"
+              } ${selected ? "" : "opacity-40"}`}
+              onClick={() => { setSidebarTab("content"); setHighlightedGroupId(null); }}
+              disabled={!selected}
+              title={selected ? "" : "Vælg noget på kortet for at se indhold"}
+            >
+              ◉ Indhold
+            </button>
+            <button
+              type="button"
+              className={`flex-1 rounded-md px-1 py-1.5 text-[11px] font-medium transition-all ${
+                sidebarTab === "groups"
+                  ? "bg-accent text-white shadow-sm"
+                  : "text-foreground/60 hover:bg-foreground/5 hover:text-foreground/80"
+              }`}
+              onClick={() => setSidebarTab("groups")}
+            >
+              ⊞ Grupper{allGroups.length > 0 ? ` ${allGroups.length}` : ""}
+            </button>
+            <button
+              type="button"
+              className={`flex-1 rounded-md px-1 py-1.5 text-[11px] font-medium transition-all ${
+                sidebarTab === "plants"
+                  ? "bg-accent text-white shadow-sm"
+                  : "text-foreground/60 hover:bg-foreground/5 hover:text-foreground/80"
+              }`}
+              onClick={() => { setSidebarTab("plants"); setHighlightedGroupId(null); }}
+            >
+              🌱 Planter
+            </button>
+            <button
+              type="button"
+              className={`flex-1 rounded-md px-1 py-1.5 text-[11px] font-medium transition-all ${
+                sidebarTab === "view"
+                  ? "bg-accent text-white shadow-sm"
+                  : "text-foreground/60 hover:bg-foreground/5 hover:text-foreground/80"
+              }`}
+              onClick={() => { setSidebarTab("view"); setHighlightedGroupId(null); }}
+            >
+              👁 Visning
+            </button>
+          </div>
         </div>
+        <div className="flex-1 overflow-y-auto sidebar-scroll px-4 pb-4">
 
         {sidebarTab === "create" ? (
           <div className="mt-3 grid grid-cols-2 gap-2">
             <div className="col-span-2">
-              <label className="block text-xs font-medium text-foreground/70">Kategori</label>
-              <div className="mt-1 grid grid-cols-3 gap-1">
+              <label className="block text-[11px] font-semibold text-foreground/60 uppercase tracking-wide">Kategori</label>
+              <div className="mt-1.5 grid grid-cols-3 gap-1">
                 {(["element", "row", "seedbed", "container", "area", "condition"] as const).map((cat) => (
                   <button
                     key={cat}
                     type="button"
-                    className={`rounded-md border px-2 py-1.5 text-xs ${
+                    className={`rounded-lg border px-2 py-2 text-xs transition-all ${
                       createPalette === cat
-                        ? "border-foreground/40 bg-foreground/10 font-medium"
-                        : "border-foreground/20 bg-background hover:bg-foreground/5"
+                        ? "border-accent/40 bg-accent-light text-accent-dark font-semibold shadow-sm"
+                        : "border-border bg-background hover:bg-foreground/5 text-foreground/70"
                     }`}
                     onClick={() => {
                       setCreatePalette(cat);
@@ -3064,10 +3180,10 @@ export function GardenMapClient() {
             </div>
 
             <div className="col-span-2">
-              <label className="block text-xs font-medium text-foreground/70">Type</label>
+              <label className="block text-[11px] font-semibold text-foreground/60 uppercase tracking-wide">Type</label>
               <div className="mt-1 grid grid-cols-[1fr_auto] gap-2">
                 <select
-                  className="w-full rounded-md border border-foreground/20 bg-background px-3 py-2 text-sm"
+                  className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm shadow-sm"
                   value={createKind}
                   onChange={(e) => {
                     const next = e.target.value as GardenFeatureKind;
@@ -3105,10 +3221,10 @@ export function GardenMapClient() {
             </div>
 
             <div className="col-span-2">
-              <label className="block text-xs font-medium text-foreground/70">Ny type</label>
+              <label className="block text-[11px] font-semibold text-foreground/60 uppercase tracking-wide">Ny type</label>
               <div className="mt-1 grid grid-cols-[1fr_auto] gap-2">
                 <input
-                  className="w-full rounded-md border border-foreground/20 bg-background px-3 py-2 text-sm"
+                  className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm shadow-sm"
                   value={newKindText}
                   onChange={(e) => setNewKindText(e.target.value)}
                   placeholder={
@@ -3120,7 +3236,7 @@ export function GardenMapClient() {
                 />
                 <button
                   type="button"
-                  className="rounded-md border border-foreground/20 bg-background px-3 py-2 text-sm hover:bg-foreground/5"
+                  className="rounded-lg border border-border bg-background px-3 py-2 text-sm font-medium text-foreground/70 hover:bg-foreground/5 transition-colors shadow-sm"
                   onClick={addCustomKind}
                 >
                   Tilføj
@@ -3131,37 +3247,37 @@ export function GardenMapClient() {
 
             <button
               type="button"
-              className="col-span-2 rounded-md border border-foreground/20 bg-background px-3 py-2 text-sm hover:bg-foreground/5"
+              className="col-span-2 rounded-lg bg-accent px-3 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-accent-dark transition-colors"
               onClick={beginDrawSelectedType}
             >
-              {createPalette === "element" ? "Placér" : "Tegn område"}
+              {createPalette === "element" ? "✚ Placér" : "✎ Tegn område"}
             </button>
             <button
               type="button"
-              className="col-span-2 rounded-md border border-foreground/20 bg-background px-3 py-2 text-sm hover:bg-foreground/5 disabled:opacity-50"
+              className="col-span-2 rounded-lg border border-border bg-background px-3 py-2 text-sm text-foreground/60 hover:bg-foreground/5 transition-colors disabled:opacity-40"
               onClick={enterSelectMode}
               disabled={drawMode === "select"}
               title="Tryk også Esc"
             >
-              Markér/pege
+              ◎ Markér/pege
             </button>
           </div>
         ) : null}
 
         {sidebarTab === "content" ? (
           !selected ? (
-            <p className="mt-3 text-sm text-foreground/70">
-              Vælg noget på kortet (område/punkt/linje) for at se og redigere indhold.
+            <p className="mt-4 text-sm text-muted text-center">
+              Vælg noget på kortet for at se og redigere indhold.
             </p>
           ) : (
             <div className="mt-3 space-y-3">
             <div>
-              <p className="mb-1 text-[10px] font-medium uppercase tracking-wide text-foreground/50">
+              <p className="mb-1.5 text-[10px] font-semibold uppercase tracking-wide text-accent">
                 {CATEGORY_LABELS[selectedCategory as GardenFeatureCategory] ?? "—"}
               </p>
-              <label className="block text-xs font-medium text-foreground/70">Type</label>
+              <label className="block text-[11px] font-semibold text-foreground/60 uppercase tracking-wide">Type</label>
               <select
-                className="mt-1 w-full rounded-md border border-foreground/20 bg-background px-3 py-2 text-sm"
+                className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm shadow-sm focus:outline-none focus:ring-2 focus:ring-accent/30 focus:border-accent/50"
                 value={selectedKind ?? defaultKindForGeometry(selected.feature.geometry)}
                 onChange={(e) => {
                   const nextKind = e.target.value as GardenFeatureKind;
@@ -3177,9 +3293,9 @@ export function GardenMapClient() {
             </div>
 
             <div>
-              <label className="block text-xs font-medium text-foreground/70">Navn</label>
+              <label className="block text-[11px] font-semibold text-foreground/60 uppercase tracking-wide">Navn</label>
               <input
-                className="mt-1 w-full rounded-md border border-foreground/20 bg-background px-3 py-2 text-sm"
+                className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm shadow-sm focus:outline-none focus:ring-2 focus:ring-accent/30 focus:border-accent/50"
                 value={selected.feature.properties?.name ?? ""}
                 onChange={(e) => updateSelectedProperty({ name: e.target.value })}
                 placeholder="Fx Køkkenbed 1 / Æbletræ"
@@ -3188,8 +3304,8 @@ export function GardenMapClient() {
 
             {selectedContainerAreaText ? (
               <div>
-                <label className="block text-xs font-medium text-foreground/70">Areal</label>
-                <div className="mt-1 w-full rounded-md border border-foreground/20 bg-background px-3 py-2 text-sm">
+                <label className="block text-[11px] font-semibold text-foreground/60 uppercase tracking-wide">Areal</label>
+                <div className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm shadow-sm">
                   {selectedContainerAreaText}
                 </div>
               </div>
@@ -3197,8 +3313,8 @@ export function GardenMapClient() {
 
             {selectedIsPolygon && (selectedCategory === "container" || selectedCategory === "area") ? (
               <div>
-                <label className="block text-xs font-medium text-foreground/70">Indeholder</label>
-                <div className="mt-1 w-full rounded-md border border-foreground/20 bg-background px-3 py-2 text-sm">
+                <label className="block text-[11px] font-semibold text-foreground/60 uppercase tracking-wide">Indeholder</label>
+                <div className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm shadow-sm">
                   {selectedContainment && selectedContainment.total > 0
                     ? `${selectedContainment.elements} elem., ${selectedContainment.containers} cont., ${selectedContainment.areas} omr., ${selectedContainment.infra} infra`
                     : "Ingen (endnu)"}
@@ -3242,27 +3358,27 @@ export function GardenMapClient() {
             {selectedCategory === "element" && !selectedIsInfra ? (
               <>
                 <div>
-                  <label className="block text-xs font-medium text-foreground/70">Hvad plantes / sort</label>
+                  <label className="block text-[11px] font-semibold text-foreground/60 uppercase tracking-wide">Hvad plantes / sort</label>
                   <input
-                    className="mt-1 w-full rounded-md border border-foreground/20 bg-background px-3 py-2 text-sm"
+                    className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm shadow-sm"
                     value={selected.feature.properties?.planted ?? ""}
                     onChange={(e) => updateSelectedProperty({ planted: e.target.value })}
                     placeholder="Fx kartofler / gulerødder / sort"
                   />
                 </div>
                 <div>
-                  <label className="block text-xs font-medium text-foreground/70">Plantningsdato</label>
+                  <label className="block text-[11px] font-semibold text-foreground/60 uppercase tracking-wide">Plantningsdato</label>
                   <input
                     type="date"
-                    className="mt-1 w-full rounded-md border border-foreground/20 bg-background px-3 py-2 text-sm"
+                    className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm shadow-sm"
                     value={selected.feature.properties?.plantedAt ?? ""}
                     onChange={(e) => updateSelectedProperty({ plantedAt: e.target.value })}
                   />
                 </div>
                 <div>
-                  <label className="block text-xs font-medium text-foreground/70">Solbehov</label>
+                  <label className="block text-[11px] font-semibold text-foreground/60 uppercase tracking-wide">Solbehov</label>
                   <select
-                    className="mt-1 w-full rounded-md border border-foreground/20 bg-background px-3 py-2 text-sm"
+                    className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm shadow-sm"
                     value={selected.feature.properties?.sunNeed ?? ""}
                     onChange={(e) => updateSelectedProperty({ sunNeed: e.target.value })}
                   >
@@ -3273,9 +3389,9 @@ export function GardenMapClient() {
                   </select>
                 </div>
                 <div>
-                  <label className="block text-xs font-medium text-foreground/70">Vandbehov</label>
+                  <label className="block text-[11px] font-semibold text-foreground/60 uppercase tracking-wide">Vandbehov</label>
                   <select
-                    className="mt-1 w-full rounded-md border border-foreground/20 bg-background px-3 py-2 text-sm"
+                    className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm shadow-sm"
                     value={selected.feature.properties?.waterNeed ?? ""}
                     onChange={(e) => updateSelectedProperty({ waterNeed: e.target.value })}
                   >
@@ -3292,18 +3408,18 @@ export function GardenMapClient() {
             {selectedCategory === "container" ? (
               <>
                 <div>
-                  <label className="block text-xs font-medium text-foreground/70">Jordtype</label>
+                  <label className="block text-[11px] font-semibold text-foreground/60 uppercase tracking-wide">Jordtype</label>
                   <input
-                    className="mt-1 w-full rounded-md border border-foreground/20 bg-background px-3 py-2 text-sm"
+                    className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm shadow-sm"
                     value={selected.feature.properties?.soilType ?? ""}
                     onChange={(e) => updateSelectedProperty({ soilType: e.target.value })}
                     placeholder="Fx muld, sandjord, lerjord"
                   />
                 </div>
                 <div>
-                  <label className="block text-xs font-medium text-foreground/70">Gødning</label>
+                  <label className="block text-[11px] font-semibold text-foreground/60 uppercase tracking-wide">Gødning</label>
                   <input
-                    className="mt-1 w-full rounded-md border border-foreground/20 bg-background px-3 py-2 text-sm"
+                    className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm shadow-sm"
                     value={selected.feature.properties?.fertilizer ?? ""}
                     onChange={(e) => updateSelectedProperty({ fertilizer: e.target.value })}
                     placeholder="Fx kompost april, NPK maj"
@@ -3316,18 +3432,18 @@ export function GardenMapClient() {
             {selectedCategory === "area" ? (
               <>
                 <div>
-                  <label className="block text-xs font-medium text-foreground/70">Læforhold</label>
+                  <label className="block text-[11px] font-semibold text-foreground/60 uppercase tracking-wide">Læforhold</label>
                   <input
-                    className="mt-1 w-full rounded-md border border-foreground/20 bg-background px-3 py-2 text-sm"
+                    className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm shadow-sm"
                     value={selected.feature.properties?.shelter ?? ""}
                     onChange={(e) => updateSelectedProperty({ shelter: e.target.value })}
                     placeholder="Fx læ fra vest, åben"
                   />
                 </div>
                 <div>
-                  <label className="block text-xs font-medium text-foreground/70">Opvarmning</label>
+                  <label className="block text-[11px] font-semibold text-foreground/60 uppercase tracking-wide">Opvarmning</label>
                   <input
-                    className="mt-1 w-full rounded-md border border-foreground/20 bg-background px-3 py-2 text-sm"
+                    className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm shadow-sm"
                     value={selected.feature.properties?.heating ?? ""}
                     onChange={(e) => updateSelectedProperty({ heating: e.target.value })}
                     placeholder="Fx uopvarmet / gulvvarme"
@@ -3340,18 +3456,18 @@ export function GardenMapClient() {
             {selectedCategory === "condition" ? (
               <>
                 <div>
-                  <label className="block text-xs font-medium text-foreground/70">Beskrivelse</label>
+                  <label className="block text-[11px] font-semibold text-foreground/60 uppercase tracking-wide">Beskrivelse</label>
                   <input
-                    className="mt-1 w-full rounded-md border border-foreground/20 bg-background px-3 py-2 text-sm"
+                    className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm shadow-sm"
                     value={selected.feature.properties?.conditionDesc ?? ""}
                     onChange={(e) => updateSelectedProperty({ conditionDesc: e.target.value })}
                     placeholder="Fx morgen-skygge fra hus"
                   />
                 </div>
                 <div>
-                  <label className="block text-xs font-medium text-foreground/70">Intensitet</label>
+                  <label className="block text-[11px] font-semibold text-foreground/60 uppercase tracking-wide">Intensitet</label>
                   <select
-                    className="mt-1 w-full rounded-md border border-foreground/20 bg-background px-3 py-2 text-sm"
+                    className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm shadow-sm"
                     value={selected.feature.properties?.intensity ?? ""}
                     onChange={(e) => updateSelectedProperty({ intensity: e.target.value })}
                   >
@@ -3362,6 +3478,238 @@ export function GardenMapClient() {
                   </select>
                 </div>
               </>
+            ) : null}
+
+            {/* ══════════════════════════════════════════════════════════ */}
+            {/* ── PLANTNINGER I DETTE BED ── plant instances section ── */}
+            {/* ══════════════════════════════════════════════════════════ */}
+            {(selectedCategory === "seedbed" || selectedCategory === "container" || selectedCategory === "area" || selectedCategory === "row" || selectedCategory === "element") ? (
+              <div className="rounded-md border border-foreground/20 p-2.5 space-y-2">
+                <p className="text-[10px] font-medium uppercase tracking-wide text-foreground/50">
+                  🌱 Plantninger ({selectedFeatureInstances.length})
+                </p>
+
+                {/* Current plant instances */}
+                {selectedFeatureInstances.length > 0 ? (
+                  <div className="space-y-1">
+                    {selectedFeatureInstances.map((inst) => (
+                      <div
+                        key={inst.id}
+                        className="flex items-center gap-1.5 rounded border border-foreground/10 bg-foreground/[0.02] px-2 py-1"
+                      >
+                        <span className="text-sm leading-none">{inst.species?.icon ?? "🌱"}</span>
+                        <div className="flex-1 min-w-0">
+                          <p className="text-xs font-medium truncate">
+                            {inst.species?.name ?? inst.speciesId}
+                            {inst.varietyName ? <span className="text-foreground/50 font-normal"> ({inst.varietyName})</span> : null}
+                          </p>
+                          <p className="text-[10px] text-foreground/50">
+                            {inst.count ? `${inst.count} stk` : ""}
+                            {inst.plantedAt ? ` · plantet ${inst.plantedAt}` : ""}
+                            {inst.season ? ` · sæson ${inst.season}` : ""}
+                          </p>
+                        </div>
+                        <button
+                          type="button"
+                          className="shrink-0 rounded px-1 text-xs text-foreground/40 hover:bg-red-50 hover:text-red-500"
+                          onClick={() => {
+                            removePlantInstance(inst.id);
+                            setPlantInstancesVersion((v) => v + 1);
+                          }}
+                          title="Fjern plantning"
+                        >
+                          ✕
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="text-xs text-foreground/50 italic">Ingen planter tilføjet endnu.</p>
+                )}
+
+                {/* Companion planting checks */}
+                {selectedCompanionChecks.length > 0 ? (
+                  <div className="space-y-0.5">
+                    <p className="text-[10px] font-medium uppercase tracking-wide text-foreground/50">Samdyrkning</p>
+                    {selectedCompanionChecks.map((c, idx) => (
+                      <p
+                        key={idx}
+                        className={`text-xs ${
+                          c.type === "good"
+                            ? "text-green-700 dark:text-green-400"
+                            : "text-red-600 dark:text-red-400"
+                        }`}
+                      >
+                        {c.type === "good" ? "✓" : "⚠"} {c.plantA.name} + {c.plantB.name}
+                        {c.type === "good" ? " — gode naboer" : " — dårlig kombination"}
+                      </p>
+                    ))}
+                  </div>
+                ) : null}
+
+                {/* Rotation warnings */}
+                {selectedRotationWarnings.length > 0 ? (
+                  <div className="space-y-0.5">
+                    <p className="text-[10px] font-medium uppercase tracking-wide text-foreground/50">Sædskifte</p>
+                    {selectedRotationWarnings.map((w, idx) => (
+                      <p key={idx} className="text-xs text-amber-600 dark:text-amber-400">
+                        🔄 {w.plant.name} — samme familie dyrket i {w.lastSeason} (vent {w.minYears} år)
+                      </p>
+                    ))}
+                  </div>
+                ) : null}
+
+                {/* Add plant picker */}
+                {!showBedPlantPicker ? (
+                  <button
+                    type="button"
+                    className="w-full rounded-md border border-dashed border-foreground/20 px-2 py-1.5 text-xs text-foreground/60 hover:border-foreground/30 hover:bg-foreground/5"
+                    onClick={() => { setShowBedPlantPicker(true); setBedPlantSearch(""); setBedPickerSpeciesId(null); }}
+                  >
+                    + Tilføj plante
+                  </button>
+                ) : bedPickerSpeciesId ? (() => {
+                  const pickedSpecies = getPlantById(bedPickerSpeciesId);
+                  const varieties = getVarietiesForSpecies(bedPickerSpeciesId);
+                  return (
+                    <div className="space-y-1.5">
+                      <div className="flex items-center gap-1">
+                        <button
+                          type="button"
+                          className="rounded px-1.5 py-1 text-xs text-foreground/50 hover:bg-foreground/5"
+                          onClick={() => setBedPickerSpeciesId(null)}
+                        >
+                          ← Tilbage
+                        </button>
+                        <span className="text-xs font-medium truncate flex-1">
+                          {pickedSpecies?.icon ?? "🌱"} {pickedSpecies?.name} — vælg sort
+                        </span>
+                        <button
+                          type="button"
+                          className="rounded px-1.5 py-1 text-xs text-foreground/50 hover:bg-foreground/5"
+                          onClick={() => { setShowBedPlantPicker(false); setBedPickerSpeciesId(null); }}
+                        >
+                          ✕
+                        </button>
+                      </div>
+                      <div className="max-h-48 space-y-0.5 overflow-y-auto">
+                        {/* Add without specific variety */}
+                        <button
+                          type="button"
+                          className="flex w-full items-center gap-1.5 rounded border border-transparent px-2 py-1 text-left text-xs hover:border-foreground/15 hover:bg-foreground/5"
+                          onClick={() => {
+                            const featureId = selected?.feature.properties?.gardenosId;
+                            if (!featureId) return;
+                            addPlantInstance({
+                              id: crypto.randomUUID(),
+                              speciesId: bedPickerSpeciesId,
+                              featureId,
+                              count: 1,
+                              plantedAt: new Date().toISOString().slice(0, 10),
+                              season: new Date().getFullYear(),
+                            });
+                            setPlantInstancesVersion((v) => v + 1);
+                            setShowBedPlantPicker(false);
+                            setBedPickerSpeciesId(null);
+                          }}
+                        >
+                          <span className="text-sm leading-none">🌱</span>
+                          <span className="truncate">{pickedSpecies?.name} (uspecificeret sort)</span>
+                        </button>
+                        {/* Variety options */}
+                        {varieties.map((v) => (
+                          <button
+                            key={v.id}
+                            type="button"
+                            className="flex w-full items-center gap-1.5 rounded border border-transparent px-2 py-1 text-left text-xs hover:border-foreground/15 hover:bg-foreground/5"
+                            onClick={() => {
+                              const featureId = selected?.feature.properties?.gardenosId;
+                              if (!featureId) return;
+                              addPlantInstance({
+                                id: crypto.randomUUID(),
+                                speciesId: bedPickerSpeciesId,
+                                varietyId: v.id,
+                                varietyName: v.name,
+                                featureId,
+                                count: 1,
+                                plantedAt: new Date().toISOString().slice(0, 10),
+                                season: new Date().getFullYear(),
+                              });
+                              setPlantInstancesVersion((vv) => vv + 1);
+                              setShowBedPlantPicker(false);
+                              setBedPickerSpeciesId(null);
+                            }}
+                          >
+                            <span className="text-sm leading-none">🏷️</span>
+                            <span className="truncate">{v.name}</span>
+                            {v.taste ? <span className="ml-auto text-[10px] text-foreground/40">{v.taste}</span> : null}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  );
+                })() : (
+                  <div className="space-y-1.5">
+                    <div className="flex items-center gap-1">
+                      <input
+                        className="flex-1 rounded-md border border-foreground/20 bg-background px-2 py-1.5 text-xs"
+                        placeholder="Søg plante…"
+                        value={bedPlantSearch}
+                        onChange={(e) => setBedPlantSearch(e.target.value)}
+                        autoFocus
+                      />
+                      <button
+                        type="button"
+                        className="rounded px-1.5 py-1.5 text-xs text-foreground/50 hover:bg-foreground/5"
+                        onClick={() => setShowBedPlantPicker(false)}
+                      >
+                        ✕
+                      </button>
+                    </div>
+                    <div className="max-h-40 space-y-0.5 overflow-y-auto">
+                      {bedPlantResults.map((plant) => (
+                        <button
+                          key={plant.id}
+                          type="button"
+                          className="flex w-full items-center gap-1.5 rounded border border-transparent px-2 py-1 text-left text-xs hover:border-foreground/15 hover:bg-foreground/5"
+                          onClick={() => {
+                            const varieties = getVarietiesForSpecies(plant.id);
+                            if (varieties.length > 0) {
+                              // Has varieties — show variety picker
+                              setBedPickerSpeciesId(plant.id);
+                            } else {
+                              // No varieties — add directly
+                              const featureId = selected?.feature.properties?.gardenosId;
+                              if (!featureId) return;
+                              addPlantInstance({
+                                id: crypto.randomUUID(),
+                                speciesId: plant.id,
+                                featureId,
+                                count: 1,
+                                plantedAt: new Date().toISOString().slice(0, 10),
+                                season: new Date().getFullYear(),
+                              });
+                              setPlantInstancesVersion((v) => v + 1);
+                              setShowBedPlantPicker(false);
+                              setBedPlantSearch("");
+                            }
+                          }}
+                        >
+                          <span className="text-sm leading-none">{plant.icon ?? "🌱"}</span>
+                          <span className="truncate">{plant.name}</span>
+                          <span className="ml-auto text-[10px] text-foreground/40">
+                            {plant.varieties?.length ? `${plant.varieties.length} sorter · ` : ""}
+                            {PLANT_CATEGORY_LABELS[plant.category]}
+                          </span>
+                        </button>
+                      ))}
+                      {bedPlantResults.length === 0 ? (
+                        <p className="px-2 py-1 text-xs text-foreground/50 italic">Ingen planter fundet.</p>
+                      ) : null}
+                    </div>
+                  </div>
+                )}
+              </div>
             ) : null}
 
             {selectedGroupId ? (
@@ -3420,11 +3768,11 @@ export function GardenMapClient() {
             ) : null}
 
             <div>
-              <label className="block text-xs font-medium text-foreground/70">
+              <label className="block text-[11px] font-semibold text-foreground/60 uppercase tracking-wide">
                 {selectedIsInfra ? "Tekst" : "Noter"}
               </label>
               <textarea
-                className="mt-1 min-h-[80px] w-full resize-y rounded-md border border-foreground/20 bg-background px-3 py-2 text-sm"
+                className="mt-1 min-h-[80px] w-full resize-y rounded-lg border border-border bg-background px-3 py-2 text-sm shadow-sm"
                 value={selected.feature.properties?.notes ?? ""}
                 onChange={(e) => updateSelectedProperty({ notes: e.target.value })}
                 placeholder={selectedIsInfra ? "Fx dybde/placering/kommentar" : "Fx gødes i april / skal beskæres"}
@@ -3439,40 +3787,40 @@ export function GardenMapClient() {
               <p className="text-xs text-foreground/60">Tip: linjer kan flyttes/redigeres i “Redigér/flyt”.</p>
             ) : null}
 
-            <div className="grid grid-cols-2 gap-2 pt-1">
+            <div className="grid grid-cols-2 gap-2 pt-2 border-t border-border-light mt-2">
               <button
                 type="button"
-                className="rounded-md border border-foreground/20 bg-background px-3 py-2 text-sm hover:bg-foreground/5 disabled:opacity-50"
+                className="rounded-lg border border-border bg-background px-3 py-2 text-xs font-medium text-foreground/70 hover:bg-foreground/5 transition-colors disabled:opacity-40"
                 onClick={duplicateSelected}
                 disabled={!selected}
                 title="Lav en kopi med nyt navn"
               >
-                Kopiér
+                📋 Kopiér
               </button>
               <button
                 type="button"
-                className="rounded-md border border-foreground/20 bg-background px-3 py-2 text-sm hover:bg-foreground/5 disabled:opacity-50"
+                className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs font-medium text-red-600 hover:bg-red-100 transition-colors disabled:opacity-40 dark:border-red-900/40 dark:bg-red-900/20 dark:text-red-400 dark:hover:bg-red-900/30"
                 onClick={deleteSelected}
                 disabled={!selected}
                 title="Du kan også bruge Delete/Backspace"
               >
-                Slet valgt
+                🗑️ Slet valgt
               </button>
               <button
                 type="button"
-                className="col-span-2 rounded-md border border-foreground/20 bg-background px-3 py-2 text-sm hover:bg-foreground/5 disabled:opacity-50"
+                className="rounded-lg border border-border bg-background px-3 py-2 text-xs text-foreground/60 hover:bg-foreground/5 transition-colors disabled:opacity-40"
                 onClick={undo}
                 disabled={undoStack.length === 0}
                 title="Cmd/Ctrl+Z (uden for felter)"
               >
-                Fortryd
+                ↩ Fortryd
               </button>
               <button
                 type="button"
-                className="col-span-2 rounded-md border border-foreground/20 bg-background px-3 py-2 text-sm hover:bg-foreground/5"
+                className="rounded-lg border border-red-300 bg-red-50 px-3 py-2 text-xs font-medium text-red-700 hover:bg-red-100 transition-colors dark:border-red-900/50 dark:bg-red-900/20 dark:text-red-400 dark:hover:bg-red-900/30"
                 onClick={deleteAll}
               >
-                Slet alt
+                ⚠️ Slet alt
               </button>
             </div>
 
@@ -3491,10 +3839,10 @@ export function GardenMapClient() {
               allGroups.map((g) => (
                 <div
                   key={g.id}
-                  className={`rounded-md border p-3 text-sm transition-colors ${
+                  className={`rounded-lg border p-3 text-sm transition-all ${
                     highlightedGroupId === g.id
-                      ? "border-foreground/40 bg-foreground/5"
-                      : "border-foreground/20 bg-background hover:bg-foreground/5"
+                      ? "border-accent/30 bg-accent-light/50 shadow-sm"
+                      : "border-border bg-background hover:shadow-sm hover:border-border"
                   }`}
                 >
                   <div className="flex items-start gap-2">
@@ -3564,16 +3912,375 @@ export function GardenMapClient() {
           </div>
         ) : null}
 
-        {sidebarTab === "view" ? (
+        {/* ══════════════════════════════════════════════════════════════ */}
+        {/* ── PLANTER TAB ── Browse / search plant species database ─── */}
+        {/* ══════════════════════════════════════════════════════════════ */}
+        {sidebarTab === "plants" ? (
           <div className="mt-3 space-y-3">
-            <div className="border-b border-foreground/10 pb-2">
-              <label className="block text-xs font-medium text-foreground/70 mb-1">Baggrundskort</label>
+            {/* Search */}
+            <input
+              className="w-full rounded-lg border border-border bg-background px-3 py-2.5 text-sm shadow-sm placeholder:text-muted/60 focus:outline-none focus:ring-2 focus:ring-accent/30 focus:border-accent/50 transition-all"
+              placeholder="🔍 Søg plante (navn, latinsk, id)…"
+              value={plantSearch}
+              onChange={(e) => setPlantSearch(e.target.value)}
+            />
+
+            {/* Category filter chips */}
+            <div className="flex flex-wrap gap-1.5">
               <button
                 type="button"
-                className={`w-full rounded-md border px-2 py-1.5 text-left text-xs font-medium ${
+                className={`rounded-full border px-2.5 py-1 text-[10px] font-medium transition-all ${
+                  plantCategoryFilter === "all"
+                    ? "border-accent/40 bg-accent-light text-accent-dark shadow-sm"
+                    : "border-border bg-background hover:bg-foreground/5 text-foreground/60"
+                }`}
+                onClick={() => setPlantCategoryFilter("all")}
+              >
+                Alle ({allPlants.length})
+              </button>
+              {(Object.entries(PLANT_CATEGORY_LABELS) as [PlantCategory, string][]).map(([cat, label]) => {
+                const count = allPlants.filter((p) => p.category === cat).length;
+                if (count === 0) return null;
+                return (
+                  <button
+                    key={cat}
+                    type="button"
+                    className={`rounded-full border px-2.5 py-1 text-[10px] font-medium transition-all ${
+                      plantCategoryFilter === cat
+                        ? "border-accent/40 bg-accent-light text-accent-dark shadow-sm"
+                        : "border-border bg-background hover:bg-foreground/5 text-foreground/60"
+                    }`}
+                    onClick={() => setPlantCategoryFilter(plantCategoryFilter === cat ? "all" : cat)}
+                  >
+                    {label} ({count})
+                  </button>
+                );
+              })}
+            </div>
+
+            {/* Results count */}
+            <p className="text-[10px] text-foreground/50">
+              {filteredPlants.length} plante{filteredPlants.length !== 1 ? "r" : ""} fundet
+            </p>
+
+            {/* Plant list */}
+            <div className="max-h-[60vh] space-y-1.5 overflow-y-auto sidebar-scroll">
+              {filteredPlants.map((plant) => {
+                const isExpanded = expandedPlantId === plant.id;
+                return (
+                  <div
+                    key={plant.id}
+                    className={`rounded-lg border transition-all ${
+                      isExpanded
+                        ? "border-accent/30 bg-accent-light/50 shadow-sm"
+                        : "border-border bg-background hover:border-border hover:shadow-sm"
+                    }`}
+                  >
+                    {/* Collapsed row */}
+                    <button
+                      type="button"
+                      className="flex w-full items-center gap-2 px-2.5 py-2 text-left"
+                      onClick={() => setExpandedPlantId(isExpanded ? null : plant.id)}
+                    >
+                      <span className="text-base leading-none">{plant.icon ?? "🌱"}</span>
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-medium text-foreground/90 truncate">{plant.name}</p>
+                        {plant.latinName ? (
+                          <p className="text-[10px] italic text-foreground/50 truncate">{plant.latinName}</p>
+                        ) : null}
+                      </div>
+                      <span className="shrink-0 text-[10px] text-foreground/40">
+                        {PLANT_CATEGORY_LABELS[plant.category]}
+                      </span>
+                      <span className="shrink-0 text-foreground/30 text-xs">{isExpanded ? "▲" : "▼"}</span>
+                    </button>
+
+                    {/* Expanded detail card (progressive disclosure) */}
+                    {isExpanded ? (
+                      <div className="border-t border-accent/15 px-2.5 py-2.5 space-y-2.5">
+                        {/* Quick info grid */}
+                        <div className="grid grid-cols-2 gap-x-3 gap-y-1 text-xs">
+                          {plant.family ? (
+                            <>
+                              <span className="text-foreground/50">Familie</span>
+                              <span>{PLANT_FAMILY_LABELS[plant.family]}</span>
+                            </>
+                          ) : null}
+                          {plant.lifecycle ? (
+                            <>
+                              <span className="text-foreground/50">Livscyklus</span>
+                              <span>{LIFECYCLE_LABELS[plant.lifecycle]}</span>
+                            </>
+                          ) : null}
+                          {plant.difficulty ? (
+                            <>
+                              <span className="text-foreground/50">Sværhed</span>
+                              <span>{DIFFICULTY_LABELS[plant.difficulty]}</span>
+                            </>
+                          ) : null}
+                          {plant.light ? (
+                            <>
+                              <span className="text-foreground/50">Lys</span>
+                              <span>{LIGHT_LABELS[plant.light]}</span>
+                            </>
+                          ) : null}
+                          {plant.water ? (
+                            <>
+                              <span className="text-foreground/50">Vand</span>
+                              <span>{WATER_LABELS[plant.water]}</span>
+                            </>
+                          ) : null}
+                          {plant.spacingCm ? (
+                            <>
+                              <span className="text-foreground/50">Afstand</span>
+                              <span>{plant.spacingCm} cm{plant.rowSpacingCm ? ` (rk. ${plant.rowSpacingCm} cm)` : ""}</span>
+                            </>
+                          ) : null}
+                          {plant.frostHardy !== undefined ? (
+                            <>
+                              <span className="text-foreground/50">Frosttålig</span>
+                              <span>{plant.frostHardy ? "Ja" : "Nej"}</span>
+                            </>
+                          ) : null}
+                        </div>
+
+                        {/* Taste & Culinary */}
+                        {plant.taste ? (
+                          <div className="text-xs">
+                            <p className="text-foreground/50 font-medium text-[10px] uppercase tracking-wide">🍽️ Smag</p>
+                            <p className="text-foreground/70">{plant.taste}</p>
+                          </div>
+                        ) : null}
+                        {plant.culinaryUses ? (
+                          <div className="text-xs">
+                            <p className="text-foreground/50 font-medium text-[10px] uppercase tracking-wide">👨‍🍳 Brug i køkkenet</p>
+                            <p className="text-foreground/70">{plant.culinaryUses}</p>
+                          </div>
+                        ) : null}
+
+                        {/* Sowing / planting / harvest timeline */}
+                        {(plant.sowIndoor || plant.sowOutdoor || plant.plantOut || plant.harvest) ? (
+                          <div className="space-y-0.5 text-xs">
+                            <p className="text-foreground/50 font-medium text-[10px] uppercase tracking-wide">📅 Kalender</p>
+                            {plant.sowIndoor ? (
+                              <p>🏠 Forspiring: {formatMonthRange(plant.sowIndoor)}</p>
+                            ) : null}
+                            {plant.sowOutdoor ? (
+                              <p>🌿 Direkte såning: {formatMonthRange(plant.sowOutdoor)}</p>
+                            ) : null}
+                            {plant.plantOut ? (
+                              <p>📦 Udplantning: {formatMonthRange(plant.plantOut)}</p>
+                            ) : null}
+                            {plant.harvest ? (
+                              <p>🧺 Høst: {formatMonthRange(plant.harvest)}</p>
+                            ) : null}
+                          </div>
+                        ) : null}
+
+                        {/* Harvest tips */}
+                        {plant.harvestTips ? (
+                          <div className="text-xs">
+                            <p className="text-foreground/50 font-medium text-[10px] uppercase tracking-wide">🧺 Høsttips</p>
+                            <p className="text-foreground/70">{plant.harvestTips}</p>
+                          </div>
+                        ) : null}
+
+                        {/* Soil & Fertilizer */}
+                        {(plant.soilAmendments || plant.fertilizerInfo) ? (
+                          <div className="space-y-0.5 text-xs">
+                            <p className="text-foreground/50 font-medium text-[10px] uppercase tracking-wide">🌍 Jord & gødning</p>
+                            {plant.soilAmendments ? <p className="text-foreground/70">{plant.soilAmendments}</p> : null}
+                            {plant.fertilizerInfo ? <p className="text-foreground/70">{plant.fertilizerInfo}</p> : null}
+                          </div>
+                        ) : null}
+
+                        {/* Pests & Diseases */}
+                        {(plant.pests?.length || plant.diseases?.length) ? (
+                          <div className="space-y-0.5 text-xs">
+                            <p className="text-foreground/50 font-medium text-[10px] uppercase tracking-wide">🐛 Skadedyr & sygdomme</p>
+                            {plant.pests?.length ? <p className="text-foreground/70">Skadedyr: {plant.pests.join(", ")}</p> : null}
+                            {plant.diseases?.length ? <p className="text-foreground/70">Sygdomme: {plant.diseases.join(", ")}</p> : null}
+                          </div>
+                        ) : null}
+
+                        {/* Storage */}
+                        {plant.storageInfo ? (
+                          <div className="text-xs">
+                            <p className="text-foreground/50 font-medium text-[10px] uppercase tracking-wide">📦 Opbevaring</p>
+                            <p className="text-foreground/70">{plant.storageInfo}</p>
+                          </div>
+                        ) : null}
+
+                        {/* Nutrition */}
+                        {plant.nutrition ? (
+                          <div className="text-xs">
+                            <p className="text-foreground/50 font-medium text-[10px] uppercase tracking-wide">💪 Ernæring (per 100 g)</p>
+                            <div className="grid grid-cols-4 gap-1.5 mt-1.5">
+                              <div className="rounded-lg bg-accent-light border border-accent/15 px-1.5 py-1.5 text-center">
+                                <p className="text-[9px] text-accent-dark/60 font-medium">Kalorier</p>
+                                <p className="text-sm font-bold text-accent-dark">{plant.nutrition.kcal}</p>
+                                <p className="text-[8px] text-accent-dark/40">kcal</p>
+                              </div>
+                              <div className="rounded-lg bg-blue-50 border border-blue-200/40 px-1.5 py-1.5 text-center dark:bg-blue-900/20 dark:border-blue-800/30">
+                                <p className="text-[9px] text-blue-600/70 font-medium dark:text-blue-400/70">Protein</p>
+                                <p className="text-sm font-bold text-blue-700 dark:text-blue-400">{plant.nutrition.proteinG}</p>
+                                <p className="text-[8px] text-blue-500/50">g</p>
+                              </div>
+                              <div className="rounded-lg bg-amber-50 border border-amber-200/40 px-1.5 py-1.5 text-center dark:bg-amber-900/20 dark:border-amber-800/30">
+                                <p className="text-[9px] text-amber-600/70 font-medium dark:text-amber-400/70">Kulhydr.</p>
+                                <p className="text-sm font-bold text-amber-700 dark:text-amber-400">{plant.nutrition.carbG}</p>
+                                <p className="text-[8px] text-amber-500/50">g</p>
+                              </div>
+                              <div className="rounded-lg bg-rose-50 border border-rose-200/40 px-1.5 py-1.5 text-center dark:bg-rose-900/20 dark:border-rose-800/30">
+                                <p className="text-[9px] text-rose-600/70 font-medium dark:text-rose-400/70">Fedt</p>
+                                <p className="text-sm font-bold text-rose-700 dark:text-rose-400">{plant.nutrition.fatG}</p>
+                                <p className="text-[8px] text-rose-500/50">g</p>
+                              </div>
+                            </div>
+                            {plant.nutrition.fiberG != null ? (
+                              <p className="mt-1 text-foreground/50">🌾 Kostfibre: {plant.nutrition.fiberG} g</p>
+                            ) : null}
+                            {plant.nutrition.highlights ? (
+                              <p className="mt-0.5 text-foreground/60 leading-snug">{plant.nutrition.highlights}</p>
+                            ) : null}
+                          </div>
+                        ) : null}
+
+                        {/* Companions */}
+                        {(plant.goodCompanions?.length || plant.badCompanions?.length) ? (
+                          <div className="space-y-0.5 text-xs">
+                            <p className="text-foreground/50 font-medium text-[10px] uppercase tracking-wide">🤝 Samdyrkning</p>
+                            {plant.goodCompanions?.length ? (
+                              <p className="text-green-700 dark:text-green-400">
+                                ✓ {plant.goodCompanions.map((id) => getPlantById(id)?.name ?? id).join(", ")}
+                              </p>
+                            ) : null}
+                            {plant.badCompanions?.length ? (
+                              <p className="text-red-600 dark:text-red-400">
+                                ✕ {plant.badCompanions.map((id) => getPlantById(id)?.name ?? id).join(", ")}
+                              </p>
+                            ) : null}
+                          </div>
+                        ) : null}
+
+                        {/* Rotation */}
+                        {plant.rotationYears ? (
+                          <p className="text-xs text-foreground/60">
+                            🔄 Sædskifte: {plant.rotationYears} år
+                          </p>
+                        ) : null}
+
+                        {/* Description */}
+                        {plant.description ? (
+                          <p className="text-xs text-foreground/60 italic">{plant.description}</p>
+                        ) : null}
+
+                        {/* ── VARIETIES / SORTER ── */}
+                        {plant.varieties?.length ? (
+                          <div className="space-y-1.5">
+                            <p className="text-foreground/50 font-medium text-[10px] uppercase tracking-wide">
+                              🏷️ Sorter ({plant.varieties.length})
+                            </p>
+                            <div className="max-h-48 space-y-1 overflow-y-auto">
+                              {plant.varieties.map((v) => (
+                                <div
+                                  key={v.id}
+                                  className="rounded border border-foreground/10 bg-foreground/[0.02] px-2 py-1.5 space-y-0.5"
+                                >
+                                  <div className="flex items-center gap-1.5">
+                                    <p className="text-xs font-medium text-foreground/90">{v.name}</p>
+                                    {v.color ? <span className="text-[10px] text-foreground/40">({v.color})</span> : null}
+                                  </div>
+                                  {v.description ? (
+                                    <p className="text-[10px] text-foreground/60">{v.description}</p>
+                                  ) : null}
+                                  <div className="flex flex-wrap gap-x-3 gap-y-0 text-[10px] text-foreground/50">
+                                    {v.taste ? <span>🍽️ {v.taste}</span> : null}
+                                    {v.daysToHarvest ? <span>⏱️ {v.daysToHarvest} dage</span> : null}
+                                    {v.spacingCm ? <span>↔️ {v.spacingCm} cm</span> : null}
+                                    {v.storageQuality ? <span>📦 {v.storageQuality === "excellent" ? "Fremragende" : v.storageQuality === "good" ? "God" : v.storageQuality === "fair" ? "OK" : "Kort"}</span> : null}
+                                    {v.resistances?.length ? <span>🛡️ {v.resistances.join(", ")}</span> : null}
+                                  </div>
+
+                                  {/* Quick-add variety to bed */}
+                                  {selected && (selectedCategory === "seedbed" || selectedCategory === "container" || selectedCategory === "area" || selectedCategory === "row") ? (
+                                    <button
+                                      type="button"
+                                      className="mt-1 w-full rounded border border-green-600/20 bg-green-50/50 px-1.5 py-1 text-[10px] font-medium text-green-800 hover:bg-green-100 dark:border-green-500/20 dark:bg-green-900/10 dark:text-green-300 dark:hover:bg-green-900/20"
+                                      onClick={() => {
+                                        const featureId = selected.feature.properties?.gardenosId;
+                                        if (!featureId) return;
+                                        addPlantInstance({
+                                          id: crypto.randomUUID(),
+                                          speciesId: plant.id,
+                                          varietyId: v.id,
+                                          varietyName: v.name,
+                                          featureId,
+                                          count: 1,
+                                          plantedAt: new Date().toISOString().slice(0, 10),
+                                          season: new Date().getFullYear(),
+                                        });
+                                        setPlantInstancesVersion((prev) => prev + 1);
+                                      }}
+                                    >
+                                      + {v.name} → {selected.feature.properties?.name || "bed"}
+                                    </button>
+                                  ) : null}
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        ) : null}
+
+                        {/* Quick-add species (no specific variety) to selected bed */}
+                        {selected && (selectedCategory === "seedbed" || selectedCategory === "container" || selectedCategory === "area" || selectedCategory === "row") ? (
+                          <button
+                            type="button"
+                            className="w-full rounded-md border border-green-600/30 bg-green-50 px-2 py-1.5 text-xs font-medium text-green-800 hover:bg-green-100 dark:border-green-500/30 dark:bg-green-900/20 dark:text-green-300 dark:hover:bg-green-900/30"
+                            onClick={() => {
+                              const featureId = selected.feature.properties?.gardenosId;
+                              if (!featureId) return;
+                              addPlantInstance({
+                                id: crypto.randomUUID(),
+                                speciesId: plant.id,
+                                featureId,
+                                count: 1,
+                                plantedAt: new Date().toISOString().slice(0, 10),
+                                season: new Date().getFullYear(),
+                              });
+                              setPlantInstancesVersion((v) => v + 1);
+                            }}
+                          >
+                            + Tilføj {plant.name} (uspecificeret sort) til {selected.feature.properties?.name || "valgt bed"}
+                          </button>
+                        ) : null}
+                      </div>
+                    ) : null}
+                  </div>
+                );
+              })}
+            </div>
+
+            <p className="text-[10px] text-foreground/40 leading-tight">
+              📚 {allPlants.length} plantearter i databasen. Klik på en plante for at se detaljer.
+              {selected && (selectedCategory === "seedbed" || selectedCategory === "container" || selectedCategory === "area" || selectedCategory === "row")
+                ? " Du kan tilføje planter direkte til det valgte bed."
+                : " Vælg et bed på kortet for at tilføje planter."}
+            </p>
+          </div>
+        ) : null}
+
+        {sidebarTab === "view" ? (
+          <div className="mt-3 space-y-3">
+            <div className="border-b border-border-light pb-3">
+              <label className="block text-[11px] font-semibold text-foreground/60 uppercase tracking-wide mb-2">Baggrundskort</label>
+              <div className="space-y-1.5">
+              <button
+                type="button"
+                className={`w-full rounded-lg border px-3 py-2 text-left text-xs font-medium transition-all ${
                   showSatellite
-                    ? "border-foreground/30 bg-foreground/10 text-foreground/90"
-                    : "border-foreground/20 bg-background text-foreground/60 hover:bg-foreground/5"
+                    ? "border-accent/40 bg-accent-light text-accent-dark shadow-sm"
+                    : "border-border bg-background text-foreground/60 hover:bg-foreground/5 hover:shadow-sm"
                 }`}
                 onClick={() => setShowSatellite((v) => !v)}
               >
@@ -3581,12 +4288,12 @@ export function GardenMapClient() {
               </button>
               <button
                 type="button"
-                className={`w-full rounded-md border px-2 py-1.5 text-left text-xs font-medium mt-1 ${
+                className={`w-full rounded-lg border px-3 py-2 text-left text-xs font-medium transition-all ${
                   showMatrikel && dfReady
-                    ? "border-foreground/30 bg-foreground/10 text-foreground/90"
+                    ? "border-accent/40 bg-accent-light text-accent-dark shadow-sm"
                     : showMatrikel && !dfReady
-                    ? "border-amber-500/50 bg-amber-500/10 text-amber-700"
-                    : "border-foreground/20 bg-background text-foreground/60 hover:bg-foreground/5"
+                    ? "border-amber-500/50 bg-amber-50 text-amber-700 dark:bg-amber-900/20"
+                    : "border-border bg-background text-foreground/60 hover:bg-foreground/5 hover:shadow-sm"
                 }`}
                 onClick={() => setShowMatrikel((v) => !v)}
               >
@@ -3672,41 +4379,43 @@ export function GardenMapClient() {
               ) : null}
               <button
                 type="button"
-                className={`w-full rounded-md border px-2 py-1.5 text-left text-xs font-medium mt-1 ${
+                className={`w-full rounded-lg border px-3 py-2 text-left text-xs font-medium transition-all ${
                   showJordart
-                    ? "border-foreground/30 bg-foreground/10 text-foreground/90"
-                    : "border-foreground/20 bg-background text-foreground/60 hover:bg-foreground/5"
+                    ? "border-accent/40 bg-accent-light text-accent-dark shadow-sm"
+                    : "border-border bg-background text-foreground/60 hover:bg-foreground/5 hover:shadow-sm"
                 }`}
                 onClick={() => setShowJordart((v) => !v)}
               >
                 🌱 Jordart{showJordart ? " (aktiv)" : ""}
               </button>
               {showJordart ? (
-                <p className="text-[10px] text-foreground/50 leading-tight mt-0.5 ml-0.5">
+                <p className="text-[10px] text-muted leading-tight mt-0.5 ml-1">
                   GEUS Jordartskort 1:25.000 — viser overfladegeologi / jordtyper. Zoom ind for detaljer.
                 </p>
               ) : null}
               <button
                 type="button"
-                className={`w-full rounded-md border px-2 py-1.5 text-left text-xs font-medium mt-1 ${
+                className={`w-full rounded-lg border px-3 py-2 text-left text-xs font-medium transition-all ${
                   showTerrain
-                    ? "border-foreground/30 bg-foreground/10 text-foreground/90"
-                    : "border-foreground/20 bg-background text-foreground/60 hover:bg-foreground/5"
+                    ? "border-accent/40 bg-accent-light text-accent-dark shadow-sm"
+                    : "border-border bg-background text-foreground/60 hover:bg-foreground/5 hover:shadow-sm"
                 }`}
                 onClick={() => setShowTerrain((v) => !v)}
               >
                 ⛰️ Terrænrelief{showTerrain ? " (aktiv)" : ""}
               </button>
               {showTerrain ? (
-                <p className="text-[10px] text-foreground/50 leading-tight mt-0.5 ml-0.5">
+                <p className="text-[10px] text-muted leading-tight mt-0.5 ml-1">
                   Danmarks Højdemodel — skyggekort der viser terrænets form og hældning.
                 </p>
               ) : null}
-              <p className="text-[10px] text-foreground/40 leading-tight mt-2 ml-0.5">
+              </div>
+              <p className="text-[10px] text-muted leading-tight mt-2">
                 ℹ️ Ledningsdata (el, vand, gas, kloak) er ikke offentligt tilgængeligt som kort. Brug <a href="https://ler.dk" target="_blank" rel="noopener noreferrer" className="underline">ler.dk</a> til ledningsoplysninger.
               </p>
             </div>
-            <p className="text-xs text-foreground/60">Slå kategorier og typer til/fra på kortet.</p>
+            <div className="border-t border-border-light pt-3">
+            <label className="block text-[11px] font-semibold text-foreground/60 uppercase tracking-wide mb-2">Synlighed på kort</label>
             {(["element", "row", "seedbed", "container", "area", "condition"] as const).map((cat) => {
               const isCatHidden = hiddenCategories.has(cat);
               const kindsInCat = allKindDefsIncludingHidden.filter((d) => d.category === cat);
@@ -3715,10 +4424,10 @@ export function GardenMapClient() {
                 <div key={cat}>
                   <button
                     type="button"
-                    className={`w-full rounded-md border px-2 py-1.5 text-left text-xs font-medium ${
+                    className={`w-full rounded-lg border px-3 py-2 text-left text-xs font-medium transition-all ${
                       isCatHidden
-                        ? "border-foreground/10 bg-background text-foreground/30 line-through"
-                        : "border-foreground/20 bg-foreground/5 text-foreground/80"
+                        ? "border-border-light bg-background text-foreground/30 line-through"
+                        : "border-border bg-accent-light/50 text-foreground/80"
                     }`}
                     onClick={() => {
                       setHiddenCategories((prev) => {
@@ -3783,8 +4492,10 @@ export function GardenMapClient() {
                 </div>
               );
             })}
+            </div>
           </div>
         ) : null}
+        </div>
       </aside>
     </div>
   );
