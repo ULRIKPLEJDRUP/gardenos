@@ -19,19 +19,28 @@ export default function LoginPage() {
     setError("");
     setLoading(true);
 
-    const result = await signIn("credentials", {
-      email: email.trim().toLowerCase(),
-      password,
-      redirect: false,
-    });
+    try {
+      const result = await signIn("credentials", {
+        email: email.trim().toLowerCase(),
+        password,
+        redirect: false,
+      });
 
-    setLoading(false);
+      console.log("signIn result:", JSON.stringify(result));
 
-    if (result?.error) {
-      setError("Forkert email eller adgangskode.");
-    } else {
-      router.push("/");
-      router.refresh();
+      if (result?.error) {
+        setError("Forkert email eller adgangskode.");
+      } else if (result?.ok) {
+        router.push("/");
+        router.refresh();
+      } else {
+        setError("Ukendt fejl – prøv igen.");
+      }
+    } catch (err) {
+      console.error("signIn exception:", err);
+      setError("Noget gik galt – prøv igen.");
+    } finally {
+      setLoading(false);
     }
   };
 
