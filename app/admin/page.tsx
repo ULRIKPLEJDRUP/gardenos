@@ -37,8 +37,19 @@ export default function AdminPage() {
   }, []);
 
   useEffect(() => {
-    if (status === "authenticated") fetchCodes();
-  }, [status, fetchCodes]);
+    if (status !== "authenticated") return;
+    let cancelled = false;
+    (async () => {
+      setLoading(true);
+      try {
+        const res = await fetch("/api/admin/invite-codes");
+        const data = await res.json();
+        if (!cancelled && data.codes) setCodes(data.codes);
+      } catch { /* ignore */ }
+      if (!cancelled) setLoading(false);
+    })();
+    return () => { cancelled = true; };
+  }, [status]);
 
   const generateCodes = async () => {
     setGenerating(true);

@@ -31,8 +31,8 @@ describe("Password hashing", () => {
 });
 
 describe("Invite code format", () => {
-  it("should generate an 8-char hex code", () => {
-    const crypto = require("crypto");
+  it("should generate an 8-char hex code", async () => {
+    const crypto = await import("crypto");
     const code = crypto.randomBytes(4).toString("hex").toUpperCase();
 
     expect(code).toHaveLength(8);
