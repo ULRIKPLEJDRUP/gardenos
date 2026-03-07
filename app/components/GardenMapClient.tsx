@@ -5,7 +5,7 @@ import L from "leaflet";
 import "leaflet-draw";
 import "leaflet-path-drag";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { MapContainer, TileLayer, useMap, useMapEvents } from "react-leaflet";
+import { MapContainer, TileLayer, WMSTileLayer, useMap, useMapEvents } from "react-leaflet";
 
 // ---------------------------------------------------------------------------
 // NOTE: We no longer use Leaflet.draw's L.EditToolbar.Edit for editing.
@@ -14,21 +14,46 @@ import { MapContainer, TileLayer, useMap, useMapEvents } from "react-leaflet";
 // L.EditToolbar.Edit operates on ALL layers in the featureGroup at once.
 // ---------------------------------------------------------------------------
 
-type KnownGardenFeatureKind = "bed" | "tree" | "bush" | "pot" | "greenhouse";
+type KnownGardenFeatureKind =
+  | "bed" | "row" | "pot" | "raised-bed"
+  | "tree" | "bush" | "flower" | "plant"
+  | "greenhouse" | "kitchen-garden" | "slope" | "production-garden"
+  | "water" | "electric" | "lamp"
+  | "shade" | "moist-soil" | "sandy-soil" | "wind" | "clay-soil";
 type GardenFeatureKind = KnownGardenFeatureKind | (string & {});
 
-type GardenFeatureCategory = "container" | "element";
+// Six primary categories matching the user's domain model
+type GardenFeatureCategory = "element" | "row" | "seedbed" | "container" | "area" | "condition";
 
 type KindGeometry = "point" | "polygon" | "polyline";
 
-type KindGroup = "default" | "infra";
+// Sub-groups within each category
+type KindSubGroup = "plant" | "infra" | "default";
 
 type KindDef = {
   kind: string;
   label: string;
   category: GardenFeatureCategory;
   geometry: KindGeometry;
-  group?: KindGroup;
+  subGroup?: KindSubGroup;
+};
+
+const CATEGORY_LABELS: Record<GardenFeatureCategory, string> = {
+  element: "Element",
+  row: "Række",
+  seedbed: "Såbed",
+  container: "Container",
+  area: "Område",
+  condition: "Særligt forhold",
+};
+
+const CATEGORY_DESCRIPTIONS: Record<GardenFeatureCategory, string> = {
+  element: "Planter, træer, buske, ledninger, lamper",
+  row: "Rækker til frø og planter",
+  seedbed: "Såbede med rækker af frø",
+  container: "Bed, krukker, højbede",
+  area: "Drivhus, køkkenhave, skråning",
+  condition: "Skygge, fugtig jord, sandjord, vind",
 };
 
 type GardenFeatureProperties = {
@@ -36,10 +61,28 @@ type GardenFeatureProperties = {
   category?: GardenFeatureCategory;
   kind?: GardenFeatureKind;
   name?: string;
-  bedType?: string;
-  planted?: string;
-  plantedAt?: string;
   notes?: string;
+  groupId?: string;
+  groupName?: string;
+
+  // ── Element-specific (plants) ──
+  planted?: string;       // what is planted / variety
+  plantedAt?: string;     // planting date
+  sunNeed?: string;       // sol/halvskygge/skygge
+  waterNeed?: string;     // lav/middel/høj
+
+  // ── Container-specific ──
+  soilType?: string;      // jordtype i containeren
+  fertilizer?: string;    // gødningsplan
+  bedType?: string;       // kept for backward compat
+
+  // ── Area-specific ──
+  shelter?: string;       // læforhold
+  heating?: string;       // opvarmning (drivhus)
+
+  // ── Condition-specific ──
+  conditionDesc?: string; // beskrivelse af forholdet
+  intensity?: string;     // intensitet (svag/middel/stærk)
 };
 
 type GardenFeature = Feature<Geometry, GardenFeatureProperties>;
@@ -59,21 +102,99 @@ type UndoSnapshot = {
 const STORAGE_LAYOUT_KEY = "gardenos:layout:v1";
 const STORAGE_VIEW_KEY = "gardenos:view:v1";
 const STORAGE_KIND_DEFS_KEY = "gardenos:kinds:v1";
+const STORAGE_GROUPS_KEY = "gardenos:groups:v1";
+const STORAGE_HIDDEN_KINDS_KEY = "gardenos:hiddenKinds:v1";
+const STORAGE_HIDDEN_VIS_KINDS_KEY = "gardenos:hiddenVisKinds:v1";
+
+function loadHiddenKinds(): Set<string> {
+  if (typeof window === "undefined") return new Set();
+  try {
+    const raw = localStorage.getItem(STORAGE_HIDDEN_KINDS_KEY);
+    if (!raw) return new Set();
+    const parsed = JSON.parse(raw);
+    if (Array.isArray(parsed)) return new Set(parsed.map((s: unknown) => String(s).toLowerCase()));
+  } catch { /* ignore */ }
+  return new Set();
+}
+
+function saveHiddenKinds(hidden: Set<string>): void {
+  if (typeof window === "undefined") return;
+  localStorage.setItem(STORAGE_HIDDEN_KINDS_KEY, JSON.stringify([...hidden]));
+}
+
+function loadHiddenVisKinds(): Set<string> {
+  try {
+    const raw = localStorage.getItem(STORAGE_HIDDEN_VIS_KINDS_KEY);
+    if (raw) { const arr = JSON.parse(raw); if (Array.isArray(arr)) return new Set(arr.map(String)); }
+  } catch { /* ignore */ }
+  return new Set();
+}
+
+function saveHiddenVisKinds(hidden: Set<string>): void {
+  if (typeof window === "undefined") return;
+  localStorage.setItem(STORAGE_HIDDEN_VIS_KINDS_KEY, JSON.stringify([...hidden]));
+}
+
+type GroupMeta = { name: string };
+type GroupRegistry = Record<string, GroupMeta>;
+
+function loadGroupRegistry(): GroupRegistry {
+  try {
+    const raw = localStorage.getItem(STORAGE_GROUPS_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw);
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) return parsed as GroupRegistry;
+  } catch { /* ignore */ }
+  return {};
+}
+
+function saveGroupRegistry(reg: GroupRegistry) {
+  localStorage.setItem(STORAGE_GROUPS_KEY, JSON.stringify(reg));
+}
 
 const KNOWN_KIND_DEFS: KindDef[] = [
-  { kind: "bed", label: "Bed", category: "container", geometry: "polygon", group: "default" },
-  { kind: "greenhouse", label: "Drivhus", category: "container", geometry: "polygon", group: "default" },
-  { kind: "pot", label: "Krukke", category: "container", geometry: "point", group: "default" },
-  { kind: "tree", label: "Træ", category: "element", geometry: "point", group: "default" },
-  { kind: "bush", label: "Busk", category: "element", geometry: "point", group: "default" },
+  // ── Elementer: planter ──
+  { kind: "tree", label: "Træ", category: "element", geometry: "point", subGroup: "plant" },
+  { kind: "bush", label: "Busk", category: "element", geometry: "point", subGroup: "plant" },
+  { kind: "flower", label: "Blomst", category: "element", geometry: "point", subGroup: "plant" },
+  { kind: "plant", label: "Plante", category: "element", geometry: "point", subGroup: "plant" },
 
-  // Technical/infrastructure (lines)
-  { kind: "water", label: "Vandrør", category: "element", geometry: "polyline", group: "infra" },
-  { kind: "electric", label: "El", category: "element", geometry: "polyline", group: "infra" },
+  // ── Elementer: infrastruktur ──
+  { kind: "water", label: "Vandledning", category: "element", geometry: "polyline", subGroup: "infra" },
+  { kind: "electric", label: "Ledning / El", category: "element", geometry: "polyline", subGroup: "infra" },
+  { kind: "lamp", label: "Lampe", category: "element", geometry: "point", subGroup: "infra" },
+
+  // ── Rækker ──
+  { kind: "row", label: "Række", category: "row", geometry: "polyline", subGroup: "default" },
+  { kind: "double-row", label: "Dobbeltrække", category: "row", geometry: "polyline", subGroup: "default" },
+
+  // ── Såbede ──
+  { kind: "seedbed", label: "Såbed", category: "seedbed", geometry: "polygon", subGroup: "default" },
+  { kind: "seedbed-raised", label: "Højt såbed", category: "seedbed", geometry: "polygon", subGroup: "default" },
+
+  // ── Containere ──
+  { kind: "bed", label: "Bed", category: "container", geometry: "polygon", subGroup: "default" },
+  { kind: "pot", label: "Krukke", category: "container", geometry: "polygon", subGroup: "default" },
+  { kind: "raised-bed", label: "Højbed", category: "container", geometry: "polygon", subGroup: "default" },
+
+  // ── Områder ──
+  { kind: "greenhouse", label: "Drivhus", category: "area", geometry: "polygon", subGroup: "default" },
+  { kind: "kitchen-garden", label: "Køkkenhave", category: "area", geometry: "polygon", subGroup: "default" },
+  { kind: "slope", label: "Skråning", category: "area", geometry: "polygon", subGroup: "default" },
+  { kind: "production-garden", label: "Produktionshave", category: "area", geometry: "polygon", subGroup: "default" },
+
+  // ── Særlige forhold (overlay zones) ──
+  { kind: "shade", label: "Skygge", category: "condition", geometry: "polygon", subGroup: "default" },
+  { kind: "moist-soil", label: "Fugtig jord", category: "condition", geometry: "polygon", subGroup: "default" },
+  { kind: "sandy-soil", label: "Sandjord", category: "condition", geometry: "polygon", subGroup: "default" },
+  { kind: "wind", label: "Vindforhold", category: "condition", geometry: "polygon", subGroup: "default" },
+  { kind: "clay-soil", label: "Lerjord", category: "condition", geometry: "polygon", subGroup: "default" },
 ];
 
+const KNOWN_KIND_SET = new Set(KNOWN_KIND_DEFS.map((d) => d.kind.toLowerCase()));
+
 function isKnownKind(kind: string | undefined): kind is KnownGardenFeatureKind {
-  return kind === "bed" || kind === "greenhouse" || kind === "pot" || kind === "tree" || kind === "bush";
+  return !!kind && KNOWN_KIND_SET.has(kind.toLowerCase());
 }
 
 function dedupeKindDefs(defs: KindDef[]): KindDef[] {
@@ -104,11 +225,12 @@ function loadCustomKindDefsFromStorage(): KindDef[] {
     if (!item || typeof item !== "object") continue;
     const v = item as Partial<KindDef>;
     if (typeof v.kind !== "string" || typeof v.label !== "string") continue;
-    if (v.category !== "container" && v.category !== "element") continue;
+    const validCats: GardenFeatureCategory[] = ["element", "row", "seedbed", "container", "area", "condition"];
+    if (!validCats.includes(v.category as GardenFeatureCategory)) continue;
     if (v.geometry !== "point" && v.geometry !== "polygon" && v.geometry !== "polyline") continue;
-    const group: KindGroup = v.group === "infra" ? "infra" : "default";
+    const subGroup: KindSubGroup = v.subGroup === "infra" ? "infra" : v.subGroup === "plant" ? "plant" : "default";
     if (isKnownKind(v.kind)) continue;
-    parsed.push({ kind: v.kind, label: v.label, category: v.category, geometry: v.geometry, group });
+    parsed.push({ kind: v.kind, label: v.label, category: v.category as GardenFeatureCategory, geometry: v.geometry, subGroup });
   }
   return dedupeKindDefs(parsed);
 }
@@ -211,6 +333,12 @@ function defaultCategoryForGeometry(geometry: Geometry): GardenFeatureCategory {
   return geometry.type === "Polygon" ? "container" : "element";
 }
 
+function subGroupForKind(kind: GardenFeatureKind | undefined): KindSubGroup {
+  if (!kind) return "default";
+  const def = kindDefForKind(kind);
+  return def?.subGroup ?? "default";
+}
+
 function ensureDefaultProperties(feature: GardenFeature): GardenFeature {
   const kind = feature.properties?.kind ?? defaultKindForGeometry(feature.geometry);
   const def = kindDefForKind(kind);
@@ -223,10 +351,22 @@ function ensureDefaultProperties(feature: GardenFeature): GardenFeature {
       category,
       kind,
       name: feature.properties?.name ?? "",
-      bedType: feature.properties?.bedType ?? "",
+      notes: feature.properties?.notes ?? "",
+      // element (plant)
       planted: feature.properties?.planted ?? "",
       plantedAt: feature.properties?.plantedAt ?? "",
-      notes: feature.properties?.notes ?? "",
+      sunNeed: feature.properties?.sunNeed ?? "",
+      waterNeed: feature.properties?.waterNeed ?? "",
+      // container
+      soilType: feature.properties?.soilType ?? "",
+      fertilizer: feature.properties?.fertilizer ?? "",
+      bedType: feature.properties?.bedType ?? "",
+      // area
+      shelter: feature.properties?.shelter ?? "",
+      heating: feature.properties?.heating ?? "",
+      // condition
+      conditionDesc: feature.properties?.conditionDesc ?? "",
+      intensity: feature.properties?.intensity ?? "",
     },
   };
 }
@@ -236,6 +376,13 @@ function formatAreaSquareMeters(area: number): string {
   if (area < 1) return `${area.toFixed(2)} m²`;
   if (area < 10) return `${area.toFixed(1)} m²`;
   return `${Math.round(area)} m²`;
+}
+
+function formatEdgeLength(meters: number): string {
+  if (!Number.isFinite(meters) || meters < 0) return "";
+  if (meters < 1) return `${(meters * 100).toFixed(0)} cm`;
+  if (meters < 10) return `${meters.toFixed(2)} m`;
+  return `${meters.toFixed(1)} m`;
 }
 
 function areaForPolygonFeature(feature: Feature<Polygon, GardenFeatureProperties>): number | null {
@@ -338,9 +485,10 @@ function polygonAreaApprox(feature: Feature<Polygon, GardenFeatureProperties>): 
 }
 
 type ContainmentCounts = {
-  plants: number;
+  elements: number;
   containers: number;
   areas: number;
+  conditions: number;
   infra: number;
   total: number;
 };
@@ -358,14 +506,20 @@ function computeContainment(layout: GardenFeatureCollection | null): Containment
 
   const normalized = layout.features.map((f) => ensureDefaultProperties(f as GardenFeature));
 
-  const containers = normalized
-    .filter((f) => isPolygon(f) && (f.properties?.category ?? "element") === "container")
+  // Areas, containers, seedbeds, and rows can all contain children
+  const parentPolygons = normalized
+    .filter((f) => {
+      if (!isPolygon(f)) return false;
+      const cat = f.properties?.category ?? "element";
+      return cat === "area" || cat === "container" || cat === "seedbed" || cat === "row";
+    })
     .map((f) => f as Feature<Polygon, GardenFeatureProperties>);
 
-  const containerMeta = containers
+  const parentMeta = parentPolygons
     .map((c) => ({
       id: c.properties!.gardenosId,
       feature: c,
+      category: c.properties!.category!,
       area: polygonAreaApprox(c),
     }))
     .filter((m) => !!m.id);
@@ -373,7 +527,7 @@ function computeContainment(layout: GardenFeatureCollection | null): Containment
   const ensureCounts = (id: string): ContainmentCounts => {
     const existing = countsByContainerId.get(id);
     if (existing) return existing;
-    const next: ContainmentCounts = { plants: 0, containers: 0, areas: 0, infra: 0, total: 0 };
+    const next: ContainmentCounts = { elements: 0, containers: 0, areas: 0, conditions: 0, infra: 0, total: 0 };
     countsByContainerId.set(id, next);
     return next;
   };
@@ -388,15 +542,8 @@ function computeContainment(layout: GardenFeatureCollection | null): Containment
     const gardenosId = feature.properties?.gardenosId;
     if (!gardenosId) continue;
 
-    // Only items that can be contained by an area.
-    const isContainerPolygon = isPolygon(feature) && (feature.properties?.category ?? "element") === "container";
-    if (isContainerPolygon) {
-      // We'll still allow nested areas (a polygon container inside another polygon container).
-      // But never count a container as contained in itself.
-    }
-
     const candidates: { id: string; area: number }[] = [];
-    for (const c of containerMeta) {
+    for (const c of parentMeta) {
       if (c.id === gardenosId) continue;
       let inside = false;
       if (isPoint(feature)) inside = polygonContainsPointFeature(c.feature, feature);
@@ -406,7 +553,7 @@ function computeContainment(layout: GardenFeatureCollection | null): Containment
     }
     if (candidates.length === 0) continue;
 
-    // Choose the smallest containing area => the most specific container.
+    // Choose the smallest containing polygon => the most specific parent.
     candidates.sort((a, b) => (a.area || Number.POSITIVE_INFINITY) - (b.area || Number.POSITIVE_INFINITY));
     const parentId = candidates[0].id;
 
@@ -415,15 +562,13 @@ function computeContainment(layout: GardenFeatureCollection | null): Containment
     counts.total += 1;
 
     const category = feature.properties?.category ?? defaultCategoryForGeometry(feature.geometry);
+    const sg = subGroupForKind(feature.properties?.kind);
 
-    if (isPoint(feature)) {
-      if (category === "container") counts.containers += 1;
-      else counts.plants += 1;
-    } else if (isLineString(feature)) {
-      counts.infra += 1;
-    } else if (isPolygon(feature)) {
-      if (category === "container") counts.areas += 1;
-    }
+    if (category === "element" && sg === "infra") counts.infra += 1;
+    else if (category === "element") counts.elements += 1;
+    else if (category === "row" || category === "seedbed" || category === "container") counts.containers += 1;
+    else if (category === "area") counts.areas += 1;
+    else if (category === "condition") counts.conditions += 1;
   }
 
   return { countsByContainerId, childIdsByContainerId };
@@ -455,16 +600,18 @@ function offsetLatLng(map: L.Map, latlng: L.LatLngLiteral, dx = 24, dy = 24): L.
   return { lat: ll.lat, lng: ll.lng };
 }
 
-function markerIcon(kind: GardenFeatureKind | undefined, selected: boolean): L.DivIcon {
+function markerIcon(kind: GardenFeatureKind | undefined, selected: boolean, groupHighlight?: boolean): L.DivIcon {
   const base = "gardenos-marker";
   const kindClass = kind && isKnownKind(kind.toString()) ? `gardenos-marker--${kind}` : "";
   const selectedClass = selected ? "gardenos-marker--selected" : "";
-  const className = [base, kindClass, selectedClass].filter(Boolean).join(" ");
+  const groupClass = groupHighlight ? "gardenos-marker--group" : "";
+  const className = [base, kindClass, selectedClass, groupClass].filter(Boolean).join(" ");
 
   const size = selected ? 16 : 14;
-
-  // Bush is intentionally a bit smaller.
-  const finalSize = kind === "bush" ? (selected ? 14 : 12) : size;
+  const finalSize = kind === "bush" ? (selected ? 14 : 12)
+    : kind === "flower" ? (selected ? 12 : 10)
+    : kind === "lamp" ? (selected ? 14 : 12)
+    : size;
   const finalAnchor = Math.round(finalSize / 2);
 
   return L.divIcon({
@@ -541,6 +688,7 @@ function MapDrawControls({
     setSelected,
     pushUndoSnapshot,
   });
+  // eslint-disable-next-line react-hooks/refs -- cbRef mirrors callback props intentionally
   cbRef.current = {
     persistView,
     loadSavedLayers,
@@ -624,8 +772,130 @@ function MapDrawControls({
     };
     // Only re-run when the map instance changes (effectively once).
     // Callbacks are accessed via cbRef so their identity changes don't matter.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [map, featureGroupRef, mapRef, createKindRef]);
+
+  return null;
+}
+
+// ---------------------------------------------------------------------------
+// Box-select: Shift+drag on map background to multi-select features.
+// ---------------------------------------------------------------------------
+type BoxSelectProps = {
+  featureGroupRef: React.MutableRefObject<L.FeatureGroup | null>;
+  setMultiSelectedIds: React.Dispatch<React.SetStateAction<Set<string>>>;
+};
+
+function BoxSelectOverlay({ featureGroupRef, setMultiSelectedIds }: BoxSelectProps) {
+  const map = useMap();
+
+  useEffect(() => {
+    // Disable Leaflet's built-in box-zoom (also shift+drag) so we can repurpose
+    // shift+drag for our box-select.
+    map.boxZoom.disable();
+
+    const container = map.getContainer();
+    let start: L.Point | null = null;
+    let boxEl: HTMLDivElement | null = null;
+
+    const onMouseDown = (e: MouseEvent) => {
+      if (!e.shiftKey || e.button !== 0) return;
+      // Don't start box-select when clicking on a Leaflet interactive element
+      const target = e.target as HTMLElement;
+      if (target.closest('.leaflet-marker-icon, .leaflet-interactive')) return;
+
+      e.preventDefault();
+      e.stopPropagation();
+      map.dragging.disable();
+
+      const rect = container.getBoundingClientRect();
+      start = L.point(e.clientX - rect.left, e.clientY - rect.top);
+
+      boxEl = document.createElement('div');
+      boxEl.style.cssText =
+        'position:absolute;border:2px dashed var(--foreground);background:rgba(128,128,128,0.15);z-index:9999;pointer-events:none;';
+      boxEl.style.left = start.x + 'px';
+      boxEl.style.top = start.y + 'px';
+      boxEl.style.width = '0px';
+      boxEl.style.height = '0px';
+      container.appendChild(boxEl);
+    };
+
+    const onMouseMove = (e: MouseEvent) => {
+      if (!start || !boxEl) return;
+      const rect = container.getBoundingClientRect();
+      const x = e.clientX - rect.left;
+      const y = e.clientY - rect.top;
+      boxEl.style.left = Math.min(start.x, x) + 'px';
+      boxEl.style.top = Math.min(start.y, y) + 'px';
+      boxEl.style.width = Math.abs(x - start.x) + 'px';
+      boxEl.style.height = Math.abs(y - start.y) + 'px';
+    };
+
+    const onMouseUp = (e: MouseEvent) => {
+      if (!start) return;
+      map.dragging.enable();
+
+      if (boxEl) {
+        boxEl.remove();
+        boxEl = null;
+      }
+
+      const rect = container.getBoundingClientRect();
+      const end = L.point(e.clientX - rect.left, e.clientY - rect.top);
+
+      // Only trigger if the drag distance was significant (> 10 px)
+      if (start.distanceTo(end) < 10) {
+        start = null;
+        return;
+      }
+
+      const sw = map.containerPointToLatLng(
+        L.point(Math.min(start.x, end.x), Math.max(start.y, end.y))
+      );
+      const ne = map.containerPointToLatLng(
+        L.point(Math.max(start.x, end.x), Math.min(start.y, end.y))
+      );
+      const bounds = L.latLngBounds(sw, ne);
+      start = null;
+
+      const group = featureGroupRef.current;
+      if (!group) return;
+
+      const ids = new Set<string>();
+      group.eachLayer((layer) => {
+        const f = (layer as L.Layer & { feature?: GardenFeature }).feature;
+        const id = f?.properties?.gardenosId;
+        if (!id) return;
+        if (layer instanceof L.Marker) {
+          if (bounds.contains(layer.getLatLng())) ids.add(id);
+        } else if (layer instanceof L.Path) {
+          const lb = (layer as unknown as { getBounds?: () => L.LatLngBounds }).getBounds?.();
+          if (lb && bounds.intersects(lb)) ids.add(id);
+        }
+      });
+
+      if (ids.size > 0) {
+        setMultiSelectedIds((prev) => {
+          const next = new Set(prev);
+          for (const id of ids) next.add(id);
+          return next;
+        });
+      }
+    };
+
+    container.addEventListener('mousedown', onMouseDown);
+    document.addEventListener('mousemove', onMouseMove);
+    document.addEventListener('mouseup', onMouseUp);
+
+    return () => {
+      container.removeEventListener('mousedown', onMouseDown);
+      document.removeEventListener('mousemove', onMouseMove);
+      document.removeEventListener('mouseup', onMouseUp);
+      map.boxZoom.enable();
+      map.dragging.enable();
+      if (boxEl) boxEl.remove();
+    };
+  }, [map, featureGroupRef, setMultiSelectedIds]);
 
   return null;
 }
@@ -640,14 +910,47 @@ export function GardenMapClient() {
   const [selected, setSelected] = useState<SelectedFeatureState | null>(null);
   const selectedRef = useRef<SelectedFeatureState | null>(null);
   const [drawMode, setDrawMode] = useState<"select" | "bed" | "plant">("select");
-  const [createPalette, setCreatePalette] = useState<"container" | "plant" | "infra">("container");
-  const [createKind, setCreateKind] = useState<GardenFeatureKind>("bed");
+  const [createPalette, setCreatePalette] = useState<GardenFeatureCategory>("element");
+  const [createKind, setCreateKind] = useState<GardenFeatureKind>("tree");
   const [customKindDefs, setCustomKindDefs] = useState<KindDef[]>(() => loadCustomKindDefsFromStorage());
+  const [hiddenKinds, setHiddenKinds] = useState<Set<string>>(() => loadHiddenKinds());
+  const [hiddenVisibilityKinds, setHiddenVisibilityKinds] = useState<Set<string>>(() => loadHiddenVisKinds());
   const [newKindText, setNewKindText] = useState("");
   const [newKindError, setNewKindError] = useState<string | null>(null);
   const [undoStack, setUndoStack] = useState<UndoSnapshot[]>([]);
-  const [sidebarTab, setSidebarTab] = useState<"create" | "content">("create");
+  const [sidebarTab, setSidebarTab] = useState<"create" | "content" | "groups" | "view">("create");
   const [isEditing, setIsEditing] = useState(false);
+  const [multiSelectedIds, setMultiSelectedIds] = useState<Set<string>>(new Set());
+  const multiSelectedIdsRef = useRef<Set<string>>(new Set());
+  const [hiddenCategories, setHiddenCategories] = useState<Set<GardenFeatureCategory>>(new Set());
+  const [showSatellite, setShowSatellite] = useState(false);
+  const [showMatrikel, setShowMatrikel] = useState(false);
+  const [showJordart, setShowJordart] = useState(false);
+  const [showTerrain, setShowTerrain] = useState(false);
+  const [dfUser, setDfUser] = useState(() => window.localStorage.getItem("gardenos:df:user") ?? "");
+  const [dfPass, setDfPass] = useState(() => window.localStorage.getItem("gardenos:df:pass") ?? "");
+  const dfReady = dfUser.length > 0 && dfPass.length > 0;
+  const [dfTestStatus, setDfTestStatus] = useState<"idle" | "testing" | "ok" | "fail">("idle");
+
+  const testDfCredentials = async (user: string, pass: string) => {
+    setDfTestStatus("testing");
+    try {
+      const url = `https://services.datafordeler.dk/MATRIKLEN2/MatGaeldendeOgForeloebigWMS/1.0.0/WMS?username=${encodeURIComponent(user)}&password=${encodeURIComponent(pass)}&service=WMS&request=GetCapabilities`;
+      const res = await fetch(url);
+      const text = await res.text();
+      if (text.includes("WMS_Capabilities")) {
+        setDfTestStatus("ok");
+      } else {
+        setDfTestStatus("fail");
+      }
+    } catch {
+      setDfTestStatus("fail");
+    }
+  };
+  const [groupRegistry, setGroupRegistry] = useState<GroupRegistry>(() => loadGroupRegistry());
+  const [highlightedGroupId, setHighlightedGroupId] = useState<string | null>(null);
+  const [groupSectionOpen, setGroupSectionOpen] = useState(false);
+  const edgeLabelLayerGroupRef = useRef<L.LayerGroup | null>(null);
   const [layoutForContainment, setLayoutForContainment] = useState<GardenFeatureCollection>(() => {
     const parsed = safeJsonParse<unknown>(window.localStorage.getItem(STORAGE_LAYOUT_KEY));
     if (isFeatureCollection(parsed)) return parsed;
@@ -665,7 +968,35 @@ export function GardenMapClient() {
     []
   );
 
+  /** Select a feature by its gardenosId and switch to Content tab */
+  const selectFeatureById = useCallback(
+    (id: string) => {
+      const group = featureGroupRef.current;
+      if (!group) return;
+      let found = false;
+      group.eachLayer((layer) => {
+        if (found) return;
+        const layerWithFeature = layer as L.Layer & { feature?: GardenFeature };
+        const f = layerWithFeature.feature;
+        if (f?.properties?.gardenosId === id) {
+          found = true;
+          const typedFeature = ensureDefaultProperties(f);
+          setMultiSelectedIds(new Set());
+          setSelectedAndFocus({ gardenosId: id, feature: typedFeature });
+        }
+      });
+    },
+    [setSelectedAndFocus]
+  );
+
   const allKindDefs = useMemo(() => {
+    const all = dedupeKindDefs([...KNOWN_KIND_DEFS, ...customKindDefs]);
+    if (hiddenKinds.size === 0) return all;
+    return all.filter((d) => !hiddenKinds.has(d.kind.toLowerCase()));
+  }, [customKindDefs, hiddenKinds]);
+
+  // Full list including hidden — used for label lookups / existing features
+  const allKindDefsIncludingHidden = useMemo(() => {
     return dedupeKindDefs([...KNOWN_KIND_DEFS, ...customKindDefs]);
   }, [customKindDefs]);
 
@@ -674,10 +1005,16 @@ export function GardenMapClient() {
   }, [allKindDefs]);
 
   const defaultCreateKindForPalette = useMemo(() => {
-    const firstContainer = allKindDefs.find((d) => d.category === "container")?.kind ?? "bed";
-    const firstPlant = allKindDefs.find((d) => d.category === "element" && d.geometry === "point" && d.group !== "infra")?.kind ?? "tree";
-    const firstInfra = allKindDefs.find((d) => d.group === "infra" && d.geometry === "polyline")?.kind ?? "water";
-    return { container: firstContainer, plant: firstPlant, infra: firstInfra } as const;
+    const first = (cat: GardenFeatureCategory) =>
+      allKindDefs.find((d) => d.category === cat)?.kind ?? "tree";
+    return {
+      element: first("element"),
+      row: first("row"),
+      seedbed: first("seedbed"),
+      container: first("container"),
+      area: first("area"),
+      condition: first("condition"),
+    } as const;
   }, [allKindDefs]);
 
   const selectedGeometry = useMemo<KindGeometry | null>(() => {
@@ -711,14 +1048,19 @@ export function GardenMapClient() {
         .map((f) => [f.properties!.gardenosId, f])
     );
 
-    const out: { id: string; text: string }[] = [];
+    // Category sort order: larger containers first, then smaller, elements last
+    const catOrder: Record<string, number> = { area: 0, container: 1, seedbed: 2, row: 3, element: 4, condition: 5 };
+
+    const out: { id: string; text: string; sortCat: number; sortLabel: string }[] = [];
     for (const id of ids) {
       const f = byId.get(id);
       if (!f) continue;
       const name = (f.properties?.name ?? "").trim();
       const label = kindLabel(f.properties?.kind);
-      out.push({ id, text: name ? `${label}: ${name}` : label });
+      const cat = (f.properties?.category ?? "element") as string;
+      out.push({ id, text: name ? `${label}: ${name}` : label, sortCat: catOrder[cat] ?? 4, sortLabel: label.toLowerCase() });
     }
+    out.sort((a, b) => a.sortCat - b.sortCat || a.sortLabel.localeCompare(b.sortLabel, "da") || a.text.localeCompare(b.text, "da"));
     return out;
   }, [containment.childIdsByContainerId, layoutForContainment, selected]);
 
@@ -730,15 +1072,29 @@ export function GardenMapClient() {
       const gardenosId = feature?.properties?.gardenosId;
       const isSelected = !!selectedId && !!gardenosId && gardenosId === selectedId;
 
+      // ── Layer visibility based on hiddenCategories & hiddenVisibilityKinds ──
+      const layerCat = (feature?.properties?.category ?? "element") as GardenFeatureCategory;
+      const isHiddenCat = hiddenCategories.has(layerCat);
+      const isHiddenKind = !!kind && hiddenVisibilityKinds.has((kind as string).toLowerCase());
+      const isHidden = isHiddenCat || isHiddenKind;
+      const el = (layer as unknown as { getElement?: () => HTMLElement | undefined }).getElement?.();
+      if (el) {
+        el.style.display = isHidden ? "none" : "";
+      } else if (layer instanceof L.Marker) {
+        // Marker element may not exist yet; set opacity instead
+        layer.setOpacity(isHidden ? 0 : 1);
+      }
+      if (isHidden) return;
+
       const shouldShowContainment =
         !!feature &&
         feature.geometry.type === "Polygon" &&
-        (feature.properties?.category ?? defaultCategoryForGeometry(feature.geometry)) === "container";
+        ["container", "area", "seedbed", "row"].includes(feature.properties?.category ?? "");
 
       const containmentCounts = shouldShowContainment && gardenosId ? containment.countsByContainerId.get(gardenosId) : undefined;
 
       const containmentSuffix = containmentCounts && containmentCounts.total > 0
-        ? ` • ${containmentCounts.plants} planter • ${containmentCounts.containers} beholdere • ${containmentCounts.areas} områder • ${containmentCounts.infra} teknik`
+        ? ` • ${containmentCounts.elements} elem. • ${containmentCounts.containers} cont. • ${containmentCounts.areas} omr. • ${containmentCounts.infra} infra`
         : "";
 
       // Tooltip to reinforce what a thing is.
@@ -786,6 +1142,43 @@ export function GardenMapClient() {
         return;
       }
 
+      // Area polygons: thin dashed border, very faint fill
+      const cat = feature?.properties?.category;
+      if (cat === "area") {
+        maybePath.setStyle({
+          color: "var(--foreground)",
+          weight: 2,
+          opacity: 0.7,
+          fillOpacity: 0.03,
+          dashArray: "8 4",
+        });
+        return;
+      }
+
+      // Condition overlays: very translucent, dotted
+      if (cat === "condition") {
+        maybePath.setStyle({
+          color: "var(--foreground)",
+          weight: 1,
+          opacity: 0.5,
+          fillOpacity: 0.06,
+          dashArray: "2 4",
+        });
+        return;
+      }
+
+      // Row lines: thicker for easy clicking, short dashes
+      if (cat === "row") {
+        maybePath.setStyle({
+          color: "var(--foreground)",
+          weight: 5,
+          opacity: 0.8,
+          fillOpacity: 0,
+          dashArray: "6 4",
+        });
+        return;
+      }
+
       // Technical/infrastructure lines
       if (kind === "water") {
         maybePath.setStyle({
@@ -818,13 +1211,52 @@ export function GardenMapClient() {
         dashArray: undefined,
       });
     },
-    [containment]
+    [containment, hiddenCategories, hiddenVisibilityKinds]
   );
+
+  const highlightedGroupIdRef = useRef<string | null>(null);
 
   const updateSelectionStyles = useCallback(
     (selectedId: string | null) => {
       const group = featureGroupRef.current;
       if (!group) return;
+
+      // --- Z-order: ensure areas/conditions are behind smaller shapes so
+      //     rows, containers, seedbeds etc. are clickable even when inside
+      //     a large area polygon. ---
+      const zPriority: Record<string, number> = {
+        condition: 0,
+        area: 1,
+        seedbed: 2,
+        container: 3,
+        row: 4,
+        element: 5,
+      };
+      const allLayersForZ: Array<{ layer: L.Layer; pri: number }> = [];
+      group.eachLayer((layer) => {
+        const f = (layer as L.Layer & { feature?: GardenFeature }).feature;
+        const cat = f?.properties?.category ?? "element";
+        allLayersForZ.push({ layer, pri: zPriority[cat] ?? 3 });
+      });
+      allLayersForZ.sort((a, b) => a.pri - b.pri);
+      for (const { layer: zLayer } of allLayersForZ) {
+        (zLayer as unknown as { bringToFront?: () => void }).bringToFront?.();
+      }
+      // --- end z-order ---
+
+      // Determine groupId of the selected item (if any)
+      let selectedGroupId: string | undefined;
+      if (selectedId) {
+        group.eachLayer((layer) => {
+          const f = (layer as L.Layer & { feature?: GardenFeature }).feature;
+          if (f?.properties?.gardenosId === selectedId) {
+            selectedGroupId = f.properties?.groupId;
+          }
+        });
+      }
+
+      const multiIds = multiSelectedIdsRef.current;
+      const hlGroupId = highlightedGroupIdRef.current;
 
       group.eachLayer((layer) => {
         // First apply the base visuals per kind, then apply selection highlight on top.
@@ -836,9 +1268,21 @@ export function GardenMapClient() {
         };
 
         const gardenosId = layerWithFeature.feature?.properties?.gardenosId;
+        const layerGroupId = layerWithFeature.feature?.properties?.groupId;
         const isSelected = !!selectedId && gardenosId === selectedId;
+        const isMultiSelected = !!gardenosId && multiIds.has(gardenosId);
+        const isGroupSibling = !isSelected && !!selectedGroupId && !!layerGroupId && layerGroupId === selectedGroupId;
+        const isHighlightedGroup = !isSelected && !!hlGroupId && !!layerGroupId && layerGroupId === hlGroupId;
 
-        if (layerWithFeature instanceof L.Marker) return;
+        // Marker visual for multi-select, group siblings, and highlighted group
+        if (layerWithFeature instanceof L.Marker) {
+          if (isMultiSelected) {
+            layerWithFeature.setIcon(markerIcon(layerWithFeature.feature?.properties?.kind, true));
+          } else if (isGroupSibling || isHighlightedGroup) {
+            layerWithFeature.setIcon(markerIcon(layerWithFeature.feature?.properties?.kind, false, true));
+          }
+          return;
+        }
 
         const maybePath = layerWithFeature as unknown as {
           setStyle?: (options: L.PathOptions) => void;
@@ -868,6 +1312,24 @@ export function GardenMapClient() {
             fillOpacity: 0.12,
           });
           maybePath.bringToFront?.();
+        } else if (isMultiSelected) {
+          maybePath.setStyle({
+            color: "var(--foreground)",
+            weight: 3,
+            opacity: 1,
+            fillOpacity: 0.08,
+          });
+          maybePath.bringToFront?.();
+        } else if (isGroupSibling || isHighlightedGroup) {
+          maybePath.setStyle({
+            color: "#f59e0b",
+            weight: 4,
+            opacity: 1,
+            fillColor: "#f59e0b",
+            fillOpacity: 0.12,
+            dashArray: "8 4",
+          });
+          maybePath.bringToFront?.();
         } else {
           // Base visuals already applied above.
         }
@@ -876,9 +1338,117 @@ export function GardenMapClient() {
     [applyLayerVisuals, featureGroupRef]
   );
 
+  // ---------------------------------------------------------------------------
+  // Edge-length labels: show meter measurements on each polygon edge when
+  // the polygon is selected (container / area / condition).
+  // ---------------------------------------------------------------------------
+  const updateEdgeLabels = useCallback(
+    (selectedId: string | null) => {
+      const map = mapRef.current;
+
+      // Always clear previous labels
+      if (edgeLabelLayerGroupRef.current) {
+        edgeLabelLayerGroupRef.current.clearLayers();
+        if (map && map.hasLayer(edgeLabelLayerGroupRef.current)) {
+          map.removeLayer(edgeLabelLayerGroupRef.current);
+        }
+        edgeLabelLayerGroupRef.current = null;
+      }
+
+      if (!map || !selectedId) return;
+
+      // Find the selected layer
+      const group = featureGroupRef.current;
+      if (!group) return;
+      let selectedLayer: L.Layer | null = null;
+      group.eachLayer((layer) => {
+        const f = (layer as L.Layer & { feature?: GardenFeature }).feature;
+        if (f?.properties?.gardenosId === selectedId) selectedLayer = layer;
+      });
+      if (!selectedLayer) return;
+
+      // Only for polygons (container / area / condition)
+      const feature = (selectedLayer as L.Layer & { feature?: GardenFeature }).feature;
+      const cat = feature?.properties?.category;
+      if (!cat || cat === "element") return;
+      if (feature?.geometry.type !== "Polygon") return;
+
+      // Get the polygon's latlngs
+      const getLatLngs = (selectedLayer as unknown as { getLatLngs?: () => L.LatLng[][] | L.LatLng[] }).getLatLngs;
+      if (typeof getLatLngs !== "function") return;
+      const raw = getLatLngs.call(selectedLayer);
+      const latlngs: L.LatLng[] = Array.isArray(raw[0]) ? (raw as L.LatLng[][])[0] : (raw as L.LatLng[]);
+      if (!latlngs || latlngs.length < 2) return;
+
+      const labelGroup = L.layerGroup();
+      const n = latlngs.length;
+
+      for (let i = 0; i < n; i++) {
+        const a = latlngs[i];
+        const b = latlngs[(i + 1) % n];
+        const dist = a.distanceTo(b); // meters
+        if (dist < 0.01) continue; // skip degenerate edges
+
+        const midLat = (a.lat + b.lat) / 2;
+        const midLng = (a.lng + b.lng) / 2;
+
+        const label = formatEdgeLength(dist);
+        const icon = L.divIcon({
+          className: "gardenos-edge-label",
+          html: `<span>${label}</span>`,
+          iconSize: [0, 0],
+          iconAnchor: [0, 0],
+        });
+
+        const marker = L.marker([midLat, midLng], {
+          icon,
+          interactive: false,
+          keyboard: false,
+        });
+        labelGroup.addLayer(marker);
+      }
+
+      // Also show area as a center label
+      const area = areaForPolygonFeature(feature as Feature<Polygon, GardenFeatureProperties>);
+      if (area != null && area > 0) {
+        // Compute centroid
+        let cLat = 0, cLng = 0;
+        for (const p of latlngs) { cLat += p.lat; cLng += p.lng; }
+        cLat /= n;
+        cLng /= n;
+
+        const areaIcon = L.divIcon({
+          className: "gardenos-area-label",
+          html: `<span>${formatAreaSquareMeters(area)}</span>`,
+          iconSize: [0, 0],
+          iconAnchor: [0, 0],
+        });
+        const areaMarker = L.marker([cLat, cLng], {
+          icon: areaIcon,
+          interactive: false,
+          keyboard: false,
+        });
+        labelGroup.addLayer(areaMarker);
+      }
+
+      labelGroup.addTo(map);
+      edgeLabelLayerGroupRef.current = labelGroup;
+    },
+    [featureGroupRef, mapRef]
+  );
+
+  // Re-run visuals when highlightedGroupId changes
   useEffect(() => {
+    highlightedGroupIdRef.current = highlightedGroupId;
     updateSelectionStyles(selected?.gardenosId ?? null);
-  }, [layoutForContainment, selected?.gardenosId, updateSelectionStyles]);
+    updateEdgeLabels(selected?.gardenosId ?? null);
+  }, [highlightedGroupId, selected?.gardenosId, updateSelectionStyles, updateEdgeLabels]);
+
+  useEffect(() => {
+    multiSelectedIdsRef.current = multiSelectedIds;
+    updateSelectionStyles(selected?.gardenosId ?? null);
+    updateEdgeLabels(selected?.gardenosId ?? null);
+  }, [layoutForContainment, multiSelectedIds, selected?.gardenosId, updateSelectionStyles, updateEdgeLabels]);
 
   useEffect(() => {
     selectedRef.current = selected;
@@ -888,8 +1458,24 @@ export function GardenMapClient() {
     (layer: L.Layer, feature: GardenFeature) => {
       const typedFeature = ensureDefaultProperties(feature);
 
-      const onClick = () => {
-        setSelectedAndFocus({ gardenosId: typedFeature.properties!.gardenosId, feature: typedFeature });
+      const onClick = (e: L.LeafletMouseEvent) => {
+        const id = typedFeature.properties!.gardenosId;
+        const origEvt = (e as unknown as { originalEvent?: MouseEvent }).originalEvent;
+
+        if (origEvt?.shiftKey) {
+          // Shift+click: toggle in multi-selection
+          setMultiSelectedIds((prev) => {
+            const next = new Set(prev);
+            if (next.has(id)) next.delete(id);
+            else next.add(id);
+            return next;
+          });
+          return;
+        }
+
+        // Normal click: single-select, clear multi-selection
+        setMultiSelectedIds(new Set());
+        setSelectedAndFocus({ gardenosId: id, feature: typedFeature });
       };
 
       layer.on("click", onClick);
@@ -907,7 +1493,7 @@ export function GardenMapClient() {
       // Apply visuals immediately.
       applyLayerVisuals(layer, selectedRef.current?.gardenosId ?? null);
     },
-    [applyLayerVisuals, setSelectedAndFocus]
+    [applyLayerVisuals, setMultiSelectedIds, setSelectedAndFocus]
   );
 
   const savedLayout = useMemo(() => {
@@ -946,7 +1532,9 @@ export function GardenMapClient() {
   // Keep a ref to attachClickHandler so loadSnapshot doesn't depend on its
   // identity (which changes whenever containment changes).
   const attachClickHandlerRef = useRef(attachClickHandler);
-  attachClickHandlerRef.current = attachClickHandler;
+  useEffect(() => {
+    attachClickHandlerRef.current = attachClickHandler;
+  }, [attachClickHandler]);
 
   const loadSnapshot = useCallback(
     (snapshot: UndoSnapshot) => {
@@ -1009,13 +1597,79 @@ export function GardenMapClient() {
     }
   }, [setSelectedAndFocus]);
 
+  // ---------------------------------------------------------------------------
+  // Helper: build a gardenosId → L.Layer lookup for the current featureGroup.
+  // ---------------------------------------------------------------------------
+  const buildLayerById = useCallback(() => {
+    const group = featureGroupRef.current;
+    const map = new Map<string, L.Layer>();
+    if (!group) return map;
+    group.eachLayer((layer) => {
+      const f = (layer as L.Layer & { feature?: GardenFeature }).feature;
+      const id = f?.properties?.gardenosId;
+      if (id) map.set(id, layer);
+    });
+    return map;
+  }, []);
+
+  // ---------------------------------------------------------------------------
+  // Helper: compute the centroid of a path's latlngs (for tracking drag delta).
+  // ---------------------------------------------------------------------------
+  const pathCentroid = useCallback((layer: L.Path): L.LatLng => {
+    const ll = (layer as unknown as { getLatLngs: () => L.LatLng[] | L.LatLng[][] }).getLatLngs();
+    const flat: L.LatLng[] = Array.isArray(ll[0]) ? (ll as L.LatLng[][])[0] : (ll as L.LatLng[]);
+    let lat = 0, lng = 0;
+    for (const p of flat) { lat += p.lat; lng += p.lng; }
+    return L.latLng(lat / flat.length, lng / flat.length);
+  }, []);
+
+  // ---------------------------------------------------------------------------
+  // Move a child layer by a lat/lng delta.
+  // ---------------------------------------------------------------------------
+  const translateLayer = useCallback((layer: L.Layer, dLat: number, dLng: number) => {
+    if (layer instanceof L.Marker) {
+      const ll = layer.getLatLng();
+      layer.setLatLng(L.latLng(ll.lat + dLat, ll.lng + dLng));
+      return;
+    }
+
+    if (layer instanceof L.Path) {
+      const raw = (layer as unknown as { getLatLngs: () => L.LatLng[] | L.LatLng[][] }).getLatLngs();
+
+      const shift = (arr: L.LatLng[]): L.LatLng[] =>
+        arr.map((ll) => L.latLng(ll.lat + dLat, ll.lng + dLng));
+
+      if (Array.isArray(raw[0]) && raw[0][0] instanceof L.LatLng) {
+        // Polygon (array of rings) or multi-ring polyline
+        (layer as unknown as { setLatLngs: (l: L.LatLng[][]) => void }).setLatLngs(
+          (raw as L.LatLng[][]).map(shift)
+        );
+      } else {
+        // Polyline (flat array)
+        (layer as unknown as { setLatLngs: (l: L.LatLng[]) => void }).setLatLngs(
+          shift(raw as L.LatLng[])
+        );
+      }
+    }
+  }, []);
+
   const setMoveAndPersistHandlersEnabled = useCallback(
     (enabled: boolean, selectedId: string | null) => {
       const group = featureGroupRef.current;
       if (!group) return;
 
       group.eachLayer((layer) => {
-        const layerWithHandlers = layer as L.Layer & { __gardenosOnDragEnd?: () => void };
+        const layerWithHandlers = layer as L.Layer & {
+          __gardenosOnDragEnd?: () => void;
+          __gardenosOnDragStart?: () => void;
+          __gardenosOnDrag?: () => void;
+          __gardenosPrevCenter?: L.LatLng;
+          __gardenosChildLayers?: L.Layer[];
+          __gardenosOnGroupDragStart?: () => void;
+          __gardenosOnGroupDrag?: () => void;
+          __gardenosGroupSiblings?: L.Layer[];
+          __gardenosGroupPrevCenter?: L.LatLng;
+        };
         const layerFeature = (layer as L.Layer & { feature?: GardenFeature }).feature;
         const gardenosId = layerFeature?.properties?.gardenosId;
         const isSelected = !!selectedId && gardenosId === selectedId;
@@ -1025,6 +1679,121 @@ export function GardenMapClient() {
             const onDragEnd = () => rebuildFromGroupAndUpdateSelection();
             layerWithHandlers.__gardenosOnDragEnd = onDragEnd;
             layer.on("dragend", onDragEnd);
+          }
+
+          // Refresh edge labels during drag
+          if (isSelected && layer instanceof L.Path) {
+            const layerWithEdgeDrag = layer as L.Layer & { __gardenosOnEdgeDrag?: () => void };
+            if (!layerWithEdgeDrag.__gardenosOnEdgeDrag) {
+              const onEdgeDrag = () => {
+                if (gardenosId) updateEdgeLabelsRef.current(gardenosId);
+              };
+              layerWithEdgeDrag.__gardenosOnEdgeDrag = onEdgeDrag;
+              layer.on("drag", onEdgeDrag);
+            }
+          }
+
+          // -----------------------------------------------------------------
+          // Group-drag: when a container polygon is dragged, move all children
+          // (trees, bushes, nested containers, lines, etc.) along with it.
+          // -----------------------------------------------------------------
+          const isContainerPolygon =
+            isSelected &&
+            layer instanceof L.Path &&
+            layerFeature?.geometry?.type === "Polygon" &&
+            ["container", "area", "seedbed", "row"].includes(layerFeature?.properties?.category ?? "");
+
+          if (isContainerPolygon && !layerWithHandlers.__gardenosOnDragStart) {
+            const onDragStart = () => {
+              // Identify child layers from the containment map
+              const childIds = containment.childIdsByContainerId.get(gardenosId!) ?? [];
+              if (childIds.length === 0) {
+                layerWithHandlers.__gardenosChildLayers = [];
+                return;
+              }
+              const layerById = buildLayerById();
+              layerWithHandlers.__gardenosChildLayers = childIds
+                .map((id) => layerById.get(id))
+                .filter((l): l is L.Layer => !!l);
+
+              // Store initial centroid of the container for computing frame-by-frame delta
+              layerWithHandlers.__gardenosPrevCenter = pathCentroid(layer as L.Path);
+            };
+
+            const onDrag = () => {
+              const children = layerWithHandlers.__gardenosChildLayers;
+              const prev = layerWithHandlers.__gardenosPrevCenter;
+              if (!children?.length || !prev) return;
+
+              const now = pathCentroid(layer as L.Path);
+              const dLat = now.lat - prev.lat;
+              const dLng = now.lng - prev.lng;
+
+              if (Math.abs(dLat) < 1e-12 && Math.abs(dLng) < 1e-12) return;
+
+              for (const child of children) {
+                translateLayer(child, dLat, dLng);
+              }
+
+              layerWithHandlers.__gardenosPrevCenter = now;
+            };
+
+            layerWithHandlers.__gardenosOnDragStart = onDragStart;
+            layerWithHandlers.__gardenosOnDrag = onDrag;
+            layer.on("dragstart", onDragStart);
+            layer.on("drag", onDrag);
+          }
+
+          // -----------------------------------------------------------------
+          // Group-drag: when a user-defined group member is dragged, move
+          // all other layers in the same group along with it.
+          // -----------------------------------------------------------------
+          const layerGroupId = layerFeature?.properties?.groupId;
+          const isGroupMember = isSelected && !!layerGroupId;
+
+          if (isGroupMember && !layerWithHandlers.__gardenosOnGroupDragStart) {
+            const onGroupDragStart = () => {
+              const allLayers = buildLayerById();
+              const siblings: L.Layer[] = [];
+              for (const [id, l] of allLayers) {
+                if (id === gardenosId) continue;
+                const f = (l as L.Layer & { feature?: GardenFeature }).feature;
+                if (f?.properties?.groupId === layerGroupId) siblings.push(l);
+              }
+              layerWithHandlers.__gardenosGroupSiblings = siblings;
+              if (layer instanceof L.Marker) {
+                layerWithHandlers.__gardenosGroupPrevCenter = layer.getLatLng();
+              } else if (layer instanceof L.Path) {
+                layerWithHandlers.__gardenosGroupPrevCenter = pathCentroid(layer);
+              }
+            };
+
+            const onGroupDrag = () => {
+              const siblings = layerWithHandlers.__gardenosGroupSiblings;
+              const prev = layerWithHandlers.__gardenosGroupPrevCenter;
+              if (!siblings?.length || !prev) return;
+
+              let now: L.LatLng;
+              if (layer instanceof L.Marker) {
+                now = layer.getLatLng();
+              } else if (layer instanceof L.Path) {
+                now = pathCentroid(layer);
+              } else return;
+
+              const dLat = now.lat - prev.lat;
+              const dLng = now.lng - prev.lng;
+              if (Math.abs(dLat) < 1e-12 && Math.abs(dLng) < 1e-12) return;
+
+              for (const sibling of siblings) {
+                translateLayer(sibling, dLat, dLng);
+              }
+              layerWithHandlers.__gardenosGroupPrevCenter = now;
+            };
+
+            layerWithHandlers.__gardenosOnGroupDragStart = onGroupDragStart;
+            layerWithHandlers.__gardenosOnGroupDrag = onGroupDrag;
+            layer.on("dragstart", onGroupDragStart);
+            layer.on("drag", onGroupDrag);
           }
 
           // Enable dragging for paths (polygons) if leaflet-path-drag is available.
@@ -1085,10 +1854,38 @@ export function GardenMapClient() {
           return;
         }
 
+        // --- Cleanup when disabled ---
+
         if (layerWithHandlers.__gardenosOnDragEnd) {
           layer.off("dragend", layerWithHandlers.__gardenosOnDragEnd);
           delete layerWithHandlers.__gardenosOnDragEnd;
         }
+
+        if (layerWithHandlers.__gardenosOnDragStart) {
+          layer.off("dragstart", layerWithHandlers.__gardenosOnDragStart);
+          delete layerWithHandlers.__gardenosOnDragStart;
+        }
+
+        if (layerWithHandlers.__gardenosOnDrag) {
+          layer.off("drag", layerWithHandlers.__gardenosOnDrag);
+          delete layerWithHandlers.__gardenosOnDrag;
+        }
+
+        delete layerWithHandlers.__gardenosPrevCenter;
+        delete layerWithHandlers.__gardenosChildLayers;
+
+        if (layerWithHandlers.__gardenosOnGroupDragStart) {
+          layer.off("dragstart", layerWithHandlers.__gardenosOnGroupDragStart);
+          delete layerWithHandlers.__gardenosOnGroupDragStart;
+        }
+
+        if (layerWithHandlers.__gardenosOnGroupDrag) {
+          layer.off("drag", layerWithHandlers.__gardenosOnGroupDrag);
+          delete layerWithHandlers.__gardenosOnGroupDrag;
+        }
+
+        delete layerWithHandlers.__gardenosGroupSiblings;
+        delete layerWithHandlers.__gardenosGroupPrevCenter;
 
         if (layer instanceof L.Path) {
           const maybeDragging = layer as unknown as { dragging?: { disable?: () => void } };
@@ -1101,7 +1898,7 @@ export function GardenMapClient() {
         }
       });
     },
-    [rebuildFromGroupAndUpdateSelection]
+    [buildLayerById, containment.childIdsByContainerId, pathCentroid, rebuildFromGroupAndUpdateSelection, translateLayer]
   );
 
   // ---------------------------------------------------------------------------
@@ -1111,11 +1908,29 @@ export function GardenMapClient() {
   // get selected" visual bug and the crash in _disableLayerEdit.
   // ---------------------------------------------------------------------------
 
+  const updateEdgeLabelsRef = useRef(updateEdgeLabels);
+  updateEdgeLabelsRef.current = updateEdgeLabels;
+
   const enableEditingOnLayer = useCallback((layer: L.Layer) => {
     // Enable vertex editing for paths (polygons, polylines)
     const maybeEditable = layer as unknown as { editing?: { enable?: () => void; disable?: () => void } };
     if (typeof maybeEditable.editing?.enable === "function") {
       try { maybeEditable.editing.enable(); } catch { /* noop */ }
+    }
+
+    // Attach events to refresh edge labels when shape changes during editing.
+    // 'editdrag' fires every frame while the user drags a vertex handle.
+    // 'edit' fires once when the vertex drag finishes.
+    const layerWithEdit = layer as L.Layer & { __gardenosEditHandler?: () => void };
+    if (!layerWithEdit.__gardenosEditHandler) {
+      const onEdit = () => {
+        const f = (layer as L.Layer & { feature?: GardenFeature }).feature;
+        const id = f?.properties?.gardenosId;
+        if (id) updateEdgeLabelsRef.current(id);
+      };
+      layerWithEdit.__gardenosEditHandler = onEdit;
+      layer.on("edit", onEdit);
+      layer.on("editdrag", onEdit);
     }
   }, []);
 
@@ -1124,6 +1939,14 @@ export function GardenMapClient() {
     const maybeEditable = layer as unknown as { editing?: { enable?: () => void; disable?: () => void } };
     if (typeof maybeEditable.editing?.disable === "function") {
       try { maybeEditable.editing.disable(); } catch { /* noop */ }
+    }
+
+    // Clean up the edit event handlers
+    const layerWithEdit = layer as L.Layer & { __gardenosEditHandler?: () => void };
+    if (layerWithEdit.__gardenosEditHandler) {
+      layer.off("edit", layerWithEdit.__gardenosEditHandler);
+      layer.off("editdrag", layerWithEdit.__gardenosEditHandler);
+      delete layerWithEdit.__gardenosEditHandler;
     }
   }, []);
 
@@ -1157,10 +1980,10 @@ export function GardenMapClient() {
     const selectedId = selectedRef.current?.gardenosId ?? null;
     if (!selectedId) return;
 
-    // Stop any active draw handler
     activeDrawHandlerRef.current?.disable();
     activeDrawHandlerRef.current = null;
     setDrawMode("select");
+    setMultiSelectedIds(new Set());
 
     pushUndoSnapshot();
     setIsEditing(true);
@@ -1197,16 +2020,17 @@ export function GardenMapClient() {
     const map = mapRef.current;
     if (!map) return;
 
-    // Force-disable any editing mode before drawing.
-    // This makes drawing reliable even if Leaflet.draw edit mode was enabled outside our UI.
+    setMultiSelectedIds(new Set());
     stopEditing();
 
     createKindRef.current = kind;
     activeDrawHandlerRef.current?.disable();
 
     const kindKey = kind.toString().toLowerCase();
-    const geometry: KindGeometry =
-      kindDefByKind.get(kindKey)?.geometry ?? (kind === "bed" || kind === "greenhouse" ? "polygon" : "point");
+    const def = kindDefByKind.get(kindKey);
+    // Elements default to point (markers); everything else defaults to polygon (areas)
+    const fallbackGeometry: KindGeometry = def?.category === "element" || (!def && kindKey !== "bed" && kindKey !== "greenhouse") ? "point" : "polygon";
+    const geometry: KindGeometry = def?.geometry ?? fallbackGeometry;
 
     if (geometry === "polygon") {
       // Leaflet.draw handler works even if toolbar icons are missing.
@@ -1348,6 +2172,30 @@ export function GardenMapClient() {
     rebuildFromGroupAndUpdateSelection();
   }, [pushUndoSnapshot, rebuildFromGroupAndUpdateSelection, selected, updateSelectionStyles]);
 
+  const deleteMultiSelected = useCallback(() => {
+    if (multiSelectedIds.size === 0) return;
+    const group = featureGroupRef.current;
+    if (!group) return;
+
+    pushUndoSnapshot();
+
+    const layersToRemove: L.Layer[] = [];
+    group.eachLayer((layer) => {
+      const f = (layer as L.Layer & { feature?: GardenFeature }).feature;
+      const id = f?.properties?.gardenosId;
+      if (id && multiSelectedIds.has(id)) layersToRemove.push(layer);
+    });
+
+    for (const layer of layersToRemove) {
+      group.removeLayer(layer);
+    }
+
+    setMultiSelectedIds(new Set());
+    setSelected(null);
+    updateSelectionStyles(null);
+    rebuildFromGroupAndUpdateSelection();
+  }, [multiSelectedIds, pushUndoSnapshot, rebuildFromGroupAndUpdateSelection, updateSelectionStyles]);
+
   const deleteAll = useCallback(() => {
     const group = featureGroupRef.current;
     if (!group) return;
@@ -1359,6 +2207,187 @@ export function GardenMapClient() {
     persistAll();
     setLayoutForContainment({ type: "FeatureCollection", features: [] } as GardenFeatureCollection);
   }, [persistAll, pushUndoSnapshot, updateSelectionStyles]);
+
+  const groupMultiSelected = useCallback(() => {
+    if (multiSelectedIds.size < 2) return;
+
+    pushUndoSnapshot();
+    const gid = newId();
+
+    // Auto-name: "Gruppe N" where N is next available number
+    const existingNumbers = Object.values(groupRegistry)
+      .map((m) => { const match = m.name.match(/^Gruppe (\d+)$/); return match ? parseInt(match[1], 10) : 0; })
+      .filter((n) => n > 0);
+    const nextNum = existingNumbers.length > 0 ? Math.max(...existingNumbers) + 1 : 1;
+    const groupName = `Gruppe ${nextNum}`;
+
+    const group = featureGroupRef.current;
+    if (!group) return;
+
+    group.eachLayer((layer) => {
+      const layerWithFeature = layer as L.Layer & { feature?: GardenFeature };
+      const f = layerWithFeature.feature;
+      if (!f) return;
+      const id = f.properties?.gardenosId;
+      if (id && multiSelectedIds.has(id)) {
+        layerWithFeature.feature = {
+          ...f,
+          properties: { ...f.properties!, groupId: gid, groupName },
+        };
+      }
+    });
+
+    // Save to registry
+    const nextReg = { ...groupRegistry, [gid]: { name: groupName } };
+    setGroupRegistry(nextReg);
+    saveGroupRegistry(nextReg);
+
+    rebuildFromGroupAndUpdateSelection();
+    setMultiSelectedIds(new Set());
+  }, [multiSelectedIds, pushUndoSnapshot, rebuildFromGroupAndUpdateSelection, groupRegistry]);
+
+  const ungroupSelected = useCallback(() => {
+    if (!selected) return;
+    const gid = selected.feature.properties?.groupId;
+    if (!gid) return;
+
+    pushUndoSnapshot();
+    const group = featureGroupRef.current;
+    if (!group) return;
+
+    group.eachLayer((layer) => {
+      const layerWithFeature = layer as L.Layer & { feature?: GardenFeature };
+      const f = layerWithFeature.feature;
+      if (f?.properties?.groupId === gid) {
+        layerWithFeature.feature = {
+          ...f,
+          properties: { ...f.properties!, groupId: undefined, groupName: undefined },
+        };
+      }
+    });
+
+    // Remove from registry
+    const nextReg = { ...groupRegistry };
+    delete nextReg[gid];
+    setGroupRegistry(nextReg);
+    saveGroupRegistry(nextReg);
+
+    rebuildFromGroupAndUpdateSelection();
+  }, [selected, pushUndoSnapshot, rebuildFromGroupAndUpdateSelection, groupRegistry]);
+
+  /** Dissolve a group by its ID (usable from Grupper tab without selecting first) */
+  const dissolveGroupById = useCallback(
+    (gid: string) => {
+      pushUndoSnapshot();
+      const group = featureGroupRef.current;
+      if (!group) return;
+
+      group.eachLayer((layer) => {
+        const layerWithFeature = layer as L.Layer & { feature?: GardenFeature };
+        const f = layerWithFeature.feature;
+        if (f?.properties?.groupId === gid) {
+          layerWithFeature.feature = {
+            ...f,
+            properties: { ...f.properties!, groupId: undefined, groupName: undefined },
+          };
+        }
+      });
+
+      // Remove from registry
+      const nextReg = { ...groupRegistry };
+      delete nextReg[gid];
+      setGroupRegistry(nextReg);
+      saveGroupRegistry(nextReg);
+
+      // Clear highlight if this group was highlighted
+      setHighlightedGroupId((prev) => (prev === gid ? null : prev));
+
+      rebuildFromGroupAndUpdateSelection();
+    },
+    [pushUndoSnapshot, rebuildFromGroupAndUpdateSelection, groupRegistry]
+  );
+
+  /** Remove a single feature from its group by featureId */
+  const removeFromGroupById = useCallback(
+    (featureId: string) => {
+      pushUndoSnapshot();
+      const group = featureGroupRef.current;
+      if (!group) return;
+
+      let gid: string | undefined;
+      group.eachLayer((layer) => {
+        const layerWithFeature = layer as L.Layer & { feature?: GardenFeature };
+        const f = layerWithFeature.feature;
+        if (f?.properties?.gardenosId === featureId) {
+          gid = f.properties?.groupId;
+          layerWithFeature.feature = {
+            ...f,
+            properties: { ...f.properties!, groupId: undefined, groupName: undefined },
+          };
+        }
+      });
+
+      // If group now has 0 or 1 members, dissolve it
+      if (gid) {
+        let remaining = 0;
+        group.eachLayer((layer) => {
+          const f = (layer as L.Layer & { feature?: GardenFeature }).feature;
+          if (f?.properties?.groupId === gid) remaining++;
+        });
+        if (remaining <= 1) {
+          // Clear the last member too
+          group.eachLayer((layer) => {
+            const layerWithFeature = layer as L.Layer & { feature?: GardenFeature };
+            const f = layerWithFeature.feature;
+            if (f && f.properties?.groupId === gid) {
+              layerWithFeature.feature = {
+                ...f,
+                properties: { ...f.properties, groupId: undefined, groupName: undefined },
+              } as GardenFeature;
+            }
+          });
+          const nextReg = { ...groupRegistry };
+          delete nextReg[gid];
+          setGroupRegistry(nextReg);
+          saveGroupRegistry(nextReg);
+          setHighlightedGroupId((prev) => (prev === gid ? null : prev));
+        }
+      }
+
+      rebuildFromGroupAndUpdateSelection();
+    },
+    [pushUndoSnapshot, rebuildFromGroupAndUpdateSelection, groupRegistry]
+  );
+
+  /** Delete a feature by its gardenosId */
+  const deleteFeatureById = useCallback(
+    (featureId: string) => {
+      const group = featureGroupRef.current;
+      if (!group) return;
+
+      pushUndoSnapshot();
+
+      const layersToRemove: L.Layer[] = [];
+      group.eachLayer((layer) => {
+        const f = (layer as L.Layer & { feature?: GardenFeature }).feature;
+        if (f?.properties?.gardenosId === featureId) {
+          layersToRemove.push(layer);
+        }
+      });
+      for (const layer of layersToRemove) {
+        group.removeLayer(layer);
+      }
+
+      // If deleted feature was selected, clear selection
+      if (selected?.gardenosId === featureId) {
+        setSelected(null);
+        updateSelectionStyles(null);
+      }
+
+      rebuildFromGroupAndUpdateSelection();
+    },
+    [pushUndoSnapshot, rebuildFromGroupAndUpdateSelection, selected, updateSelectionStyles]
+  );
 
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
@@ -1373,6 +2402,7 @@ export function GardenMapClient() {
       if (e.key === "Escape") {
         stopDrawing();
         stopEditing();
+        setMultiSelectedIds(new Set());
         return;
       }
 
@@ -1384,19 +2414,23 @@ export function GardenMapClient() {
         return;
       }
 
-      if (!selected) return;
       if (e.key === "Delete" || e.key === "Backspace") {
         // While drawing, let Leaflet.draw own Backspace/Delete behavior.
         if (drawMode !== "select") return;
         if (isTypingTarget) return;
         e.preventDefault();
-        deleteSelected();
+        // Multi-selection takes priority over single-selection
+        if (multiSelectedIds.size > 0) {
+          deleteMultiSelected();
+        } else if (selected) {
+          deleteSelected();
+        }
       }
     };
 
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [deleteSelected, drawMode, selected, stopDrawing, stopEditing, undo]);
+  }, [deleteSelected, deleteMultiSelected, drawMode, multiSelectedIds, selected, stopDrawing, stopEditing, undo]);
 
   const loadSavedLayers = useCallback(() => {
     const group = featureGroupRef.current;
@@ -1490,6 +2524,84 @@ export function GardenMapClient() {
 
   const selectedKind = selected?.feature.properties?.kind;
   const selectedCategory = selected?.feature.properties?.category;
+  const selectedGroupId = selected?.feature.properties?.groupId;
+
+  const groupMemberCount = useMemo(() => {
+    if (!selectedGroupId || !layoutForContainment?.features?.length) return 0;
+    return layoutForContainment.features.filter(
+      (f) => (f as GardenFeature).properties?.groupId === selectedGroupId
+    ).length;
+  }, [selectedGroupId, layoutForContainment]);
+
+  // ── All groups derived from layout ──
+  const allGroups = useMemo(() => {
+    if (!layoutForContainment?.features?.length) return [] as { id: string; name: string; memberCount: number; members: { id: string; label: string }[] }[];
+    const catOrder: Record<string, number> = { area: 0, container: 1, seedbed: 2, row: 3, element: 4, condition: 5 };
+    const map = new Map<string, { count: number; members: { id: string; label: string; sortCat: number; sortLabel: string }[] }>();
+    for (const f of layoutForContainment.features) {
+      const gf = f as GardenFeature;
+      const gid = gf.properties?.groupId;
+      if (!gid) continue;
+      const entry = map.get(gid) ?? { count: 0, members: [] };
+      entry.count++;
+      const name = (gf.properties?.name ?? "").trim();
+      const kindLbl = kindLabel(gf.properties?.kind);
+      const memberId = gf.properties?.gardenosId ?? "";
+      const cat = (gf.properties?.category ?? "element") as string;
+      entry.members.push({ id: memberId, label: name ? `${kindLbl}: ${name}` : kindLbl, sortCat: catOrder[cat] ?? 4, sortLabel: kindLbl.toLowerCase() });
+      map.set(gid, entry);
+    }
+    const groups = Array.from(map.entries()).map(([id, { count, members }]) => {
+      members.sort((a, b) => a.sortCat - b.sortCat || a.sortLabel.localeCompare(b.sortLabel, "da") || a.label.localeCompare(b.label, "da"));
+      return {
+        id,
+        name: groupRegistry[id]?.name ?? `Gruppe (${id.slice(0, 6)})`,
+        memberCount: count,
+        members: members.slice(0, 8),
+      };
+    });
+    groups.sort((a, b) => a.name.localeCompare(b.name, "da"));
+    return groups;
+  }, [layoutForContainment, groupRegistry]);
+
+  // ── Group members for selected group ──
+  const selectedGroupMembers = useMemo(() => {
+    if (!selectedGroupId || !layoutForContainment?.features?.length) return [] as { id: string; label: string }[];
+    const catOrder: Record<string, number> = { area: 0, container: 1, seedbed: 2, row: 3, element: 4, condition: 5 };
+    const items = layoutForContainment.features
+      .filter((f) => (f as GardenFeature).properties?.groupId === selectedGroupId)
+      .map((f) => {
+        const gf = f as GardenFeature;
+        const name = (gf.properties?.name ?? "").trim();
+        const kindLbl = kindLabel(gf.properties?.kind);
+        const cat = (gf.properties?.category ?? "element") as string;
+        return { id: gf.properties?.gardenosId ?? "", label: name ? `${kindLbl}: ${name}` : kindLbl, sortCat: catOrder[cat] ?? 4, sortLabel: kindLbl.toLowerCase() };
+      });
+    items.sort((a, b) => a.sortCat - b.sortCat || a.sortLabel.localeCompare(b.sortLabel, "da") || a.label.localeCompare(b.label, "da"));
+    return items;
+  }, [selectedGroupId, layoutForContainment]);
+
+  const renameGroup = useCallback((gid: string, newName: string) => {
+    // Update registry
+    const nextReg = { ...groupRegistry, [gid]: { name: newName } };
+    setGroupRegistry(nextReg);
+    saveGroupRegistry(nextReg);
+
+    // Update groupName on all members
+    const group = featureGroupRef.current;
+    if (!group) return;
+    group.eachLayer((layer) => {
+      const layerWithFeature = layer as L.Layer & { feature?: GardenFeature };
+      const f = layerWithFeature.feature;
+      if (f?.properties?.groupId === gid) {
+        layerWithFeature.feature = {
+          ...f,
+          properties: { ...f.properties!, groupName: newName },
+        };
+      }
+    });
+    rebuildFromGroupAndUpdateSelection();
+  }, [groupRegistry, rebuildFromGroupAndUpdateSelection]);
 
   const effectiveSelectedKind = useMemo(() => {
     if (!selected) return undefined;
@@ -1501,30 +2613,18 @@ export function GardenMapClient() {
     return kindDefByKind.get(String(effectiveSelectedKind).toLowerCase());
   }, [effectiveSelectedKind, kindDefByKind]);
 
-  const selectedIsInfra = (selectedKindDef?.group ?? "default") === "infra" || selectedIsPolyline;
+  const selectedIsInfra = (selectedKindDef?.subGroup ?? "default") === "infra" || selectedIsPolyline;
 
   const allowedKindDefsForSelected = useMemo(() => {
     if (!selected) return [] as KindDef[];
     const wantedGeometry: KindGeometry =
       selectedGeometry ?? (isPolygon(selected.feature) ? "polygon" : isPoint(selected.feature) ? "point" : "polyline");
-    return allKindDefs.filter((d) => d.geometry === wantedGeometry);
-  }, [allKindDefs, selected, selectedGeometry]);
+    return allKindDefsIncludingHidden.filter((d) => d.geometry === wantedGeometry);
+  }, [allKindDefsIncludingHidden, selected, selectedGeometry]);
 
   const createKindOptions = useMemo(() => {
-    if (createPalette === "infra") {
-      return allKindDefs
-        .filter((d) => d.group === "infra" && d.geometry === "polyline")
-        .map((d) => ({ value: d.kind as GardenFeatureKind, label: d.label }));
-    }
-
-    if (createPalette === "plant") {
-      return allKindDefs
-        .filter((d) => d.category === "element" && d.geometry === "point" && d.group !== "infra")
-        .map((d) => ({ value: d.kind as GardenFeatureKind, label: d.label }));
-    }
-
     return allKindDefs
-      .filter((d) => d.category === "container")
+      .filter((d) => d.category === createPalette)
       .map((d) => ({ value: d.kind as GardenFeatureKind, label: d.label }));
   }, [allKindDefs, createPalette]);
 
@@ -1541,12 +2641,14 @@ export function GardenMapClient() {
       return;
     }
 
-    const group: KindGroup = createPalette === "infra" ? "infra" : "default";
-    const category: GardenFeatureCategory = createPalette === "container" ? "container" : "element";
+    const category: GardenFeatureCategory = createPalette;
+    const subGroup: KindSubGroup =
+      category === "element" ? "plant" : "default";
+    // Default geometry based on category
     const geometry: KindGeometry =
-      createPalette === "container" ? "polygon" : createPalette === "infra" ? "polyline" : "point";
+      category === "element" ? "point" : "polygon";
 
-    const next: KindDef = { kind: label, label, category, geometry, group };
+    const next: KindDef = { kind: label, label, category, geometry, subGroup };
 
     const nextCustom = dedupeKindDefs([...customKindDefs, next]).filter((d) => !isKnownKind(d.kind));
     setCustomKindDefs(nextCustom);
@@ -1558,9 +2660,59 @@ export function GardenMapClient() {
     setNewKindError(null);
   }, [createPalette, customKindDefs, kindDefByKind, newKindText]);
 
+  const removeKind = useCallback((kindToRemove: string) => {
+    const lower = kindToRemove.toLowerCase();
+
+    if (isKnownKind(kindToRemove)) {
+      // Built-in kind → hide it
+      const next = new Set(hiddenKinds);
+      next.add(lower);
+      setHiddenKinds(next);
+      saveHiddenKinds(next);
+    } else {
+      // Custom kind → remove from custom list
+      const nextCustom = customKindDefs.filter((d) => d.kind.toLowerCase() !== lower);
+      setCustomKindDefs(nextCustom);
+      saveCustomKindDefsToStorage(nextCustom);
+    }
+
+    // Reset selected create kind if it was the one we removed
+    if (createKind.toLowerCase() === lower) {
+      // Compute what remains visible
+      const nextHidden = isKnownKind(kindToRemove) ? new Set([...hiddenKinds, lower]) : hiddenKinds;
+      const nextCustom = isKnownKind(kindToRemove) ? customKindDefs : customKindDefs.filter((d) => d.kind.toLowerCase() !== lower);
+      const remaining = dedupeKindDefs([...KNOWN_KIND_DEFS, ...nextCustom]).filter((d) => !nextHidden.has(d.kind.toLowerCase()));
+      const fallback = remaining.find((d) => d.category === createPalette);
+      if (fallback) {
+        setCreateKind(fallback.kind as GardenFeatureKind);
+        createKindRef.current = fallback.kind as GardenFeatureKind;
+      }
+    }
+  }, [createKind, createPalette, customKindDefs, hiddenKinds]);
+
+  // Can only remove if at least 1 other type remains in the same category
+  const canRemoveCreateKind = useMemo(() => {
+    const sameCategory = allKindDefs.filter((d) => d.category === createPalette);
+    return sameCategory.length > 1;
+  }, [allKindDefs, createPalette]);
+
+  // Are there any hidden built-in kinds in the current palette?
+  const hiddenInCurrentPalette = useMemo(() => {
+    return KNOWN_KIND_DEFS.filter((d) => d.category === createPalette && hiddenKinds.has(d.kind.toLowerCase()));
+  }, [createPalette, hiddenKinds]);
+
+  const restoreHiddenKinds = useCallback((category: GardenFeatureCategory) => {
+    const next = new Set(hiddenKinds);
+    for (const d of KNOWN_KIND_DEFS) {
+      if (d.category === category) next.delete(d.kind.toLowerCase());
+    }
+    setHiddenKinds(next);
+    saveHiddenKinds(next);
+  }, [hiddenKinds]);
+
   const selectedContainerAreaText = useMemo(() => {
     if (!selected || !selectedIsPolygon) return "";
-    if (selectedCategory !== "container") return "";
+    if (selectedCategory !== "container" && selectedCategory !== "area" && selectedCategory !== "condition") return "";
     const area = areaForPolygonFeature(selected.feature as Feature<Polygon, GardenFeatureProperties>);
     if (area == null) return "";
     return formatAreaSquareMeters(area);
@@ -1600,8 +2752,34 @@ export function GardenMapClient() {
           >
             Fortryd
           </button>
+          {multiSelectedIds.size >= 2 ? (
+            <button
+              type="button"
+              className="rounded-md border border-foreground/20 bg-background px-3 py-2 text-sm font-medium hover:bg-foreground/5"
+              onClick={groupMultiSelected}
+              title="Bind de valgte elementer sammen i en gruppe"
+            >
+              Gruppér ({multiSelectedIds.size})
+            </button>
+          ) : null}
+          {selectedGroupId ? (
+            <button
+              type="button"
+              className="rounded-md border border-foreground/20 bg-background px-3 py-2 text-sm hover:bg-foreground/5"
+              onClick={ungroupSelected}
+              title="Opløs gruppen for det valgte element"
+            >
+              Opløs gruppe
+            </button>
+          ) : null}
         </div>
-        <div className="text-xs text-foreground/60">{drawMode === "select" ? "Markér" : "Tegner…"}</div>
+        <div className="text-xs text-foreground/60">
+          {multiSelectedIds.size > 0
+            ? `${multiSelectedIds.size} valgt — Shift+klik for flere`
+            : drawMode === "select"
+            ? "Markér"
+            : "Tegner…"}
+        </div>
       </div>
       <style>{`
         .leaflet-container { height: 100%; width: 100%; }
@@ -1622,6 +2800,18 @@ export function GardenMapClient() {
           border-radius: 9999px;
           border-width: 3px;
         }
+        .gardenos-marker--flower {
+          border-radius: 9999px;
+          border-width: 3px;
+          background: transparent;
+        }
+        .gardenos-marker--plant {
+          border-radius: 9999px;
+        }
+        .gardenos-marker--lamp {
+          border-radius: 2px;
+          background: var(--foreground);
+        }
         .gardenos-marker--pot {
           border-radius: 4px;
           background: transparent;
@@ -1630,6 +2820,19 @@ export function GardenMapClient() {
 
         .gardenos-marker--selected {
           border-width: 3px;
+        }
+
+        .gardenos-marker--group {
+          background: #f59e0b;
+          border-color: #fff;
+          border-width: 3px;
+          box-shadow: 0 0 8px 2px rgba(245, 158, 11, 0.6);
+          animation: gardenos-group-pulse 1.5s ease-in-out infinite;
+        }
+
+        @keyframes gardenos-group-pulse {
+          0%, 100% { box-shadow: 0 0 8px 2px rgba(245, 158, 11, 0.6); }
+          50% { box-shadow: 0 0 14px 4px rgba(245, 158, 11, 0.9); }
         }
 
         .leaflet-tooltip.gardenos-tooltip {
@@ -1645,6 +2848,45 @@ export function GardenMapClient() {
         .leaflet-tooltip.gardenos-tooltip:before {
           border-top-color: var(--foreground);
         }
+
+        .gardenos-edge-label {
+          background: none !important;
+          border: none !important;
+          box-shadow: none !important;
+        }
+        .gardenos-edge-label span {
+          display: inline-block;
+          background: rgba(255, 255, 255, 0.92);
+          color: #1e293b;
+          font-size: 11px;
+          font-weight: 600;
+          line-height: 1;
+          padding: 2px 5px;
+          border-radius: 4px;
+          border: 1px solid #94a3b8;
+          white-space: nowrap;
+          transform: translate(-50%, -50%);
+          pointer-events: none;
+        }
+        .gardenos-area-label {
+          background: none !important;
+          border: none !important;
+          box-shadow: none !important;
+        }
+        .gardenos-area-label span {
+          display: inline-block;
+          background: rgba(255, 255, 255, 0.92);
+          color: #1e293b;
+          font-size: 12px;
+          font-weight: 700;
+          line-height: 1;
+          padding: 3px 6px;
+          border-radius: 4px;
+          border: 1.5px solid #475569;
+          white-space: nowrap;
+          transform: translate(-50%, -50%);
+          pointer-events: none;
+        }
       `}</style>
 
       <div className="relative row-start-2">
@@ -1655,6 +2897,7 @@ export function GardenMapClient() {
           zoomSnap={0.25}
           zoomDelta={0.25}
           className="absolute inset-0"
+          renderer={L.svg({ tolerance: 12 })}
         >
           <TileLayer
             attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
@@ -1662,6 +2905,57 @@ export function GardenMapClient() {
             maxNativeZoom={19}
             maxZoom={22}
           />
+          {showSatellite ? (
+            <TileLayer
+              attribution='Tiles &copy; Esri &mdash; Source: Esri, Maxar, Earthstar Geographics'
+              url="https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"
+              maxNativeZoom={19}
+              maxZoom={22}
+              opacity={0.85}
+            />
+          ) : null}
+
+          {showMatrikel && dfReady ? (
+            <WMSTileLayer
+              key={`matrikel-${dfUser}`}
+              url={`https://services.datafordeler.dk/MATRIKLEN2/MatGaeldendeOgForeloebigWMS/1.0.0/WMS?username=${encodeURIComponent(dfUser)}&password=${encodeURIComponent(dfPass)}&ignoreillegallayers=TRUE`}
+              layers="Jordstykke_Gaeldende,MatrikelSkel_Gaeldende,Centroide_Gaeldende"
+              styles="Jordstykke_Gaeldende_transparent,Roede_skel,Sorte_centroider"
+              transparent={"TRUE" as unknown as boolean}
+              format="image/png"
+              maxZoom={22}
+              opacity={0.75}
+              version="1.1.1"
+            />
+          ) : null}
+
+          {showJordart ? (
+            <WMSTileLayer
+              key="jordart"
+              url="https://data.geus.dk/arcgis/services/Denmark/Jordartskort_25000/MapServer/WMSServer"
+              layers="Jordartskort"
+              styles="default"
+              transparent={true}
+              format="image/png"
+              maxZoom={22}
+              opacity={0.55}
+              version="1.1.1"
+            />
+          ) : null}
+
+          {showTerrain ? (
+            <WMSTileLayer
+              key="terrain"
+              url="https://data.geus.dk/arcgis/services/Denmark/DHM_2007_hillshading/MapServer/WMSServer"
+              layers="DHM_hillshading"
+              styles="default"
+              transparent={true}
+              format="image/png"
+              maxZoom={22}
+              opacity={0.45}
+              version="1.1.1"
+            />
+          ) : null}
 
           <MapDrawControls
             featureGroupRef={featureGroupRef}
@@ -1673,6 +2967,11 @@ export function GardenMapClient() {
             setSelected={setSelectedAndFocus}
             pushUndoSnapshot={pushUndoSnapshot}
             createKindRef={createKindRef}
+          />
+
+          <BoxSelectOverlay
+            featureGroupRef={featureGroupRef}
+            setMultiSelectedIds={setMultiSelectedIds}
           />
         </MapContainer>
 
@@ -1686,7 +2985,7 @@ export function GardenMapClient() {
       <aside className="row-start-2 border-t border-foreground/10 bg-background p-4 md:border-l md:border-t-0">
         <h2 className="text-base font-semibold">Detaljer</h2>
 
-        <div className="mt-3 grid grid-cols-2 gap-2">
+        <div className="mt-3 grid grid-cols-4 gap-2">
           <button
             type="button"
             className={`rounded-md border px-3 py-2 text-sm ${
@@ -1694,7 +2993,7 @@ export function GardenMapClient() {
                 ? "border-foreground/30 bg-foreground/5"
                 : "border-foreground/20 bg-background hover:bg-foreground/5"
             }`}
-            onClick={() => setSidebarTab("create")}
+            onClick={() => { setSidebarTab("create"); setHighlightedGroupId(null); }}
           >
             Opret
           </button>
@@ -1705,79 +3004,104 @@ export function GardenMapClient() {
                 ? "border-foreground/30 bg-foreground/5"
                 : "border-foreground/20 bg-background hover:bg-foreground/5"
             } ${selected ? "" : "opacity-50"}`}
-            onClick={() => setSidebarTab("content")}
+            onClick={() => { setSidebarTab("content"); setHighlightedGroupId(null); }}
             disabled={!selected}
             title={selected ? "" : "Vælg noget på kortet for at se indhold"}
           >
             Indhold
+          </button>
+          <button
+            type="button"
+            className={`rounded-md border px-3 py-2 text-sm ${
+              sidebarTab === "groups"
+                ? "border-foreground/30 bg-foreground/5"
+                : "border-foreground/20 bg-background hover:bg-foreground/5"
+            }`}
+            onClick={() => setSidebarTab("groups")}
+          >
+            Grupper{allGroups.length > 0 ? ` (${allGroups.length})` : ""}
+          </button>
+          <button
+            type="button"
+            className={`rounded-md border px-3 py-2 text-sm ${
+              sidebarTab === "view"
+                ? "border-foreground/30 bg-foreground/5"
+                : "border-foreground/20 bg-background hover:bg-foreground/5"
+            }`}
+            onClick={() => { setSidebarTab("view"); setHighlightedGroupId(null); }}
+          >
+            Visning
           </button>
         </div>
 
         {sidebarTab === "create" ? (
           <div className="mt-3 grid grid-cols-2 gap-2">
             <div className="col-span-2">
-              <label className="block text-xs font-medium text-foreground/70">Hvad vil du tegne?</label>
-              <div className="mt-1 grid grid-cols-3 gap-2">
-                <button
-                  type="button"
-                  className="rounded-md border border-foreground/20 bg-background px-3 py-2 text-sm hover:bg-foreground/5"
-                  onClick={() => {
-                    setCreatePalette("container");
-                    const next = defaultCreateKindForPalette.container as GardenFeatureKind;
-                    setCreateKind(next);
-                    createKindRef.current = next;
-                    setNewKindError(null);
-                  }}
-                >
-                  Beholder/område
-                </button>
-                <button
-                  type="button"
-                  className="rounded-md border border-foreground/20 bg-background px-3 py-2 text-sm hover:bg-foreground/5"
-                  onClick={() => {
-                    setCreatePalette("plant");
-                    const next = defaultCreateKindForPalette.plant as GardenFeatureKind;
-                    setCreateKind(next);
-                    createKindRef.current = next;
-                    setNewKindError(null);
-                  }}
-                >
-                  Plante
-                </button>
-                <button
-                  type="button"
-                  className="rounded-md border border-foreground/20 bg-background px-3 py-2 text-sm hover:bg-foreground/5"
-                  onClick={() => {
-                    setCreatePalette("infra");
-                    const next = defaultCreateKindForPalette.infra as GardenFeatureKind;
-                    setCreateKind(next);
-                    createKindRef.current = next;
-                    setNewKindError(null);
-                  }}
-                >
-                  Teknik
-                </button>
+              <label className="block text-xs font-medium text-foreground/70">Kategori</label>
+              <div className="mt-1 grid grid-cols-3 gap-1">
+                {(["element", "row", "seedbed", "container", "area", "condition"] as const).map((cat) => (
+                  <button
+                    key={cat}
+                    type="button"
+                    className={`rounded-md border px-2 py-1.5 text-xs ${
+                      createPalette === cat
+                        ? "border-foreground/40 bg-foreground/10 font-medium"
+                        : "border-foreground/20 bg-background hover:bg-foreground/5"
+                    }`}
+                    onClick={() => {
+                      setCreatePalette(cat);
+                      const next = defaultCreateKindForPalette[cat] as GardenFeatureKind;
+                      setCreateKind(next);
+                      createKindRef.current = next;
+                      setNewKindError(null);
+                    }}
+                  >
+                    {CATEGORY_LABELS[cat]}
+                  </button>
+                ))}
               </div>
+              <p className="mt-1 text-[10px] text-foreground/50">{CATEGORY_DESCRIPTIONS[createPalette]}</p>
             </div>
 
             <div className="col-span-2">
               <label className="block text-xs font-medium text-foreground/70">Type</label>
-              <select
-                className="mt-1 w-full rounded-md border border-foreground/20 bg-background px-3 py-2 text-sm"
-                value={createKind}
-                onChange={(e) => {
-                  const next = e.target.value as GardenFeatureKind;
-                  setCreateKind(next);
-                  createKindRef.current = next;
-                  setNewKindError(null);
-                }}
-              >
-                {createKindOptions.map((opt) => (
-                  <option key={opt.value} value={opt.value}>
-                    {opt.label}
-                  </option>
-                ))}
-              </select>
+              <div className="mt-1 grid grid-cols-[1fr_auto] gap-2">
+                <select
+                  className="w-full rounded-md border border-foreground/20 bg-background px-3 py-2 text-sm"
+                  value={createKind}
+                  onChange={(e) => {
+                    const next = e.target.value as GardenFeatureKind;
+                    setCreateKind(next);
+                    createKindRef.current = next;
+                    setNewKindError(null);
+                  }}
+                >
+                  {createKindOptions.map((opt) => (
+                    <option key={opt.value} value={opt.value}>
+                      {opt.label}
+                    </option>
+                  ))}
+                </select>
+                {canRemoveCreateKind ? (
+                  <button
+                    type="button"
+                    className="rounded-md border border-foreground/20 bg-background px-2 py-2 text-xs text-foreground/60 hover:border-red-300 hover:text-red-600 hover:bg-red-50"
+                    onClick={() => removeKind(createKind)}
+                    title="Fjern denne type fra listen"
+                  >
+                    ✕
+                  </button>
+                ) : null}
+              </div>
+              {hiddenInCurrentPalette.length > 0 ? (
+                <button
+                  type="button"
+                  className="mt-1 text-[10px] text-foreground/40 hover:text-foreground/70 hover:underline"
+                  onClick={() => restoreHiddenKinds(createPalette)}
+                >
+                  Gendan {hiddenInCurrentPalette.length} skjulte standardtype{hiddenInCurrentPalette.length > 1 ? "r" : ""}
+                </button>
+              ) : null}
             </div>
 
             <div className="col-span-2">
@@ -1788,7 +3112,10 @@ export function GardenMapClient() {
                   value={newKindText}
                   onChange={(e) => setNewKindText(e.target.value)}
                   placeholder={
-                    createPalette === "container" ? "Fx Udehus" : createPalette === "plant" ? "Fx Tomat" : "Fx Nedgravet kabel"
+                    createPalette === "element" ? "Fx Tomat / Strømkabel"
+                    : createPalette === "container" ? "Fx Pottebænk"
+                    : createPalette === "area" ? "Fx Frugtplantage"
+                    : "Fx Halvskygge"
                   }
                 />
                 <button
@@ -1800,9 +3127,6 @@ export function GardenMapClient() {
                 </button>
               </div>
               {newKindError ? <p className="mt-1 text-xs text-foreground/70">{newKindError}</p> : null}
-              <p className="mt-1 text-xs text-foreground/60">
-                Nye typer gemmes på denne enhed (localStorage).
-              </p>
             </div>
 
             <button
@@ -1810,7 +3134,7 @@ export function GardenMapClient() {
               className="col-span-2 rounded-md border border-foreground/20 bg-background px-3 py-2 text-sm hover:bg-foreground/5"
               onClick={beginDrawSelectedType}
             >
-              Tegn
+              {createPalette === "element" ? "Placér" : "Tegn område"}
             </button>
             <button
               type="button"
@@ -1821,7 +3145,6 @@ export function GardenMapClient() {
             >
               Markér/pege
             </button>
-
           </div>
         ) : null}
 
@@ -1833,6 +3156,9 @@ export function GardenMapClient() {
           ) : (
             <div className="mt-3 space-y-3">
             <div>
+              <p className="mb-1 text-[10px] font-medium uppercase tracking-wide text-foreground/50">
+                {CATEGORY_LABELS[selectedCategory as GardenFeatureCategory] ?? "—"}
+              </p>
               <label className="block text-xs font-medium text-foreground/70">Type</label>
               <select
                 className="mt-1 w-full rounded-md border border-foreground/20 bg-background px-3 py-2 text-sm"
@@ -1844,13 +3170,20 @@ export function GardenMapClient() {
               >
                 {allowedKindDefsForSelected.map((def) => (
                   <option key={def.kind} value={def.kind}>
-                    {def.label}
+                    {def.label} ({CATEGORY_LABELS[def.category]})
                   </option>
                 ))}
               </select>
-              {selectedIsPolygon ? <p className="mt-1 text-xs text-foreground/60">Polygoner er områder</p> : null}
-              {selectedIsPoint ? <p className="mt-1 text-xs text-foreground/60">Punkter er elementer/beholdere</p> : null}
-              {selectedIsPolyline ? <p className="mt-1 text-xs text-foreground/60">Linjer er teknik (rør/el/…)</p> : null}
+            </div>
+
+            <div>
+              <label className="block text-xs font-medium text-foreground/70">Navn</label>
+              <input
+                className="mt-1 w-full rounded-md border border-foreground/20 bg-background px-3 py-2 text-sm"
+                value={selected.feature.properties?.name ?? ""}
+                onChange={(e) => updateSelectedProperty({ name: e.target.value })}
+                placeholder="Fx Køkkenbed 1 / Æbletræ"
+              />
             </div>
 
             {selectedContainerAreaText ? (
@@ -1862,20 +3195,35 @@ export function GardenMapClient() {
               </div>
             ) : null}
 
-            {selectedIsPolygon && selectedCategory === "container" ? (
+            {selectedIsPolygon && (selectedCategory === "container" || selectedCategory === "area") ? (
               <div>
                 <label className="block text-xs font-medium text-foreground/70">Indeholder</label>
                 <div className="mt-1 w-full rounded-md border border-foreground/20 bg-background px-3 py-2 text-sm">
                   {selectedContainment && selectedContainment.total > 0
-                    ? `${selectedContainment.plants} planter, ${selectedContainment.containers} beholdere, ${selectedContainment.areas} områder, ${selectedContainment.infra} teknik`
+                    ? `${selectedContainment.elements} elem., ${selectedContainment.containers} cont., ${selectedContainment.areas} omr., ${selectedContainment.infra} infra`
                     : "Ingen (endnu)"}
                 </div>
 
                 {selectedContainment && selectedContainment.total > 0 ? (
                   <div className="mt-2 space-y-1">
                     {selectedContainedItemsPreview.slice(0, 12).map((item) => (
-                      <div key={item.id} className="text-xs text-foreground/70">
-                        {item.text}
+                      <div key={item.id} className="flex items-center gap-1">
+                        <button
+                          type="button"
+                          className="flex-1 cursor-pointer text-left text-xs text-foreground/70 hover:text-foreground hover:underline"
+                          onClick={() => selectFeatureById(item.id)}
+                          title="Gå til element i Indholdsfanen"
+                        >
+                          • {item.text}
+                        </button>
+                        <button
+                          type="button"
+                          className="shrink-0 rounded px-1 text-xs text-foreground/40 hover:bg-red-50 hover:text-red-500"
+                          onClick={() => deleteFeatureById(item.id)}
+                          title="Slet element"
+                        >
+                          ✕
+                        </button>
                       </div>
                     ))}
                     {selectedContainedItemsPreview.length > 12 ? (
@@ -1888,56 +3236,195 @@ export function GardenMapClient() {
               </div>
             ) : null}
 
+
+
+            {/* ── Element (plant) fields ── */}
+            {selectedCategory === "element" && !selectedIsInfra ? (
+              <>
+                <div>
+                  <label className="block text-xs font-medium text-foreground/70">Hvad plantes / sort</label>
+                  <input
+                    className="mt-1 w-full rounded-md border border-foreground/20 bg-background px-3 py-2 text-sm"
+                    value={selected.feature.properties?.planted ?? ""}
+                    onChange={(e) => updateSelectedProperty({ planted: e.target.value })}
+                    placeholder="Fx kartofler / gulerødder / sort"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-foreground/70">Plantningsdato</label>
+                  <input
+                    type="date"
+                    className="mt-1 w-full rounded-md border border-foreground/20 bg-background px-3 py-2 text-sm"
+                    value={selected.feature.properties?.plantedAt ?? ""}
+                    onChange={(e) => updateSelectedProperty({ plantedAt: e.target.value })}
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-foreground/70">Solbehov</label>
+                  <select
+                    className="mt-1 w-full rounded-md border border-foreground/20 bg-background px-3 py-2 text-sm"
+                    value={selected.feature.properties?.sunNeed ?? ""}
+                    onChange={(e) => updateSelectedProperty({ sunNeed: e.target.value })}
+                  >
+                    <option value="">Ikke angivet</option>
+                    <option value="sol">Sol</option>
+                    <option value="halvskygge">Halvskygge</option>
+                    <option value="skygge">Skygge</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-foreground/70">Vandbehov</label>
+                  <select
+                    className="mt-1 w-full rounded-md border border-foreground/20 bg-background px-3 py-2 text-sm"
+                    value={selected.feature.properties?.waterNeed ?? ""}
+                    onChange={(e) => updateSelectedProperty({ waterNeed: e.target.value })}
+                  >
+                    <option value="">Ikke angivet</option>
+                    <option value="lav">Lav</option>
+                    <option value="middel">Middel</option>
+                    <option value="høj">Høj</option>
+                  </select>
+                </div>
+              </>
+            ) : null}
+
+            {/* ── Container-specific fields ── */}
+            {selectedCategory === "container" ? (
+              <>
+                <div>
+                  <label className="block text-xs font-medium text-foreground/70">Jordtype</label>
+                  <input
+                    className="mt-1 w-full rounded-md border border-foreground/20 bg-background px-3 py-2 text-sm"
+                    value={selected.feature.properties?.soilType ?? ""}
+                    onChange={(e) => updateSelectedProperty({ soilType: e.target.value })}
+                    placeholder="Fx muld, sandjord, lerjord"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-foreground/70">Gødning</label>
+                  <input
+                    className="mt-1 w-full rounded-md border border-foreground/20 bg-background px-3 py-2 text-sm"
+                    value={selected.feature.properties?.fertilizer ?? ""}
+                    onChange={(e) => updateSelectedProperty({ fertilizer: e.target.value })}
+                    placeholder="Fx kompost april, NPK maj"
+                  />
+                </div>
+              </>
+            ) : null}
+
+            {/* ── Area-specific fields ── */}
+            {selectedCategory === "area" ? (
+              <>
+                <div>
+                  <label className="block text-xs font-medium text-foreground/70">Læforhold</label>
+                  <input
+                    className="mt-1 w-full rounded-md border border-foreground/20 bg-background px-3 py-2 text-sm"
+                    value={selected.feature.properties?.shelter ?? ""}
+                    onChange={(e) => updateSelectedProperty({ shelter: e.target.value })}
+                    placeholder="Fx læ fra vest, åben"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-foreground/70">Opvarmning</label>
+                  <input
+                    className="mt-1 w-full rounded-md border border-foreground/20 bg-background px-3 py-2 text-sm"
+                    value={selected.feature.properties?.heating ?? ""}
+                    onChange={(e) => updateSelectedProperty({ heating: e.target.value })}
+                    placeholder="Fx uopvarmet / gulvvarme"
+                  />
+                </div>
+              </>
+            ) : null}
+
+            {/* ── Condition-specific fields ── */}
+            {selectedCategory === "condition" ? (
+              <>
+                <div>
+                  <label className="block text-xs font-medium text-foreground/70">Beskrivelse</label>
+                  <input
+                    className="mt-1 w-full rounded-md border border-foreground/20 bg-background px-3 py-2 text-sm"
+                    value={selected.feature.properties?.conditionDesc ?? ""}
+                    onChange={(e) => updateSelectedProperty({ conditionDesc: e.target.value })}
+                    placeholder="Fx morgen-skygge fra hus"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-foreground/70">Intensitet</label>
+                  <select
+                    className="mt-1 w-full rounded-md border border-foreground/20 bg-background px-3 py-2 text-sm"
+                    value={selected.feature.properties?.intensity ?? ""}
+                    onChange={(e) => updateSelectedProperty({ intensity: e.target.value })}
+                  >
+                    <option value="">Ikke angivet</option>
+                    <option value="svag">Svag</option>
+                    <option value="middel">Middel</option>
+                    <option value="stærk">Stærk</option>
+                  </select>
+                </div>
+              </>
+            ) : null}
+
+            {selectedGroupId ? (
+              <div className="rounded-md border border-foreground/20">
+                <button
+                  type="button"
+                  className="flex w-full items-center justify-between px-2 py-1.5 text-xs font-medium text-foreground/70 hover:bg-foreground/5"
+                  onClick={() => setGroupSectionOpen((o) => !o)}
+                >
+                  <span>Gruppe: {groupRegistry[selectedGroupId]?.name ?? `(${selectedGroupId.slice(0, 6)})`}</span>
+                  <span className="text-foreground/40">{groupSectionOpen ? "▲" : "▼"}</span>
+                </button>
+                {groupSectionOpen ? (
+                  <div className="border-t border-foreground/10 p-2">
+                    <input
+                      className="w-full rounded-md border border-foreground/20 bg-background px-3 py-2 text-sm font-medium"
+                      value={groupRegistry[selectedGroupId]?.name ?? `Gruppe (${selectedGroupId.slice(0, 6)})`}
+                      onChange={(e) => renameGroup(selectedGroupId, e.target.value)}
+                      placeholder="Gruppenavn"
+                    />
+                    <p className="mt-1 px-1 text-xs text-foreground/60">
+                      {groupMemberCount} {groupMemberCount === 1 ? "element" : "elementer"} i gruppen
+                    </p>
+                    <div className="mt-1 max-h-32 space-y-0.5 overflow-y-auto px-1">
+                      {selectedGroupMembers.map((m) => (
+                        <div key={m.id} className="flex items-center gap-1">
+                          <button
+                            type="button"
+                            className="flex-1 cursor-pointer text-left text-xs text-foreground/70 hover:text-foreground hover:underline"
+                            onClick={() => selectFeatureById(m.id)}
+                            title="Gå til element i Indholdsfanen"
+                          >
+                            • {m.label}
+                          </button>
+                          <button
+                            type="button"
+                            className="shrink-0 rounded px-1 text-xs text-foreground/40 hover:bg-red-50 hover:text-red-500"
+                            onClick={() => removeFromGroupById(m.id)}
+                            title="Fjern fra gruppen"
+                          >
+                            ✕
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                    <button
+                      type="button"
+                      className="mt-2 w-full rounded-md border border-foreground/20 bg-background px-3 py-2 text-sm hover:bg-foreground/5"
+                      onClick={ungroupSelected}
+                    >
+                      Opløs gruppe
+                    </button>
+                  </div>
+                ) : null}
+              </div>
+            ) : null}
+
             <div>
-              <label className="block text-xs font-medium text-foreground/70">Navn</label>
-              <input
-                className="mt-1 w-full rounded-md border border-foreground/20 bg-background px-3 py-2 text-sm"
-                value={selected.feature.properties?.name ?? ""}
-                onChange={(e) => updateSelectedProperty({ name: e.target.value })}
-                placeholder="Fx Køkkenbed 1 / Æbletræ"
-              />
-            </div>
-
-            {selectedKind === "bed" ? (
-              <div>
-                <label className="block text-xs font-medium text-foreground/70">Bed-type</label>
-                <input
-                  className="mt-1 w-full rounded-md border border-foreground/20 bg-background px-3 py-2 text-sm"
-                  value={selected.feature.properties?.bedType ?? ""}
-                  onChange={(e) => updateSelectedProperty({ bedType: e.target.value })}
-                  placeholder="Fx køkkenbed, blomsterbed"
-                />
-              </div>
-            ) : null}
-
-            {selectedCategory !== "container" && !selectedIsInfra ? (
-              <div>
-                <label className="block text-xs font-medium text-foreground/70">Hvad plantes</label>
-                <input
-                  className="mt-1 w-full rounded-md border border-foreground/20 bg-background px-3 py-2 text-sm"
-                  value={selected.feature.properties?.planted ?? ""}
-                  onChange={(e) => updateSelectedProperty({ planted: e.target.value })}
-                  placeholder="Fx kartofler / gulerødder / sort"
-                />
-              </div>
-            ) : null}
-
-            {selectedCategory !== "container" && !selectedIsInfra ? (
-              <div>
-                <label className="block text-xs font-medium text-foreground/70">Plantningsdato</label>
-                <input
-                  type="date"
-                  className="mt-1 w-full rounded-md border border-foreground/20 bg-background px-3 py-2 text-sm"
-                  value={selected.feature.properties?.plantedAt ?? ""}
-                  onChange={(e) => updateSelectedProperty({ plantedAt: e.target.value })}
-                />
-              </div>
-            ) : null}
-
-            <div>
-              <label className="block text-xs font-medium text-foreground/70">{selectedIsInfra ? "Tekst" : "Noter"}</label>
+              <label className="block text-xs font-medium text-foreground/70">
+                {selectedIsInfra ? "Tekst" : "Noter"}
+              </label>
               <textarea
-                className="mt-1 min-h-[120px] w-full resize-y rounded-md border border-foreground/20 bg-background px-3 py-2 text-sm"
+                className="mt-1 min-h-[80px] w-full resize-y rounded-md border border-foreground/20 bg-background px-3 py-2 text-sm"
                 value={selected.feature.properties?.notes ?? ""}
                 onChange={(e) => updateSelectedProperty({ notes: e.target.value })}
                 placeholder={selectedIsInfra ? "Fx dybde/placering/kommentar" : "Fx gødes i april / skal beskæres"}
@@ -1992,6 +3479,311 @@ export function GardenMapClient() {
             <p className="text-xs text-foreground/60">Layout gemmes automatisk i denne browser.</p>
           </div>
           )
+        ) : null}
+
+        {sidebarTab === "groups" ? (
+          <div className="mt-3 space-y-3">
+            {allGroups.length === 0 ? (
+              <p className="text-sm text-foreground/70">
+                Ingen grupper endnu. Vælg flere elementer med Shift+klik og tryk &quot;Gruppér&quot;.
+              </p>
+            ) : (
+              allGroups.map((g) => (
+                <div
+                  key={g.id}
+                  className={`rounded-md border p-3 text-sm transition-colors ${
+                    highlightedGroupId === g.id
+                      ? "border-foreground/40 bg-foreground/5"
+                      : "border-foreground/20 bg-background hover:bg-foreground/5"
+                  }`}
+                >
+                  <div className="flex items-start gap-2">
+                    <div className="flex-1">
+                      <input
+                        className="w-full rounded border border-transparent bg-transparent px-1 py-0.5 text-sm font-medium text-foreground hover:border-foreground/20 focus:border-foreground/30 focus:outline-none"
+                        value={g.name}
+                        onChange={(e) => renameGroup(g.id, e.target.value)}
+                        title="Klik for at omdøbe gruppen"
+                      />
+                      <p className="mt-0.5 px-1 text-xs text-foreground/60">
+                        {g.memberCount} {g.memberCount === 1 ? "element" : "elementer"}
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      className={`shrink-0 rounded-md border px-2 py-1 text-xs ${
+                        highlightedGroupId === g.id
+                          ? "border-foreground/40 bg-foreground/10"
+                          : "border-foreground/20 bg-background hover:bg-foreground/5"
+                      }`}
+                      onClick={() => setHighlightedGroupId(highlightedGroupId === g.id ? null : g.id)}
+                      title="Vis/skjul gruppe-markering på kortet"
+                    >
+                      {highlightedGroupId === g.id ? "Skjul" : "Vis"}
+                    </button>
+                    <button
+                      type="button"
+                      className="shrink-0 rounded-md border border-red-300 bg-background px-2 py-1 text-xs text-red-600 hover:bg-red-50"
+                      onClick={() => dissolveGroupById(g.id)}
+                      title="Slet gruppen (elementer beholdes)"
+                    >
+                      Slet
+                    </button>
+                  </div>
+                  <div className="mt-2 space-y-0.5 px-1">
+                    {g.members.map((m) => (
+                      <div key={m.id} className="flex items-center gap-1">
+                        <button
+                          type="button"
+                          className="flex-1 cursor-pointer text-left text-xs text-foreground/70 hover:text-foreground hover:underline"
+                          onClick={() => selectFeatureById(m.id)}
+                          title="Gå til element i Indholdsfanen"
+                        >
+                          • {m.label}
+                        </button>
+                        <button
+                          type="button"
+                          className="shrink-0 rounded px-1 text-xs text-foreground/40 hover:bg-red-50 hover:text-red-500"
+                          onClick={() => removeFromGroupById(m.id)}
+                          title="Fjern fra gruppen"
+                        >
+                          ✕
+                        </button>
+                      </div>
+                    ))}
+                    {g.memberCount > 8 ? (
+                      <div className="text-xs text-foreground/50">… +{g.memberCount - 8} flere</div>
+                    ) : null}
+                  </div>
+                </div>
+              ))
+            )}
+            <p className="text-xs text-foreground/60">
+              Tip: Shift+klik for at vælge flere elementer, derefter &quot;Gruppér&quot;.
+            </p>
+          </div>
+        ) : null}
+
+        {sidebarTab === "view" ? (
+          <div className="mt-3 space-y-3">
+            <div className="border-b border-foreground/10 pb-2">
+              <label className="block text-xs font-medium text-foreground/70 mb-1">Baggrundskort</label>
+              <button
+                type="button"
+                className={`w-full rounded-md border px-2 py-1.5 text-left text-xs font-medium ${
+                  showSatellite
+                    ? "border-foreground/30 bg-foreground/10 text-foreground/90"
+                    : "border-foreground/20 bg-background text-foreground/60 hover:bg-foreground/5"
+                }`}
+                onClick={() => setShowSatellite((v) => !v)}
+              >
+                🛰️ Satellit{showSatellite ? " (aktiv)" : ""}
+              </button>
+              <button
+                type="button"
+                className={`w-full rounded-md border px-2 py-1.5 text-left text-xs font-medium mt-1 ${
+                  showMatrikel && dfReady
+                    ? "border-foreground/30 bg-foreground/10 text-foreground/90"
+                    : showMatrikel && !dfReady
+                    ? "border-amber-500/50 bg-amber-500/10 text-amber-700"
+                    : "border-foreground/20 bg-background text-foreground/60 hover:bg-foreground/5"
+                }`}
+                onClick={() => setShowMatrikel((v) => !v)}
+              >
+                📐 Matrikel{showMatrikel && dfReady ? " (aktiv)" : showMatrikel ? " (mangler login)" : ""}
+              </button>
+              {showMatrikel ? (
+                <div className="mt-1.5 space-y-1">
+                  {!dfReady ? (
+                    <p className="text-[10px] text-amber-600 leading-tight mb-1">
+                      Kræver gratis Datafordeler-login. Opret dig på{" "}
+                      <a href="https://selfservice.datafordeler.dk" target="_blank" rel="noopener noreferrer" className="underline">selfservice.datafordeler.dk</a>,
+                      opret en <strong>tjenestebruger</strong> og giv den adgang til tjenesten <strong>MatGaeldendeOgForeloebigWMS</strong> under MATRIKLEN2.
+                    </p>
+                  ) : null}
+                  <input
+                    type="text"
+                    placeholder="Tjenestebruger (brugernavn)"
+                    value={dfUser}
+                    onChange={(e) => {
+                      const v = e.target.value;
+                      setDfUser(v);
+                      setDfTestStatus("idle");
+                      window.localStorage.setItem("gardenos:df:user", v);
+                    }}
+                    className="w-full rounded border border-foreground/20 bg-background px-2 py-1 text-[11px] text-foreground/80 placeholder:text-foreground/30 focus:outline-none focus:border-foreground/40"
+                  />
+                  <input
+                    type="password"
+                    placeholder="Password"
+                    value={dfPass}
+                    onChange={(e) => {
+                      const v = e.target.value;
+                      setDfPass(v);
+                      setDfTestStatus("idle");
+                      window.localStorage.setItem("gardenos:df:pass", v);
+                    }}
+                    className="w-full rounded border border-foreground/20 bg-background px-2 py-1 text-[11px] text-foreground/80 placeholder:text-foreground/30 focus:outline-none focus:border-foreground/40"
+                  />
+                  {dfReady ? (
+                    <div className="flex items-center gap-1.5">
+                      <button
+                        type="button"
+                        disabled={dfTestStatus === "testing"}
+                        className="rounded border border-foreground/20 bg-foreground/5 px-2 py-0.5 text-[10px] font-medium text-foreground/70 hover:bg-foreground/10 disabled:opacity-50"
+                        onClick={() => testDfCredentials(dfUser, dfPass)}
+                      >
+                        {dfTestStatus === "testing" ? "Tester…" : "Test forbindelse"}
+                      </button>
+                      {dfTestStatus === "ok" ? (
+                        <span className="text-[10px] text-green-600 font-medium">✓ Forbindelse OK</span>
+                      ) : dfTestStatus === "fail" ? (
+                        <span className="text-[10px] text-red-500 font-medium">✗ Afvist — tjek brugernavn/password</span>
+                      ) : null}
+                    </div>
+                  ) : null}
+                  {dfTestStatus === "fail" ? (
+                    <div className="rounded border border-amber-400/30 bg-amber-50 dark:bg-amber-900/20 px-2 py-1.5 mt-0.5">
+                      <p className="text-[10px] text-amber-700 dark:text-amber-400 leading-tight font-medium mb-0.5">Mulige årsager:</p>
+                      <ul className="text-[10px] text-amber-600 dark:text-amber-400/80 leading-tight list-disc ml-3 space-y-0.5">
+                        <li>Forkert brugernavn eller password</li>
+                        <li>Tjenestebrugeren mangler adgang til tjenesten <strong>MatGaeldendeOgForeloebigWMS</strong></li>
+                        <li>Gå til <a href="https://selfservice.datafordeler.dk" target="_blank" rel="noopener noreferrer" className="underline">selfservice.datafordeler.dk</a> → Tjenestebrugere → vælg din bruger → Tjenester → tilføj <strong>MatGaeldendeOgForeloebigWMS</strong></li>
+                      </ul>
+                      <button
+                        type="button"
+                        className="mt-1.5 rounded border border-foreground/20 bg-foreground/5 px-2 py-0.5 text-[10px] font-medium text-foreground/70 hover:bg-foreground/10"
+                        onClick={() => {
+                          setDfUser("RNIOENOTLD");
+                          setDfPass("LaKage!7562Hesten");
+                          setDfTestStatus("idle");
+                          window.localStorage.setItem("gardenos:df:user", "RNIOENOTLD");
+                          window.localStorage.setItem("gardenos:df:pass", "LaKage!7562Hesten");
+                        }}
+                      >
+                        Prøv med demo-credentials i stedet
+                      </button>
+                    </div>
+                  ) : null}
+                  {dfReady && dfTestStatus === "ok" ? (
+                    <p className="text-[10px] text-green-600">Matrikelskel vises på kortet (zoom ind for detaljer).</p>
+                  ) : null}
+                </div>
+              ) : null}
+              <button
+                type="button"
+                className={`w-full rounded-md border px-2 py-1.5 text-left text-xs font-medium mt-1 ${
+                  showJordart
+                    ? "border-foreground/30 bg-foreground/10 text-foreground/90"
+                    : "border-foreground/20 bg-background text-foreground/60 hover:bg-foreground/5"
+                }`}
+                onClick={() => setShowJordart((v) => !v)}
+              >
+                🌱 Jordart{showJordart ? " (aktiv)" : ""}
+              </button>
+              {showJordart ? (
+                <p className="text-[10px] text-foreground/50 leading-tight mt-0.5 ml-0.5">
+                  GEUS Jordartskort 1:25.000 — viser overfladegeologi / jordtyper. Zoom ind for detaljer.
+                </p>
+              ) : null}
+              <button
+                type="button"
+                className={`w-full rounded-md border px-2 py-1.5 text-left text-xs font-medium mt-1 ${
+                  showTerrain
+                    ? "border-foreground/30 bg-foreground/10 text-foreground/90"
+                    : "border-foreground/20 bg-background text-foreground/60 hover:bg-foreground/5"
+                }`}
+                onClick={() => setShowTerrain((v) => !v)}
+              >
+                ⛰️ Terrænrelief{showTerrain ? " (aktiv)" : ""}
+              </button>
+              {showTerrain ? (
+                <p className="text-[10px] text-foreground/50 leading-tight mt-0.5 ml-0.5">
+                  Danmarks Højdemodel — skyggekort der viser terrænets form og hældning.
+                </p>
+              ) : null}
+              <p className="text-[10px] text-foreground/40 leading-tight mt-2 ml-0.5">
+                ℹ️ Ledningsdata (el, vand, gas, kloak) er ikke offentligt tilgængeligt som kort. Brug <a href="https://ler.dk" target="_blank" rel="noopener noreferrer" className="underline">ler.dk</a> til ledningsoplysninger.
+              </p>
+            </div>
+            <p className="text-xs text-foreground/60">Slå kategorier og typer til/fra på kortet.</p>
+            {(["element", "row", "seedbed", "container", "area", "condition"] as const).map((cat) => {
+              const isCatHidden = hiddenCategories.has(cat);
+              const kindsInCat = allKindDefsIncludingHidden.filter((d) => d.category === cat);
+              const allKindsHidden = kindsInCat.length > 0 && kindsInCat.every((d) => hiddenVisibilityKinds.has(d.kind.toLowerCase()));
+              return (
+                <div key={cat}>
+                  <button
+                    type="button"
+                    className={`w-full rounded-md border px-2 py-1.5 text-left text-xs font-medium ${
+                      isCatHidden
+                        ? "border-foreground/10 bg-background text-foreground/30 line-through"
+                        : "border-foreground/20 bg-foreground/5 text-foreground/80"
+                    }`}
+                    onClick={() => {
+                      setHiddenCategories((prev) => {
+                        const next = new Set(prev);
+                        if (next.has(cat)) next.delete(cat);
+                        else next.add(cat);
+                        return next;
+                      });
+                    }}
+                  >
+                    {CATEGORY_LABELS[cat]}
+                  </button>
+                  {!isCatHidden && kindsInCat.length > 0 ? (
+                    <div className="mt-1 ml-2 flex flex-wrap gap-1">
+                      {kindsInCat.length > 1 ? (
+                        <button
+                          type="button"
+                          className="rounded border border-foreground/15 px-1.5 py-0.5 text-[10px] text-foreground/50 hover:bg-foreground/5"
+                          onClick={() => {
+                            setHiddenVisibilityKinds((prev) => {
+                              const next = new Set(prev);
+                              if (allKindsHidden) {
+                                kindsInCat.forEach((d) => next.delete(d.kind.toLowerCase()));
+                              } else {
+                                kindsInCat.forEach((d) => next.add(d.kind.toLowerCase()));
+                              }
+                              saveHiddenVisKinds(next);
+                              return next;
+                            });
+                          }}
+                        >
+                          {allKindsHidden ? "Vis alle" : "Skjul alle"}
+                        </button>
+                      ) : null}
+                      {kindsInCat.map((def) => {
+                        const isKindHidden = hiddenVisibilityKinds.has(def.kind.toLowerCase());
+                        return (
+                          <button
+                            key={def.kind}
+                            type="button"
+                            className={`rounded border px-1.5 py-0.5 text-[10px] ${
+                              isKindHidden
+                                ? "border-foreground/10 bg-background text-foreground/30 line-through"
+                                : "border-foreground/20 bg-foreground/5 text-foreground/70"
+                            }`}
+                            onClick={() => {
+                              setHiddenVisibilityKinds((prev) => {
+                                const next = new Set(prev);
+                                if (next.has(def.kind.toLowerCase())) next.delete(def.kind.toLowerCase());
+                                else next.add(def.kind.toLowerCase());
+                                saveHiddenVisKinds(next);
+                                return next;
+                              });
+                            }}
+                          >
+                            {def.label}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  ) : null}
+                </div>
+              );
+            })}
+          </div>
         ) : null}
       </aside>
     </div>
