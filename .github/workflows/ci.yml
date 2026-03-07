@@ -1,0 +1,52 @@
+# ──────────────────────────────────────────────────────────────
+# GardenOS – GitHub Actions CI
+# ──────────────────────────────────────────────────────────────
+# Runs on every push/PR: lint, type-check, test, build
+# Vercel handles the actual deployment (connected to repo).
+# ──────────────────────────────────────────────────────────────
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+env:
+  # Dummy values for build – real secrets live in Vercel
+  DATABASE_URL: "postgresql://dummy:dummy@localhost:5432/dummy"
+  AUTH_SECRET: "ci-test-secret-not-for-production-use-32chars!"
+
+jobs:
+  ci:
+    name: Lint · Type-check · Test · Build
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Generate Prisma client
+        run: npx prisma generate
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Type-check
+        run: npx tsc --noEmit
+
+      - name: Run tests
+        run: npx vitest run
+
+      - name: Build
+        run: npm run build

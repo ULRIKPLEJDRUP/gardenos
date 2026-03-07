@@ -1,0 +1,56 @@
+// ---------------------------------------------------------------------------
+// GardenOS – Database Schema
+// ---------------------------------------------------------------------------
+// Users + invite codes for access control.
+// Garden data stays in localStorage per user (for now).
+// ---------------------------------------------------------------------------
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ---------------------------------------------------------------------------
+// User – anyone who can log in
+// ---------------------------------------------------------------------------
+model User {
+  id        String   @id @default(cuid())
+  email     String   @unique
+  name      String?
+  password  String   // bcrypt hash
+  role      String   @default("user") // "admin" | "user"
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Invite codes created by this user (admin only)
+  createdInvites InviteCode[] @relation("CreatedBy")
+  // The invite code used to register
+  usedInvite     InviteCode?  @relation("UsedBy")
+  usedInviteId   String?      @unique
+
+  @@map("users")
+}
+
+// ---------------------------------------------------------------------------
+// InviteCode – one-time-use codes for registration
+// ---------------------------------------------------------------------------
+model InviteCode {
+  id        String    @id @default(cuid())
+  code      String    @unique // 8-char random code
+  createdAt DateTime  @default(now())
+  usedAt    DateTime?
+  expiresAt DateTime? // optional expiry
+
+  // Who created the invite
+  createdBy   User   @relation("CreatedBy", fields: [createdById], references: [id])
+  createdById String
+
+  // Who used the invite (null = still available)
+  usedBy   User?   @relation("UsedBy", fields: [usedById], references: [id])
+  usedById String? @unique
+
+  @@map("invite_codes")
+}
