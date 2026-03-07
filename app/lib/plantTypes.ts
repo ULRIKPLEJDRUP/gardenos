@@ -143,6 +143,28 @@ export type PlantVariety = {
   storageQuality?: "poor" | "fair" | "good" | "excellent";
   /** Source / seed supplier */
   seedSource?: string;
+
+  // ── Extended fields (variety management) ──
+  /** Image URL of the variety */
+  imageUrl?: string;
+  /** Source URL (website where info was found) */
+  sourceUrl?: string;
+  /** How this variety was added to the database */
+  addedVia?: "manual" | "scrape" | "seed-packet" | "plant-photo" | "builtin";
+  /** Free-form notes */
+  notes?: string;
+  /** Sowing start month (1-12) */
+  sowStart?: number;
+  /** Sowing end month (1-12) */
+  sowEnd?: number;
+  /** Harvest start month (1-12) */
+  harvestStart?: number;
+  /** Harvest end month (1-12) */
+  harvestEnd?: number;
+  /** Height in cm */
+  heightCm?: number;
+  /** Yield description */
+  yieldInfo?: string;
 };
 
 // ---------------------------------------------------------------------------

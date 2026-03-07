@@ -14,6 +14,7 @@ import {
   getInstancesForFeature,
   addPlantInstance,
   removePlantInstance,
+  updatePlantInstance,
   checkCompanions,
   checkRotation,
   formatMonthRange,
@@ -28,6 +29,7 @@ import {
   PLANT_FAMILY_LABELS,
   DIFFICULTY_LABELS,
 } from "../lib/plantTypes";
+import VarietyManager from "./VarietyManager";
 
 // ---------------------------------------------------------------------------
 // NOTE: We no longer use Leaflet.draw's L.EditToolbar.Edit for editing.
@@ -950,6 +952,10 @@ export function GardenMapClient() {
   const [bedPlantSearch, setBedPlantSearch] = useState("");
   const [showBedPlantPicker, setShowBedPlantPicker] = useState(false);
   const [bedPickerSpeciesId, setBedPickerSpeciesId] = useState<string | null>(null);
+  const [editingInstanceId, setEditingInstanceId] = useState<string | null>(null);
+  const [showVarietyManager, setShowVarietyManager] = useState(false);
+  const [varietyManagerSpeciesId, setVarietyManagerSpeciesId] = useState<string | null>(null);
+  const [plantDataVersion, setPlantDataVersion] = useState(0);
   const [isEditing, setIsEditing] = useState(false);
   const [multiSelectedIds, setMultiSelectedIds] = useState<Set<string>>(new Set());
   const multiSelectedIdsRef = useRef<Set<string>>(new Set());
@@ -1132,7 +1138,23 @@ export function GardenMapClient() {
       const name = (feature?.properties?.name ?? "").trim();
       const label = kindLabel(kind);
       const tooltipBase = name ? `${label}: ${name}` : label;
-      const tooltipText = `${tooltipBase}${containmentSuffix}`;
+
+      // Add planted-species info to bed/row/area/container tooltips
+      let plantSuffix = "";
+      const featureCat = feature?.properties?.category;
+      if (gardenosId && (featureCat === "seedbed" || featureCat === "container" || featureCat === "area" || featureCat === "row")) {
+        const instances = getInstancesForFeature(gardenosId);
+        if (instances.length > 0) {
+          const plantNames = instances.map((inst) => {
+            const sp = getPlantById(inst.speciesId);
+            const n = sp ? `${sp.icon ?? "🌱"} ${sp.name}` : inst.speciesId;
+            return inst.varietyName ? `${n} (${inst.varietyName})` : n;
+          });
+          plantSuffix = `\n${plantNames.join(", ")}`;
+        }
+      }
+
+      const tooltipText = `${tooltipBase}${containmentSuffix}${plantSuffix}`;
 
       const tooltipIsPermanent = false;
 
@@ -2558,7 +2580,7 @@ export function GardenMapClient() {
   const selectedGroupId = selected?.feature.properties?.groupId;
 
   // ── Plant computed values ──
-  const allPlants = useMemo(() => getAllPlants(), []);
+  const allPlants = useMemo(() => { void plantDataVersion; return getAllPlants(); }, [plantDataVersion]);
 
   const filteredPlants = useMemo(() => {
     let list = allPlants;
@@ -3492,36 +3514,93 @@ export function GardenMapClient() {
                 {/* Current plant instances */}
                 {selectedFeatureInstances.length > 0 ? (
                   <div className="space-y-1">
-                    {selectedFeatureInstances.map((inst) => (
-                      <div
-                        key={inst.id}
-                        className="flex items-center gap-1.5 rounded border border-foreground/10 bg-foreground/[0.02] px-2 py-1"
-                      >
-                        <span className="text-sm leading-none">{inst.species?.icon ?? "🌱"}</span>
-                        <div className="flex-1 min-w-0">
-                          <p className="text-xs font-medium truncate">
-                            {inst.species?.name ?? inst.speciesId}
-                            {inst.varietyName ? <span className="text-foreground/50 font-normal"> ({inst.varietyName})</span> : null}
-                          </p>
-                          <p className="text-[10px] text-foreground/50">
-                            {inst.count ? `${inst.count} stk` : ""}
-                            {inst.plantedAt ? ` · plantet ${inst.plantedAt}` : ""}
-                            {inst.season ? ` · sæson ${inst.season}` : ""}
-                          </p>
-                        </div>
-                        <button
-                          type="button"
-                          className="shrink-0 rounded px-1 text-xs text-foreground/40 hover:bg-red-50 hover:text-red-500"
-                          onClick={() => {
-                            removePlantInstance(inst.id);
-                            setPlantInstancesVersion((v) => v + 1);
-                          }}
-                          title="Fjern plantning"
+                    {selectedFeatureInstances.map((inst) => {
+                      const instVarieties = getVarietiesForSpecies(inst.speciesId);
+                      const isEditing = editingInstanceId === inst.id;
+                      return (
+                        <div
+                          key={inst.id}
+                          className="rounded border border-foreground/10 bg-foreground/[0.02] px-2 py-1 space-y-1"
                         >
-                          ✕
-                        </button>
-                      </div>
-                    ))}
+                          <div className="flex items-center gap-1.5">
+                            <span className="text-sm leading-none">{inst.species?.icon ?? "🌱"}</span>
+                            <div className="flex-1 min-w-0">
+                              <p className="text-xs font-medium truncate">
+                                {inst.species?.name ?? inst.speciesId}
+                                {inst.varietyName ? <span className="text-foreground/50 font-normal"> ({inst.varietyName})</span> : <span className="text-foreground/30 font-normal italic"> (uspecificeret)</span>}
+                              </p>
+                              <p className="text-[10px] text-foreground/50">
+                                {inst.count ? `${inst.count} stk` : ""}
+                                {inst.plantedAt ? ` · plantet ${inst.plantedAt}` : ""}
+                                {inst.season ? ` · sæson ${inst.season}` : ""}
+                              </p>
+                            </div>
+                            {instVarieties.length > 0 ? (
+                              <button
+                                type="button"
+                                className="shrink-0 rounded px-1 py-0.5 text-[10px] text-accent hover:bg-accent/10"
+                                onClick={() => setEditingInstanceId(isEditing ? null : inst.id)}
+                                title="Vælg/skift sort"
+                              >
+                                🏷️
+                              </button>
+                            ) : null}
+                            <button
+                              type="button"
+                              className="shrink-0 rounded px-1 text-xs text-foreground/40 hover:bg-red-50 hover:text-red-500"
+                              onClick={() => {
+                                removePlantInstance(inst.id);
+                                setPlantInstancesVersion((v) => v + 1);
+                                if (isEditing) setEditingInstanceId(null);
+                              }}
+                              title="Fjern plantning"
+                            >
+                              ✕
+                            </button>
+                          </div>
+                          {/* Inline variety selector */}
+                          {isEditing ? (
+                            <div className="ml-5 space-y-0.5 border-l-2 border-accent/30 pl-2">
+                              <p className="text-[10px] font-medium text-foreground/50 uppercase tracking-wide">Vælg sort:</p>
+                              <button
+                                type="button"
+                                className={`flex w-full items-center gap-1.5 rounded px-1.5 py-1 text-left text-[11px] hover:bg-foreground/5 ${
+                                  !inst.varietyId ? "bg-accent/10 font-medium text-accent" : "text-foreground/70"
+                                }`}
+                                onClick={() => {
+                                  updatePlantInstance(inst.id, { varietyId: undefined, varietyName: undefined });
+                                  setPlantInstancesVersion((v) => v + 1);
+                                  setEditingInstanceId(null);
+                                }}
+                              >
+                                <span className="text-sm leading-none">🌱</span>
+                                <span className="truncate">Uspecificeret sort</span>
+                                {!inst.varietyId ? <span className="ml-auto text-[9px]">✓</span> : null}
+                              </button>
+                              {instVarieties.map((v) => (
+                                <button
+                                  key={v.id}
+                                  type="button"
+                                  className={`flex w-full items-center gap-1.5 rounded px-1.5 py-1 text-left text-[11px] hover:bg-foreground/5 ${
+                                    inst.varietyId === v.id ? "bg-accent/10 font-medium text-accent" : "text-foreground/70"
+                                  }`}
+                                  onClick={() => {
+                                    updatePlantInstance(inst.id, { varietyId: v.id, varietyName: v.name });
+                                    setPlantInstancesVersion((v2) => v2 + 1);
+                                    setEditingInstanceId(null);
+                                  }}
+                                >
+                                  <span className="text-sm leading-none">🏷️</span>
+                                  <span className="truncate">{v.name}</span>
+                                  {v.taste ? <span className="text-[9px] text-foreground/40">{v.taste}</span> : null}
+                                  {inst.varietyId === v.id ? <span className="ml-auto text-[9px]">✓</span> : null}
+                                </button>
+                              ))}
+                            </div>
+                          ) : null}
+                        </div>
+                      );
+                    })}
                   </div>
                 ) : (
                   <p className="text-xs text-foreground/50 italic">Ingen planter tilføjet endnu.</p>
@@ -3925,6 +4004,15 @@ export function GardenMapClient() {
               onChange={(e) => setPlantSearch(e.target.value)}
             />
 
+            {/* Variety Manager button */}
+            <button
+              type="button"
+              className="w-full rounded-lg border border-accent/30 bg-accent-light/40 px-3 py-2 text-xs font-medium text-accent-dark hover:bg-accent-light hover:border-accent/50 transition-all"
+              onClick={() => { setVarietyManagerSpeciesId(null); setShowVarietyManager(true); }}
+            >
+              🏷️ Administrer sorter ({allPlants.reduce((s, p) => s + (p.varieties?.length ?? 0), 0)})
+            </button>
+
             {/* Category filter chips */}
             <div className="flex flex-wrap gap-1.5">
               <button
@@ -4176,11 +4264,22 @@ export function GardenMapClient() {
                         ) : null}
 
                         {/* ── VARIETIES / SORTER ── */}
+                        <div className="space-y-1.5">
+                          <div className="flex items-center justify-between">
+                            <p className="text-foreground/50 font-medium text-[10px] uppercase tracking-wide">
+                              🏷️ Sorter ({plant.varieties?.length ?? 0})
+                            </p>
+                            <button
+                              type="button"
+                              className="text-[10px] text-accent hover:text-accent-dark font-medium hover:underline"
+                              onClick={(e) => { e.stopPropagation(); setVarietyManagerSpeciesId(plant.id); setShowVarietyManager(true); }}
+                            >
+                              ✏️ Administrer ›
+                            </button>
+                          </div>
+                        </div>
                         {plant.varieties?.length ? (
                           <div className="space-y-1.5">
-                            <p className="text-foreground/50 font-medium text-[10px] uppercase tracking-wide">
-                              🏷️ Sorter ({plant.varieties.length})
-                            </p>
                             <div className="max-h-48 space-y-1 overflow-y-auto">
                               {plant.varieties.map((v) => (
                                 <div
@@ -4497,6 +4596,16 @@ export function GardenMapClient() {
         ) : null}
         </div>
       </aside>
+
+      {/* ── Variety Manager Modal ── */}
+      {showVarietyManager ? (
+        <VarietyManager
+          isOpen={showVarietyManager}
+          onClose={() => setShowVarietyManager(false)}
+          initialSpeciesId={varietyManagerSpeciesId}
+          onDataChanged={() => setPlantDataVersion((v) => v + 1)}
+        />
+      ) : null}
     </div>
   );
 }

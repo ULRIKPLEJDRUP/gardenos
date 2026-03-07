@@ -64,3 +64,197 @@ body {
   background: var(--border);
   border-radius: 999px;
 }
+
+/* ═══════════════════════════════════════════════════════════════════════════ */
+/* Variety Manager Modal                                                      */
+/* ═══════════════════════════════════════════════════════════════════════════ */
+
+.vm-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 10000;
+  background: rgba(0, 0, 0, 0.5);
+  backdrop-filter: blur(4px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1rem;
+  animation: vm-fade-in 0.15s ease-out;
+}
+
+@keyframes vm-fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+.vm-modal {
+  background: var(--background);
+  border: 1px solid var(--border);
+  border-radius: 1rem;
+  width: 100%;
+  max-width: 640px;
+  max-height: 88vh;
+  display: flex;
+  flex-direction: column;
+  box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25);
+  animation: vm-slide-up 0.2s ease-out;
+}
+
+@keyframes vm-slide-up {
+  from { opacity: 0; transform: translateY(12px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.vm-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.875rem 1.25rem;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+  gap: 0.75rem;
+}
+
+.vm-content {
+  flex: 1;
+  overflow-y: auto;
+  padding: 1rem 1.25rem;
+}
+
+/* Cards */
+.vm-card {
+  display: block;
+  padding: 0.625rem 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: 0.5rem;
+  background: var(--background);
+  transition: all 0.15s;
+}
+.vm-card:hover {
+  border-color: var(--accent);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.06);
+  background: var(--accent-light);
+}
+
+/* Chips */
+.vm-chip {
+  display: inline-flex;
+  padding: 0.25rem 0.625rem;
+  border-radius: 9999px;
+  border: 1px solid var(--border);
+  background: var(--background);
+  font-size: 0.625rem;
+  font-weight: 500;
+  color: var(--foreground);
+  opacity: 0.6;
+  transition: all 0.15s;
+  cursor: pointer;
+}
+.vm-chip:hover { opacity: 0.8; background: var(--accent-light); }
+.vm-chip--active {
+  border-color: var(--accent);
+  background: var(--accent-light);
+  color: var(--accent-dark);
+  opacity: 1;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+}
+
+/* Inputs */
+.vm-input {
+  width: 100%;
+  padding: 0.5rem 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: 0.5rem;
+  background: var(--background);
+  font-size: 0.8125rem;
+  color: var(--foreground);
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+.vm-input::placeholder { color: var(--muted); opacity: 0.6; }
+.vm-input:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 20%, transparent);
+}
+
+/* Labels */
+.vm-label {
+  display: block;
+  font-size: 0.6875rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--foreground);
+  opacity: 0.55;
+  margin-bottom: 0.25rem;
+}
+
+/* Fieldsets */
+.vm-fieldset {
+  border: 1px solid var(--border-light);
+  border-radius: 0.5rem;
+  padding: 0.75rem;
+}
+.vm-legend {
+  font-size: 0.6875rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--accent);
+  padding: 0 0.25rem;
+}
+
+/* Buttons */
+.vm-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0.5rem 0.875rem;
+  border-radius: 0.5rem;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s;
+  border: 1px solid transparent;
+}
+.vm-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+.vm-btn--primary {
+  background: var(--accent);
+  color: #fff;
+  border-color: var(--accent);
+}
+.vm-btn--primary:hover:not(:disabled) {
+  background: var(--accent-dark);
+}
+.vm-btn--secondary {
+  background: var(--background);
+  color: var(--foreground);
+  opacity: 0.7;
+  border-color: var(--border);
+}
+.vm-btn--secondary:hover:not(:disabled) {
+  opacity: 1;
+  background: color-mix(in srgb, var(--foreground) 5%, var(--background));
+}
+.vm-btn--danger {
+  background: #fef2f2;
+  color: #dc2626;
+  border-color: #fecaca;
+}
+.vm-btn--danger:hover:not(:disabled) {
+  background: #fee2e2;
+}
+
+@media (prefers-color-scheme: dark) {
+  .vm-btn--danger {
+    background: rgba(127, 29, 29, 0.2);
+    color: #f87171;
+    border-color: rgba(127, 29, 29, 0.4);
+  }
+  .vm-btn--danger:hover:not(:disabled) {
+    background: rgba(127, 29, 29, 0.3);
+  }
+}

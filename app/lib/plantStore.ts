@@ -197,6 +197,93 @@ export function checkRotation(
 }
 
 // ---------------------------------------------------------------------------
+// Variety CRUD (add / update / delete varieties on species)
+// ---------------------------------------------------------------------------
+
+/** Add a variety to a species. If the species is builtin-only, clones it to custom storage first. */
+export function addVarietyToSpecies(speciesId: string, variety: PlantVariety): void {
+  const custom = loadCustomPlants();
+  const customIdx = custom.findIndex((p) => p.id === speciesId);
+
+  if (customIdx >= 0) {
+    const species = custom[customIdx];
+    custom[customIdx] = {
+      ...species,
+      varieties: [...(species.varieties ?? []), variety],
+      updatedAt: new Date().toISOString(),
+    };
+  } else {
+    const builtin = BUILTIN_PLANTS.find((p) => p.id === speciesId);
+    if (!builtin) return;
+    custom.push({
+      ...builtin,
+      varieties: [...(builtin.varieties ?? []), variety],
+      updatedAt: new Date().toISOString(),
+    });
+  }
+
+  saveCustomPlants(custom);
+}
+
+/** Update an existing variety within a species. */
+export function updateVarietyInSpecies(
+  speciesId: string,
+  varietyId: string,
+  updates: Partial<PlantVariety>,
+): void {
+  const custom = loadCustomPlants();
+  const customIdx = custom.findIndex((p) => p.id === speciesId);
+
+  if (customIdx >= 0) {
+    const species = custom[customIdx];
+    custom[customIdx] = {
+      ...species,
+      varieties: (species.varieties ?? []).map((v) =>
+        v.id === varietyId ? { ...v, ...updates } : v,
+      ),
+      updatedAt: new Date().toISOString(),
+    };
+  } else {
+    const builtin = BUILTIN_PLANTS.find((p) => p.id === speciesId);
+    if (!builtin) return;
+    custom.push({
+      ...builtin,
+      varieties: (builtin.varieties ?? []).map((v) =>
+        v.id === varietyId ? { ...v, ...updates } : v,
+      ),
+      updatedAt: new Date().toISOString(),
+    });
+  }
+
+  saveCustomPlants(custom);
+}
+
+/** Delete a variety from a species. */
+export function deleteVarietyFromSpecies(speciesId: string, varietyId: string): void {
+  const custom = loadCustomPlants();
+  const customIdx = custom.findIndex((p) => p.id === speciesId);
+
+  if (customIdx >= 0) {
+    const species = custom[customIdx];
+    custom[customIdx] = {
+      ...species,
+      varieties: (species.varieties ?? []).filter((v) => v.id !== varietyId),
+      updatedAt: new Date().toISOString(),
+    };
+  } else {
+    const builtin = BUILTIN_PLANTS.find((p) => p.id === speciesId);
+    if (!builtin || !builtin.varieties?.some((v) => v.id === varietyId)) return;
+    custom.push({
+      ...builtin,
+      varieties: builtin.varieties.filter((v) => v.id !== varietyId),
+      updatedAt: new Date().toISOString(),
+    });
+  }
+
+  saveCustomPlants(custom);
+}
+
+// ---------------------------------------------------------------------------
 // Month formatting helper
 // ---------------------------------------------------------------------------
 
