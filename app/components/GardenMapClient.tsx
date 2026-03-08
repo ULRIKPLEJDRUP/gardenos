@@ -18,6 +18,8 @@ import {
   checkCompanions,
   checkRotation,
   formatMonthRange,
+  addOrUpdateCustomPlant,
+  addVarietyToSpecies,
   type CompanionCheck,
 } from "../lib/plantStore";
 import type { PlantSpecies, PlantInstance, PlantCategory, PlantVariety, PlacementType } from "../lib/plantTypes";
@@ -1158,8 +1160,16 @@ export function GardenMapClient() {
   const [newKindText, setNewKindText] = useState("");
   const [newKindError, setNewKindError] = useState<string | null>(null);
   const [undoStack, setUndoStack] = useState<UndoSnapshot[]>([]);
-  const [sidebarTab, setSidebarTab] = useState<"create" | "content" | "groups" | "plants" | "view">("create");
+  const [sidebarTab, setSidebarTab] = useState<"create" | "content" | "groups" | "plants" | "view" | "scan">("create");
   const [viewSubTab, setViewSubTab] = useState<"steder" | "baggrund" | "synlighed">("steder");
+
+  // ── Scan / frøpose-genkendelse state ──
+  const [scanImage, setScanImage] = useState<string | null>(null);
+  const [scanAnalyzing, setScanAnalyzing] = useState(false);
+  const [scanResult, setScanResult] = useState<Record<string, unknown> | null>(null);
+  const [scanError, setScanError] = useState<string | null>(null);
+  const [scanSaved, setScanSaved] = useState(false);
+  const scanInputRef = useRef<HTMLInputElement>(null);
 
   // ── Plant knowledge system state ──
   const [plantSearch, setPlantSearch] = useState("");
@@ -3726,6 +3736,17 @@ export function GardenMapClient() {
             <button
               type="button"
               className={`flex-1 rounded-md px-1 py-1.5 text-[11px] font-medium transition-all ${
+                sidebarTab === "scan"
+                  ? "bg-accent text-white shadow-sm"
+                  : "text-foreground/60 hover:bg-foreground/5 hover:text-foreground/80"
+              }`}
+              onClick={() => { setSidebarTab("scan"); setHighlightedGroupId(null); }}
+            >
+              📷 Scan
+            </button>
+            <button
+              type="button"
+              className={`flex-1 rounded-md px-1 py-1.5 text-[11px] font-medium transition-all ${
                 sidebarTab === "view"
                   ? "bg-accent text-white shadow-sm"
                   : "text-foreground/60 hover:bg-foreground/5 hover:text-foreground/80"
@@ -5790,6 +5811,294 @@ export function GardenMapClient() {
                 ? ` Du kan tilføje planter direkte til det valgte ${CATEGORY_LABELS[selectedCategory as keyof typeof CATEGORY_LABELS] ?? "element"}.`
                 : " Vælg et bed, række eller element på kortet for at tilføje planter."}
             </p>
+          </div>
+        ) : null}
+
+        {sidebarTab === "scan" ? (
+          <div className="mt-3 space-y-3">
+            <div>
+              <label className="block text-[11px] font-semibold text-foreground/60 uppercase tracking-wide mb-1.5">📷 Scan frøpose / etiket</label>
+              <p className="text-[10px] text-foreground/40 mb-3">Tag et foto af en frøpose, plantelabel eller emballage — AI’en aflæser informationen og opretter planten for dig.</p>
+
+              {/* Hidden file input */}
+              <input
+                ref={scanInputRef}
+                type="file"
+                accept="image/*"
+                capture="environment"
+                className="hidden"
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  if (!file) return;
+                  setScanResult(null);
+                  setScanError(null);
+                  setScanSaved(false);
+                  const reader = new FileReader();
+                  reader.onload = () => {
+                    setScanImage(reader.result as string);
+                  };
+                  reader.readAsDataURL(file);
+                  // Reset so same file can be re-selected
+                  e.target.value = "";
+                }}
+              />
+
+              {/* Capture buttons */}
+              <div className="flex gap-2 mb-3">
+                <button
+                  type="button"
+                  className="flex-1 rounded-lg border border-accent/30 bg-accent/10 px-3 py-2.5 text-xs text-accent-dark font-medium hover:bg-accent/20 transition-colors flex items-center justify-center gap-2"
+                  onClick={() => scanInputRef.current?.click()}
+                >
+                  📷 Tag foto / vælg billede
+                </button>
+                {scanImage ? (
+                  <button
+                    type="button"
+                    className="rounded-lg border border-foreground/20 bg-foreground/5 px-3 py-2.5 text-xs text-foreground/60 hover:bg-foreground/10 transition-colors"
+                    onClick={() => { setScanImage(null); setScanResult(null); setScanError(null); setScanSaved(false); }}
+                  >
+                    ✕ Nulstil
+                  </button>
+                ) : null}
+              </div>
+
+              {/* Image preview */}
+              {scanImage ? (
+                <div className="mb-3">
+                  <div className="rounded-lg border border-border overflow-hidden bg-gray-50">
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img src={scanImage} alt="Scannet billede" className="w-full max-h-48 object-contain" />
+                  </div>
+
+                  {/* Analyze button */}
+                  {!scanResult && !scanAnalyzing ? (
+                    <button
+                      type="button"
+                      className="mt-2 w-full rounded-lg bg-accent px-3 py-2.5 text-xs text-white font-semibold hover:bg-accent/90 transition-colors flex items-center justify-center gap-2 shadow-sm"
+                      onClick={async () => {
+                        setScanAnalyzing(true);
+                        setScanError(null);
+                        try {
+                          const res = await fetch("/api/analyze-image", {
+                            method: "POST",
+                            headers: { "Content-Type": "application/json" },
+                            body: JSON.stringify({ image: scanImage, type: "seed-packet" }),
+                          });
+                          const data = await res.json();
+                          if (!res.ok || data.error) {
+                            setScanError(data.error || "Ukendt fejl fra AI");
+                            if (data.needsConfig) {
+                              setScanError("OPENAI_API_KEY er ikke konfigureret. Tilføj den som miljøvariabel i Vercel for at aktivere frøpose-scanning.");
+                            }
+                          } else {
+                            setScanResult(data);
+                          }
+                        } catch (err) {
+                          setScanError(err instanceof Error ? err.message : "Netværksfejl");
+                        }
+                        setScanAnalyzing(false);
+                      }}
+                    >
+                      🧠 Analysér med AI
+                    </button>
+                  ) : null}
+
+                  {scanAnalyzing ? (
+                    <div className="mt-2 rounded-lg border border-accent/20 bg-accent/5 px-3 py-3 text-center">
+                      <div className="text-sm animate-pulse">🧠</div>
+                      <p className="text-[11px] text-accent-dark mt-1">Analyserer billede…</p>
+                      <p className="text-[9px] text-foreground/40 mt-0.5">Dette kan tage 5–15 sekunder</p>
+                    </div>
+                  ) : null}
+                </div>
+              ) : null}
+
+              {/* Error */}
+              {scanError ? (
+                <div className="rounded-lg border border-red-300 bg-red-50 px-3 py-2 mb-3">
+                  <p className="text-[11px] text-red-700">⚠️ {scanError}</p>
+                </div>
+              ) : null}
+
+              {/* Results */}
+              {scanResult ? (
+                <div className="rounded-lg border border-accent/20 bg-accent/5 p-3 space-y-2 mb-3">
+                  <p className="text-[11px] font-semibold text-accent-dark">✅ Data fundet fra frøpose</p>
+
+                  <div className="grid grid-cols-2 gap-x-3 gap-y-1">
+                    {scanResult.speciesName ? (
+                      <div className="col-span-2">
+                        <span className="text-[9px] text-foreground/40 uppercase">Planteart</span>
+                        <p className="text-xs font-semibold text-foreground/80">{String(scanResult.speciesName)}</p>
+                      </div>
+                    ) : null}
+                    {scanResult.name ? (
+                      <div className="col-span-2">
+                        <span className="text-[9px] text-foreground/40 uppercase">Sort</span>
+                        <p className="text-xs font-medium text-foreground/70">{String(scanResult.name)}</p>
+                      </div>
+                    ) : null}
+                    {scanResult.description ? (
+                      <div className="col-span-2">
+                        <span className="text-[9px] text-foreground/40 uppercase">Beskrivelse</span>
+                        <p className="text-[10px] text-foreground/60">{String(scanResult.description)}</p>
+                      </div>
+                    ) : null}
+                    {scanResult.sowStart || scanResult.sowEnd ? (
+                      <div>
+                        <span className="text-[9px] text-foreground/40 uppercase">Såperiode</span>
+                        <p className="text-xs text-foreground/70">
+                          {scanResult.sowStart ? `Mnd ${scanResult.sowStart}` : "?"}–{scanResult.sowEnd ? `${scanResult.sowEnd}` : "?"}
+                        </p>
+                      </div>
+                    ) : null}
+                    {scanResult.harvestStart || scanResult.harvestEnd ? (
+                      <div>
+                        <span className="text-[9px] text-foreground/40 uppercase">Høstperiode</span>
+                        <p className="text-xs text-foreground/70">
+                          {scanResult.harvestStart ? `Mnd ${scanResult.harvestStart}` : "?"}–{scanResult.harvestEnd ? `${scanResult.harvestEnd}` : "?"}
+                        </p>
+                      </div>
+                    ) : null}
+                    {scanResult.daysToHarvest ? (
+                      <div>
+                        <span className="text-[9px] text-foreground/40 uppercase">Dage til høst</span>
+                        <p className="text-xs text-foreground/70">{String(scanResult.daysToHarvest)} dage</p>
+                      </div>
+                    ) : null}
+                    {scanResult.spacingCm ? (
+                      <div>
+                        <span className="text-[9px] text-foreground/40 uppercase">Afstand</span>
+                        <p className="text-xs text-foreground/70">{String(scanResult.spacingCm)} cm</p>
+                      </div>
+                    ) : null}
+                    {scanResult.taste ? (
+                      <div>
+                        <span className="text-[9px] text-foreground/40 uppercase">Smag</span>
+                        <p className="text-xs text-foreground/70">{String(scanResult.taste)}</p>
+                      </div>
+                    ) : null}
+                    {scanResult.color ? (
+                      <div>
+                        <span className="text-[9px] text-foreground/40 uppercase">Farve</span>
+                        <p className="text-xs text-foreground/70">{String(scanResult.color)}</p>
+                      </div>
+                    ) : null}
+                    {scanResult.seedSource ? (
+                      <div className="col-span-2">
+                        <span className="text-[9px] text-foreground/40 uppercase">Frøleverandør</span>
+                        <p className="text-xs text-foreground/70">{String(scanResult.seedSource)}</p>
+                      </div>
+                    ) : null}
+                    {scanResult.notes ? (
+                      <div className="col-span-2">
+                        <span className="text-[9px] text-foreground/40 uppercase">Bemærkninger</span>
+                        <p className="text-[10px] text-foreground/60 italic">{String(scanResult.notes)}</p>
+                      </div>
+                    ) : null}
+                  </div>
+
+                  {/* Save to plant database */}
+                  {!scanSaved ? (
+                    <button
+                      type="button"
+                      className="mt-2 w-full rounded-lg bg-accent px-3 py-2.5 text-xs text-white font-semibold hover:bg-accent/90 transition-colors shadow-sm"
+                      onClick={() => {
+                        const speciesName = String(scanResult.speciesName || scanResult.name || "Ukendt plante");
+                        const speciesId = speciesName.toLowerCase().replace(/[^a-zæøåü0-9]+/g, "-").replace(/-+$/, "");
+                        const varietyName = String(scanResult.name || "Standard");
+                        const varietyId = varietyName.toLowerCase().replace(/[^a-zæøåü0-9]+/g, "-").replace(/-+$/, "");
+
+                        // Check if species already exists
+                        const existing = getPlantById(speciesId);
+
+                        if (existing) {
+                          // Add as new variety to existing species
+                          const variety: PlantVariety = {
+                            id: varietyId,
+                            name: varietyName,
+                            description: scanResult.description ? String(scanResult.description) : undefined,
+                            daysToHarvest: scanResult.daysToHarvest ? Number(scanResult.daysToHarvest) : undefined,
+                            spacingCm: scanResult.spacingCm ? Number(scanResult.spacingCm) : undefined,
+                            taste: scanResult.taste ? String(scanResult.taste) : undefined,
+                            color: scanResult.color ? String(scanResult.color) : undefined,
+                            seedSource: scanResult.seedSource ? String(scanResult.seedSource) : undefined,
+                            notes: scanResult.notes ? String(scanResult.notes) : undefined,
+                            sowStart: scanResult.sowStart ? Number(scanResult.sowStart) : undefined,
+                            sowEnd: scanResult.sowEnd ? Number(scanResult.sowEnd) : undefined,
+                            harvestStart: scanResult.harvestStart ? Number(scanResult.harvestStart) : undefined,
+                            harvestEnd: scanResult.harvestEnd ? Number(scanResult.harvestEnd) : undefined,
+                            addedVia: "seed-packet",
+                          };
+                          addVarietyToSpecies(speciesId, variety);
+                        } else {
+                          // Create new species + variety
+                          const newSpecies: PlantSpecies = {
+                            id: speciesId,
+                            name: speciesName,
+                            category: "vegetable",
+                            description: scanResult.description ? String(scanResult.description) : undefined,
+                            spacingCm: scanResult.spacingCm ? Number(scanResult.spacingCm) : undefined,
+                            sowOutdoor: scanResult.sowStart && scanResult.sowEnd ? { from: Number(scanResult.sowStart), to: Number(scanResult.sowEnd) } : undefined,
+                            harvest: scanResult.harvestStart && scanResult.harvestEnd ? { from: Number(scanResult.harvestStart), to: Number(scanResult.harvestEnd) } : undefined,
+                            source: "ai",
+                            icon: "🌱",
+                            varieties: [{
+                              id: varietyId,
+                              name: varietyName,
+                              description: scanResult.description ? String(scanResult.description) : undefined,
+                              daysToHarvest: scanResult.daysToHarvest ? Number(scanResult.daysToHarvest) : undefined,
+                              spacingCm: scanResult.spacingCm ? Number(scanResult.spacingCm) : undefined,
+                              taste: scanResult.taste ? String(scanResult.taste) : undefined,
+                              color: scanResult.color ? String(scanResult.color) : undefined,
+                              seedSource: scanResult.seedSource ? String(scanResult.seedSource) : undefined,
+                              notes: scanResult.notes ? String(scanResult.notes) : undefined,
+                              sowStart: scanResult.sowStart ? Number(scanResult.sowStart) : undefined,
+                              sowEnd: scanResult.sowEnd ? Number(scanResult.sowEnd) : undefined,
+                              harvestStart: scanResult.harvestStart ? Number(scanResult.harvestStart) : undefined,
+                              harvestEnd: scanResult.harvestEnd ? Number(scanResult.harvestEnd) : undefined,
+                              addedVia: "seed-packet",
+                            }],
+                          };
+                          addOrUpdateCustomPlant(newSpecies);
+                        }
+
+                        setPlantDataVersion((v) => v + 1);
+                        setScanSaved(true);
+                      }}
+                    >
+                      🌱 Gem i plantedatabasen
+                    </button>
+                  ) : (
+                    <div className="mt-2 rounded-lg border border-green-300 bg-green-50 px-3 py-2 text-center">
+                      <p className="text-[11px] text-green-700 font-medium">✅ Gemt! Du finder den under 🌱 Planter.</p>
+                      <button
+                        type="button"
+                        className="mt-1 text-[10px] text-accent underline"
+                        onClick={() => { setSidebarTab("plants"); }}
+                      >
+                        Gå til Planter →
+                      </button>
+                    </div>
+                  )}
+                </div>
+              ) : null}
+
+              {/* Help text when no image */}
+              {!scanImage && !scanResult ? (
+                <div className="rounded-lg border border-border bg-background p-3">
+                  <p className="text-[11px] font-medium text-foreground/60 mb-1.5">Sådan virker det:</p>
+                  <ol className="text-[10px] text-foreground/50 space-y-1 list-decimal ml-3">
+                    <li>Tag et foto af frøposen eller etiketten</li>
+                    <li>AI’en aflæser sort, så/høst-tider, afstand m.m.</li>
+                    <li>Gem planten i din database med ét klik</li>
+                    <li>Brug den når du planlægger dine bede</li>
+                  </ol>
+                  <p className="text-[9px] text-foreground/30 mt-2 italic">Kræver at OPENAI_API_KEY er konfigureret som miljøvariabel.</p>
+                </div>
+              ) : null}
+            </div>
           </div>
         ) : null}
 
