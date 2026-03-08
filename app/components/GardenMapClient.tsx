@@ -6430,7 +6430,7 @@ export function GardenMapClient() {
                         if (!existing) {
                           // Determine category based on AI classification
                           const isWeed = scanResult.isWeed === true;
-                          const category: PlantCategory = isWeed ? "other" : "vegetable";
+                          const category: PlantCategory = isWeed ? "flower" : "vegetable";
 
                           const newSpecies: PlantSpecies = {
                             id: speciesId,
