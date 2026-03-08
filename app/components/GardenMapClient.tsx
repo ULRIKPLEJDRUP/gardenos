@@ -175,6 +175,7 @@ interface MapBookmark {
   center: [number, number];
   zoom: number;
   emoji?: string;
+  favorite?: boolean;
 }
 
 function loadBookmarks(): MapBookmark[] {
@@ -182,7 +183,9 @@ function loadBookmarks(): MapBookmark[] {
   try {
     const raw = localStorage.getItem(STORAGE_BOOKMARKS_KEY);
     if (!raw) return [];
-    return JSON.parse(raw) as MapBookmark[];
+    const parsed = JSON.parse(raw) as MapBookmark[];
+    // Migrate: old bookmarks without favorite field default to true
+    return parsed.map((b) => (b.favorite === undefined ? { ...b, favorite: true } : b));
   } catch { return []; }
 }
 
@@ -1260,6 +1263,7 @@ export function GardenMapClient() {
       center,
       zoom,
       emoji: emoji || "📍",
+      favorite: false,
     };
     setBookmarks((prev) => { const next = [...prev, bm]; saveBookmarks(next); return next; });
   }, []);
@@ -3346,11 +3350,11 @@ export function GardenMapClient() {
           </div>
         </div>
         <div className="flex items-center gap-2 overflow-hidden min-w-0">
-          {/* ── Bookmark pills ── */}
-          {bookmarks.length > 0 ? (
+          {/* ── Favorite bookmark pills ── */}
+          {bookmarks.some((b) => b.favorite) ? (
             <div className="flex items-center gap-1 overflow-x-auto scrollbar-none min-w-0">
-              <span className="text-[10px] text-foreground/40 shrink-0">📍</span>
-              {bookmarks.map((bm) => (
+              <span className="text-[10px] text-foreground/40 shrink-0">⭐</span>
+              {bookmarks.filter((b) => b.favorite).map((bm) => (
                 <button
                   key={bm.id}
                   type="button"
@@ -3371,7 +3375,7 @@ export function GardenMapClient() {
               </button>
             </div>
           ) : null}
-          {bookmarks.length > 0 ? <div className="h-5 w-px bg-border shrink-0" /> : null}
+          {bookmarks.some((b) => b.favorite) ? <div className="h-5 w-px bg-border shrink-0" /> : null}
           {/* ── Address search ── */}
           <div className="relative shrink-0">
             {showAddressSearch ? (
@@ -6216,6 +6220,12 @@ export function GardenMapClient() {
                                 {bm.emoji || "📍"} {bm.name}
                               </button>
                               <span className="text-[9px] text-foreground/30 shrink-0">z{bm.zoom.toFixed(0)}</span>
+                              <button
+                                type="button"
+                                className={`text-[10px] px-0.5 transition-colors ${bm.favorite ? "text-amber-400 hover:text-amber-500" : "text-foreground/20 hover:text-amber-400"}`}
+                                onClick={() => updateBookmark(bm.id, { favorite: !bm.favorite })}
+                                title={bm.favorite ? "Fjern fra top-bar" : "Vis i top-bar"}
+                              >⭐</button>
                               <button
                                 type="button"
                                 className="text-[10px] text-foreground/30 hover:text-accent px-0.5"
