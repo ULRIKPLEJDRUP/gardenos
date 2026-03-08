@@ -169,6 +169,61 @@ const STORAGE_HIDDEN_KINDS_KEY = "gardenos:hiddenKinds:v1";
 const STORAGE_HIDDEN_VIS_KINDS_KEY = "gardenos:hiddenVisKinds:v1";
 const STORAGE_BOOKMARKS_KEY = "gardenos:bookmarks:v1";
 const STORAGE_ANCHORS_KEY = "gardenos:anchors:v1";
+const STORAGE_SCAN_HISTORY_KEY = "gardenos:scanHistory:v1";
+
+// ---------------------------------------------------------------------------
+// Scan History – persistent library of all scanned items
+// ---------------------------------------------------------------------------
+type ScanType = "seed-packet" | "plant-photo" | "product";
+
+interface ScanHistoryItem {
+  id: string;
+  type: ScanType;
+  /** Base64 thumbnail (resized to save storage) */
+  thumbnail: string;
+  /** Raw AI result data */
+  data: Record<string, unknown>;
+  /** Display name (species or product name) */
+  name: string;
+  /** ISO date string */
+  scannedAt: string;
+  /** Has this been transferred to the plant database? */
+  transferred?: boolean;
+  /** Which plant category was it transferred as? */
+  transferredAs?: string;
+}
+
+function loadScanHistory(): ScanHistoryItem[] {
+  if (typeof window === "undefined") return [];
+  try {
+    const raw = localStorage.getItem(STORAGE_SCAN_HISTORY_KEY);
+    if (!raw) return [];
+    return JSON.parse(raw) as ScanHistoryItem[];
+  } catch { return []; }
+}
+
+function saveScanHistory(items: ScanHistoryItem[]): void {
+  if (typeof window === "undefined") return;
+  localStorage.setItem(STORAGE_SCAN_HISTORY_KEY, JSON.stringify(items));
+}
+
+/** Resize a base64 data-URL image to max 200px for thumbnail storage */
+function createThumbnail(dataUrl: string, maxSize = 200): Promise<string> {
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.onload = () => {
+      const canvas = document.createElement("canvas");
+      const scale = Math.min(maxSize / img.width, maxSize / img.height, 1);
+      canvas.width = img.width * scale;
+      canvas.height = img.height * scale;
+      const ctx = canvas.getContext("2d");
+      ctx?.drawImage(img, 0, 0, canvas.width, canvas.height);
+      resolve(canvas.toDataURL("image/jpeg", 0.7));
+    };
+    img.onerror = () => resolve(dataUrl.slice(0, 500)); // fallback
+    img.src = dataUrl;
+  });
+}
 
 interface MapBookmark {
   id: string;
@@ -1265,6 +1320,42 @@ export function GardenMapClient() {
   const [scanError, setScanError] = useState<string | null>(null);
   const [scanSaved, setScanSaved] = useState(false);
   const scanInputRef = useRef<HTMLInputElement>(null);
+
+  // ── Scan history (bibliotek) ──
+  const [scanHistory, setScanHistory] = useState<ScanHistoryItem[]>(() => loadScanHistory());
+  const [scanSubTab, setScanSubTab] = useState<"scan" | "library">("scan");
+  const [transferringId, setTransferringId] = useState<string | null>(null);
+  const [transferCategory, setTransferCategory] = useState<PlantCategory>("vegetable");
+  const [expandedHistoryId, setExpandedHistoryId] = useState<string | null>(null);
+  const [confirmDeleteHistoryId, setConfirmDeleteHistoryId] = useState<string | null>(null);
+
+  const addToScanHistory = useCallback(async (type: ScanType, imageDataUrl: string, data: Record<string, unknown>) => {
+    const thumbnail = await createThumbnail(imageDataUrl);
+    const name = String(data.speciesName || data.name || "Ukendt");
+    const item: ScanHistoryItem = {
+      id: `scan-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+      type,
+      thumbnail,
+      data,
+      name,
+      scannedAt: new Date().toISOString(),
+    };
+    setScanHistory((prev) => { const next = [item, ...prev]; saveScanHistory(next); return next; });
+  }, []);
+
+  const removeScanHistoryItem = useCallback((id: string) => {
+    setScanHistory((prev) => { const next = prev.filter((i) => i.id !== id); saveScanHistory(next); return next; });
+    setConfirmDeleteHistoryId(null);
+  }, []);
+
+  const markScanTransferred = useCallback((id: string, category: string) => {
+    setScanHistory((prev) => {
+      const next = prev.map((i) => i.id === id ? { ...i, transferred: true, transferredAs: category } : i);
+      saveScanHistory(next);
+      return next;
+    });
+    setTransferringId(null);
+  }, []);
 
   // ── Plant knowledge system state ──
   const [plantSearch, setPlantSearch] = useState("");
@@ -6020,6 +6111,33 @@ export function GardenMapClient() {
 
         {sidebarTab === "scan" ? (
           <div className="mt-3 space-y-3">
+            {/* Sub-tab: Scan / Bibliotek */}
+            <div className="flex gap-1 rounded-lg bg-background p-1 border border-border-light shadow-sm">
+              <button
+                type="button"
+                className={`flex-1 rounded-md px-2 py-1.5 text-[11px] font-medium transition-all ${
+                  scanSubTab === "scan"
+                    ? "bg-accent text-white shadow-sm"
+                    : "text-foreground/60 hover:bg-foreground/5 hover:text-foreground/80"
+                }`}
+                onClick={() => setScanSubTab("scan")}
+              >
+                📷 Scan
+              </button>
+              <button
+                type="button"
+                className={`flex-1 rounded-md px-2 py-1.5 text-[11px] font-medium transition-all ${
+                  scanSubTab === "library"
+                    ? "bg-amber-500 text-white shadow-sm"
+                    : "text-foreground/60 hover:bg-foreground/5 hover:text-foreground/80"
+                }`}
+                onClick={() => setScanSubTab("library")}
+              >
+                📚 Bibliotek {scanHistory.length > 0 ? `(${scanHistory.length})` : ""}
+              </button>
+            </div>
+
+            {scanSubTab === "scan" ? (
             <div>
               {/* Mode switcher */}
               <div className="flex gap-1 rounded-lg bg-background p-1 border border-border-light shadow-sm mb-3">
@@ -6131,6 +6249,12 @@ export function GardenMapClient() {
                             setScanError(msg);
                           } else {
                             setScanResult(data);
+                            // Auto-save to scan history
+                            addToScanHistory(
+                              scanMode === "identify" ? "plant-photo" : "seed-packet",
+                              scanImage!,
+                              data,
+                            );
                           }
                         } catch (err) {
                           setScanError(err instanceof Error ? err.message : "Netværksfejl");
@@ -6506,10 +6630,258 @@ export function GardenMapClient() {
                       <li>Brug den n\u00e5r du planl\u00e6gger dine bede</li>
                     </ol>
                   )}
-                  <p className="text-[9px] text-foreground/30 mt-2 italic">Kr\u00e6ver at OPENAI_API_KEY er konfigureret som milj\u00f8variabel.</p>
+                  <p className="text-[9px] text-foreground/30 mt-2 italic">Kræver at OPENAI_API_KEY er konfigureret som miljøvariabel.</p>
                 </div>
               ) : null}
             </div>
+            ) : null}
+
+            {/* ═══════════════════════════════════════════════════════════ */}
+            {/* Sub-tab: Bibliotek – scan history                          */}
+            {/* ═══════════════════════════════════════════════════════════ */}
+            {scanSubTab === "library" ? (
+              <div className="space-y-2">
+                <p className="text-[10px] text-foreground/40">
+                  Alle dine scannede planter og frøposer gemmes her. Du kan overføre dem til plantedatabasen med den rigtige kategori.
+                </p>
+
+                {scanHistory.length === 0 ? (
+                  <div className="text-center py-8">
+                    <p className="text-3xl mb-2">📚</p>
+                    <p className="text-sm text-foreground/50">Ingen scans endnu.</p>
+                    <p className="text-[10px] text-foreground/30 mt-1">Gå til "📷 Scan" og tag et billede.</p>
+                  </div>
+                ) : (
+                  <div className="space-y-2 max-h-[60vh] overflow-y-auto sidebar-scroll">
+                    {scanHistory.map((item) => {
+                      const isExpanded = expandedHistoryId === item.id;
+                      const isTransferring = transferringId === item.id;
+                      const typeLabel = item.type === "seed-packet" ? "🏷️ Frøpose" : item.type === "plant-photo" ? "🌿 Plante" : "📦 Produkt";
+                      const dateStr = new Date(item.scannedAt).toLocaleDateString("da-DK", { day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" });
+
+                      return (
+                        <div key={item.id} className={`rounded-lg border ${item.transferred ? "border-green-200 bg-green-50/30" : "border-border"} overflow-hidden`}>
+                          {/* Compact row */}
+                          <button
+                            type="button"
+                            className="w-full flex items-center gap-2 p-2 text-left hover:bg-foreground/5 transition-colors"
+                            onClick={() => setExpandedHistoryId(isExpanded ? null : item.id)}
+                          >
+                            {/* eslint-disable-next-line @next/next/no-img-element */}
+                            <img src={item.thumbnail} alt="" className="w-10 h-10 rounded object-cover shrink-0 border border-border" />
+                            <div className="flex-1 min-w-0">
+                              <p className="text-xs font-medium text-foreground/80 truncate">{item.name}</p>
+                              <p className="text-[9px] text-foreground/40">{typeLabel} · {dateStr}</p>
+                            </div>
+                            {item.transferred ? (
+                              <span className="text-[9px] text-green-600 font-medium shrink-0">✅ Overført</span>
+                            ) : (
+                              <span className="text-[9px] text-amber-500 font-medium shrink-0">Afventer</span>
+                            )}
+                            <span className="text-foreground/30 text-xs shrink-0">{isExpanded ? "▾" : "›"}</span>
+                          </button>
+
+                          {/* Expanded detail */}
+                          {isExpanded ? (
+                            <div className="border-t border-border px-3 py-2 space-y-2 bg-foreground/[0.02]">
+                              {/* Image */}
+                              <div className="rounded-lg overflow-hidden border border-border">
+                                {/* eslint-disable-next-line @next/next/no-img-element */}
+                                <img src={item.thumbnail} alt="" className="w-full max-h-32 object-contain bg-foreground/5" />
+                              </div>
+
+                              {/* Key data */}
+                              <div className="grid grid-cols-2 gap-x-3 gap-y-1">
+                                {item.data.speciesName ? (
+                                  <div className="col-span-2">
+                                    <span className="text-[9px] text-foreground/40 uppercase">Art</span>
+                                    <p className="text-xs font-semibold text-foreground/80">{String(item.data.speciesName)}</p>
+                                  </div>
+                                ) : null}
+                                {item.data.latinName ? (
+                                  <div className="col-span-2">
+                                    <span className="text-[9px] text-foreground/40 uppercase">Latin</span>
+                                    <p className="text-[10px] italic text-foreground/50">{String(item.data.latinName)}</p>
+                                  </div>
+                                ) : null}
+                                {item.data.description ? (
+                                  <div className="col-span-2">
+                                    <span className="text-[9px] text-foreground/40 uppercase">Beskrivelse</span>
+                                    <p className="text-[10px] text-foreground/60">{String(item.data.description)}</p>
+                                  </div>
+                                ) : null}
+                                {item.data.taste ? (<div><span className="text-[9px] text-foreground/40 uppercase">Smag</span><p className="text-[10px] text-foreground/60">{String(item.data.taste)}</p></div>) : null}
+                                {item.data.color ? (<div><span className="text-[9px] text-foreground/40 uppercase">Farve</span><p className="text-[10px] text-foreground/60">{String(item.data.color)}</p></div>) : null}
+                                {item.data.seedSource ? (<div className="col-span-2"><span className="text-[9px] text-foreground/40 uppercase">Leverandør</span><p className="text-[10px] text-foreground/60">{String(item.data.seedSource)}</p></div>) : null}
+                                {item.data.careAdvice ? (<div className="col-span-2"><span className="text-[9px] text-foreground/40 uppercase">Plejeråd</span><p className="text-[10px] text-foreground/60">{String(item.data.careAdvice)}</p></div>) : null}
+                                {item.data.confidence ? (<div className="col-span-2"><span className="text-[9px] text-foreground/30">Sikkerhed: {String(item.data.confidence)}</span></div>) : null}
+                              </div>
+
+                              {/* Classification badges for plant-photo */}
+                              {item.type === "plant-photo" ? (
+                                <div className="flex flex-wrap gap-1">
+                                  {item.data.isWeed !== undefined ? <span className={`inline-block rounded-full px-2 py-0.5 text-[9px] font-medium ${item.data.isWeed ? "bg-red-100 text-red-700" : "bg-green-100 text-green-700"}`}>{item.data.isWeed ? "🌾 Ukrudt" : "✅ Ikke ukrudt"}</span> : null}
+                                  {item.data.isEdible !== undefined ? <span className={`inline-block rounded-full px-2 py-0.5 text-[9px] font-medium ${item.data.isEdible ? "bg-green-100 text-green-700" : "bg-amber-100 text-amber-700"}`}>{item.data.isEdible ? "🍽 Spiselig" : "🚫 Ikke spiselig"}</span> : null}
+                                  {item.data.isPoisonous ? <span className="inline-block rounded-full bg-red-100 text-red-700 px-2 py-0.5 text-[9px] font-medium">☠️ Giftig</span> : null}
+                                  {item.data.isInvasive ? <span className="inline-block rounded-full bg-orange-100 text-orange-700 px-2 py-0.5 text-[9px] font-medium">⚠️ Invasiv</span> : null}
+                                </div>
+                              ) : null}
+
+                              {/* Transfer to plant database */}
+                              {!item.transferred ? (
+                                isTransferring ? (
+                                  <div className="rounded-lg border border-accent/30 bg-accent/5 p-2 space-y-2">
+                                    <p className="text-[10px] font-medium text-accent-dark">Vælg kategori:</p>
+                                    <div className="grid grid-cols-2 gap-1">
+                                      {(Object.entries(PLANT_CATEGORY_LABELS) as [PlantCategory, string][]).map(([cat, label]) => (
+                                        <button
+                                          key={cat}
+                                          type="button"
+                                          className={`rounded-md border px-2 py-1.5 text-[10px] font-medium transition-all ${
+                                            transferCategory === cat
+                                              ? "border-accent bg-accent text-white"
+                                              : "border-border bg-background text-foreground/60 hover:bg-foreground/5"
+                                          }`}
+                                          onClick={() => setTransferCategory(cat)}
+                                        >
+                                          {label}
+                                        </button>
+                                      ))}
+                                    </div>
+                                    <div className="flex gap-1">
+                                      <button
+                                        type="button"
+                                        className="flex-1 rounded-lg bg-accent text-white px-2 py-2 text-xs font-semibold hover:bg-accent/90 transition-colors"
+                                        onClick={() => {
+                                          const d = item.data;
+                                          const speciesName = String(d.speciesName || d.name || "Ukendt");
+                                          const speciesId = speciesName.toLowerCase().replace(/[^a-zæøåü0-9]+/g, "-").replace(/-+$/, "");
+                                          const varietyName = String(d.name || speciesName);
+                                          const varietyId = varietyName.toLowerCase().replace(/[^a-zæøåü0-9]+/g, "-").replace(/-+$/, "");
+
+                                          const existing = getPlantById(speciesId);
+
+                                          if (existing) {
+                                            const variety: PlantVariety = {
+                                              id: varietyId + "-" + Date.now().toString(36),
+                                              name: varietyName,
+                                              description: d.description ? String(d.description) : undefined,
+                                              daysToHarvest: d.daysToHarvest ? Number(d.daysToHarvest) : undefined,
+                                              spacingCm: d.spacingCm ? Number(d.spacingCm) : undefined,
+                                              taste: d.taste ? String(d.taste) : undefined,
+                                              color: d.color ? String(d.color) : undefined,
+                                              seedSource: d.seedSource ? String(d.seedSource) : undefined,
+                                              heightCm: d.heightCm ? Number(d.heightCm) : undefined,
+                                              notes: d.notes ? String(d.notes) : undefined,
+                                              sowStart: d.sowStart ? Number(d.sowStart) : undefined,
+                                              sowEnd: d.sowEnd ? Number(d.sowEnd) : undefined,
+                                              harvestStart: d.harvestStart ? Number(d.harvestStart) : undefined,
+                                              harvestEnd: d.harvestEnd ? Number(d.harvestEnd) : undefined,
+                                              addedVia: item.type === "seed-packet" ? "seed-packet" : "plant-photo",
+                                            };
+                                            addVarietyToSpecies(speciesId, variety);
+                                          } else {
+                                            const icon = item.type === "plant-photo"
+                                              ? (d.isWeed ? "🌾" : d.isEdible ? "🥬" : "🌿")
+                                              : "🌱";
+                                            const newSpecies: PlantSpecies = {
+                                              id: speciesId,
+                                              name: speciesName,
+                                              latinName: d.latinName ? String(d.latinName) : undefined,
+                                              category: transferCategory,
+                                              description: [
+                                                d.description ? String(d.description) : "",
+                                                d.careAdvice ? `Plejeråd: ${String(d.careAdvice)}` : "",
+                                              ].filter(Boolean).join("\n") || undefined,
+                                              spacingCm: d.spacingCm ? Number(d.spacingCm) : undefined,
+                                              sowOutdoor: d.sowStart && d.sowEnd ? { from: Number(d.sowStart), to: Number(d.sowEnd) } : undefined,
+                                              harvest: d.harvestStart && d.harvestEnd ? { from: Number(d.harvestStart), to: Number(d.harvestEnd) } : undefined,
+                                              source: "ai",
+                                              icon,
+                                              varieties: [{
+                                                id: varietyId,
+                                                name: varietyName,
+                                                description: d.description ? String(d.description) : undefined,
+                                                daysToHarvest: d.daysToHarvest ? Number(d.daysToHarvest) : undefined,
+                                                spacingCm: d.spacingCm ? Number(d.spacingCm) : undefined,
+                                                taste: d.taste ? String(d.taste) : undefined,
+                                                color: d.color ? String(d.color) : undefined,
+                                                seedSource: d.seedSource ? String(d.seedSource) : undefined,
+                                                heightCm: d.heightCm ? Number(d.heightCm) : undefined,
+                                                notes: d.notes ? String(d.notes) : undefined,
+                                                sowStart: d.sowStart ? Number(d.sowStart) : undefined,
+                                                sowEnd: d.sowEnd ? Number(d.sowEnd) : undefined,
+                                                harvestStart: d.harvestStart ? Number(d.harvestStart) : undefined,
+                                                harvestEnd: d.harvestEnd ? Number(d.harvestEnd) : undefined,
+                                                addedVia: item.type === "seed-packet" ? "seed-packet" : "plant-photo",
+                                              }],
+                                            };
+                                            addOrUpdateCustomPlant(newSpecies);
+                                          }
+
+                                          setPlantDataVersion((v) => v + 1);
+                                          markScanTransferred(item.id, transferCategory);
+                                        }}
+                                      >
+                                        ✅ Overfør som {PLANT_CATEGORY_LABELS[transferCategory]}
+                                      </button>
+                                      <button
+                                        type="button"
+                                        className="rounded-lg border border-border px-2 py-2 text-xs text-foreground/50 hover:bg-foreground/5"
+                                        onClick={() => setTransferringId(null)}
+                                      >
+                                        ✕
+                                      </button>
+                                    </div>
+                                  </div>
+                                ) : (
+                                  <button
+                                    type="button"
+                                    className="w-full rounded-lg border-2 border-dashed border-accent/30 bg-accent/5 px-3 py-2 text-xs font-medium text-accent-dark hover:bg-accent/10 hover:border-accent/50 transition-all"
+                                    onClick={() => { setTransferringId(item.id); setTransferCategory("vegetable"); }}
+                                  >
+                                    🌱 Overfør til plantedatabasen…
+                                  </button>
+                                )
+                              ) : (
+                                <p className="text-[10px] text-green-600 font-medium">
+                                  ✅ Overført som {PLANT_CATEGORY_LABELS[item.transferredAs as PlantCategory] ?? item.transferredAs}
+                                </p>
+                              )}
+
+                              {/* Delete */}
+                              <div className="flex justify-end pt-1 border-t border-border/50">
+                                {confirmDeleteHistoryId === item.id ? (
+                                  <div className="flex items-center gap-1">
+                                    <span className="text-[10px] text-red-600">Slet permanent?</span>
+                                    <button type="button" className="text-[10px] px-2 py-0.5 rounded bg-red-500 text-white" onClick={() => removeScanHistoryItem(item.id)}>Ja</button>
+                                    <button type="button" className="text-[10px] px-2 py-0.5 rounded bg-foreground/10 text-foreground/60" onClick={() => setConfirmDeleteHistoryId(null)}>Nej</button>
+                                  </div>
+                                ) : (
+                                  <button
+                                    type="button"
+                                    className="text-[10px] text-foreground/30 hover:text-red-500 transition-colors"
+                                    onClick={() => setConfirmDeleteHistoryId(item.id)}
+                                  >
+                                    🗑 Slet
+                                  </button>
+                                )}
+                              </div>
+                            </div>
+                          ) : null}
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+
+                {scanHistory.length > 0 ? (
+                  <p className="text-[9px] text-foreground/30 italic">
+                    {scanHistory.filter((i) => i.transferred).length} af {scanHistory.length} scans overført til plantedatabasen.
+                  </p>
+                ) : null}
+              </div>
+            ) : null}
           </div>
         ) : null}
 
