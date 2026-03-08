@@ -38,6 +38,7 @@ import {
 import VarietyManager from "./VarietyManager";
 import PlantEditor from "./PlantEditor";
 import IconPicker from "./IconPicker";
+import YearWheel from "./YearWheel";
 import {
   ALL_INFRA_ELEMENTS,
   getInfraElementById,
@@ -1321,7 +1322,7 @@ export function GardenMapClient() {
   const [newKindText, setNewKindText] = useState("");
   const [newKindError, setNewKindError] = useState<string | null>(null);
   const [undoStack, setUndoStack] = useState<UndoSnapshot[]>([]);
-  const [sidebarTab, setSidebarTab] = useState<"create" | "content" | "groups" | "plants" | "view" | "scan" | "chat">("create");
+  const [sidebarTab, setSidebarTab] = useState<"create" | "content" | "groups" | "plants" | "view" | "scan" | "chat" | "calendar">("create");
   const [viewSubTab, setViewSubTab] = useState<"steder" | "baggrund" | "synlighed" | "ankre">("steder");
 
   // ── Scan / frøpose-genkendelse state ──
@@ -1898,6 +1899,104 @@ export function GardenMapClient() {
       });
     },
     [setSelectedAndFocus]
+  );
+
+  /** Flash (pulse-highlight) one or more features on the map and pan to them */
+  const flashFeatureIds = useCallback(
+    (ids: string[]) => {
+      const group = featureGroupRef.current;
+      const map = mapRef.current;
+      if (!group || !map || ids.length === 0) return;
+
+      const idSet = new Set(ids);
+      const matchedLayers: L.Layer[] = [];
+      const bounds = L.latLngBounds([]);
+
+      group.eachLayer((layer) => {
+        const f = (layer as L.Layer & { feature?: GardenFeature }).feature;
+        if (f?.properties?.gardenosId && idSet.has(f.properties.gardenosId)) {
+          matchedLayers.push(layer);
+          if (layer instanceof L.Marker) {
+            bounds.extend(layer.getLatLng());
+          } else if (typeof (layer as unknown as { getBounds?: () => L.LatLngBounds }).getBounds === "function") {
+            bounds.extend((layer as unknown as { getBounds: () => L.LatLngBounds }).getBounds());
+          }
+        }
+      });
+
+      // Pan to features
+      if (bounds.isValid()) {
+        map.fitBounds(bounds.pad(0.4), { animate: true, duration: 0.5, maxZoom: 20 });
+      }
+
+      // Pulse animation: bright highlight → restore
+      const FLASH_COLOR = "#f59e0b"; // amber
+      const FLASH_WEIGHT = 5;
+      const PULSE_CYCLES = 3;
+      const PULSE_INTERVAL = 300; // ms per half-cycle
+
+      for (const layer of matchedLayers) {
+        const maybePath = layer as unknown as {
+          setStyle?: (s: L.PathOptions) => void;
+          options?: L.PathOptions;
+        };
+        const maybeMarker = layer as unknown as {
+          getElement?: () => HTMLElement | undefined;
+        };
+
+        if (maybePath.setStyle && maybePath.options) {
+          // Polygon / polyline / circle
+          const origStyle = {
+            color: maybePath.options.color,
+            weight: maybePath.options.weight,
+            fillOpacity: maybePath.options.fillOpacity,
+            fillColor: (maybePath.options as L.PathOptions).fillColor,
+          };
+          let cycle = 0;
+          const pulse = () => {
+            if (cycle >= PULSE_CYCLES * 2) {
+              maybePath.setStyle!(origStyle);
+              return;
+            }
+            const isOn = cycle % 2 === 0;
+            maybePath.setStyle!(isOn
+              ? { color: FLASH_COLOR, weight: FLASH_WEIGHT, fillOpacity: 0.35, fillColor: FLASH_COLOR }
+              : origStyle
+            );
+            cycle++;
+            setTimeout(pulse, PULSE_INTERVAL);
+          };
+          pulse();
+        } else if (maybeMarker.getElement) {
+          // Marker (DOM element)
+          const el = maybeMarker.getElement();
+          if (el) {
+            el.style.transition = "filter 0.15s, transform 0.15s";
+            let cycle = 0;
+            const pulse = () => {
+              if (cycle >= PULSE_CYCLES * 2) {
+                el.style.filter = "";
+                el.style.transform = el.style.transform.replace(/ scale\([^)]+\)/, "");
+                return;
+              }
+              const isOn = cycle % 2 === 0;
+              el.style.filter = isOn ? "drop-shadow(0 0 8px #f59e0b) drop-shadow(0 0 16px #f59e0b)" : "";
+              if (isOn) {
+                if (!el.style.transform.includes("scale(")) {
+                  el.style.transform += " scale(1.3)";
+                }
+              } else {
+                el.style.transform = el.style.transform.replace(/ scale\([^)]+\)/, "");
+              }
+              cycle++;
+              setTimeout(pulse, PULSE_INTERVAL);
+            };
+            pulse();
+          }
+        }
+      }
+    },
+    [selected?.gardenosId]
   );
 
   const allKindDefs = useMemo(() => {
@@ -4318,7 +4417,7 @@ export function GardenMapClient() {
 
 
         <div className="px-4 pt-2 pb-1">
-          <div className="flex gap-1 rounded-lg bg-background p-1 border border-border-light shadow-sm">
+          <div className="flex gap-1 rounded-lg bg-background p-1 border border-border-light shadow-sm overflow-x-auto scrollbar-hide">
             <button
               type="button"
               className={`flex-1 rounded-md px-1 py-1.5 text-[11px] font-medium transition-all ${
@@ -4386,6 +4485,17 @@ export function GardenMapClient() {
               onClick={() => { setSidebarTab("view"); setHighlightedGroupId(null); }}
             >
               👁 Visning
+            </button>
+            <button
+              type="button"
+              className={`flex-1 rounded-md px-1 py-1.5 text-[11px] font-medium transition-all ${
+                sidebarTab === "calendar"
+                  ? "bg-accent text-white shadow-sm"
+                  : "text-foreground/60 hover:bg-foreground/5 hover:text-foreground/80"
+              }`}
+              onClick={() => { setSidebarTab("calendar"); setHighlightedGroupId(null); }}
+            >
+              📅 Årshjul
             </button>
             <button
               type="button"
@@ -7279,6 +7389,11 @@ export function GardenMapClient() {
               </div>
             ) : null}
           </div>
+        ) : null}
+
+        {/* ── Year Wheel / Årshjul Tab ── */}
+        {sidebarTab === "calendar" ? (
+          <YearWheel plantDataVersion={plantDataVersion} plantInstancesVersion={plantInstancesVersion} flashFeatureIds={flashFeatureIds} />
         ) : null}
 
         {/* ── AI Chat / Rådgiver Tab ── */}
