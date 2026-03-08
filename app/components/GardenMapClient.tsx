@@ -6713,24 +6713,42 @@ export function GardenMapClient() {
                       return (
                         <div key={item.id} className={`rounded-lg border ${item.transferred ? "border-green-200 bg-green-50/30" : "border-border"} overflow-hidden`}>
                           {/* Compact row */}
-                          <button
-                            type="button"
-                            className="w-full flex items-center gap-2 p-2 text-left hover:bg-foreground/5 transition-colors"
-                            onClick={() => setExpandedHistoryId(isExpanded ? null : item.id)}
-                          >
-                            {/* eslint-disable-next-line @next/next/no-img-element */}
-                            <img src={item.thumbnail} alt="" className="w-10 h-10 rounded object-cover shrink-0 border border-border" />
-                            <div className="flex-1 min-w-0">
-                              <p className="text-xs font-medium text-foreground/80 truncate">{item.name}</p>
-                              <p className="text-[9px] text-foreground/40">{typeLabel} · {dateStr}</p>
-                            </div>
-                            {item.transferred ? (
-                              <span className="text-[9px] text-green-600 font-medium shrink-0">✅ Overført</span>
+                          <div className="flex items-center gap-2 p-2">
+                            <button
+                              type="button"
+                              className="flex-1 flex items-center gap-2 text-left hover:bg-foreground/5 transition-colors rounded min-w-0"
+                              onClick={() => setExpandedHistoryId(isExpanded ? null : item.id)}
+                            >
+                              {/* eslint-disable-next-line @next/next/no-img-element */}
+                              <img src={item.thumbnail} alt="" className="w-10 h-10 rounded object-cover shrink-0 border border-border" />
+                              <div className="flex-1 min-w-0">
+                                <p className="text-xs font-medium text-foreground/80 truncate">{item.name}</p>
+                                <p className="text-[9px] text-foreground/40">{typeLabel} · {dateStr}</p>
+                              </div>
+                              {item.transferred ? (
+                                <span className="text-[9px] text-green-600 font-medium shrink-0">✅</span>
+                              ) : (
+                                <span className="text-[9px] text-amber-500 font-medium shrink-0">⏳</span>
+                              )}
+                              <span className="text-foreground/30 text-xs shrink-0">{isExpanded ? "▾" : "›"}</span>
+                            </button>
+                            {/* Quick delete */}
+                            {confirmDeleteHistoryId === item.id ? (
+                              <div className="flex items-center gap-1 shrink-0">
+                                <button type="button" className="text-[9px] px-1.5 py-0.5 rounded bg-red-500 text-white" onClick={(e) => { e.stopPropagation(); removeScanHistoryItem(item.id); }}>Slet</button>
+                                <button type="button" className="text-[9px] px-1.5 py-0.5 rounded bg-foreground/10 text-foreground/60" onClick={(e) => { e.stopPropagation(); setConfirmDeleteHistoryId(null); }}>Nej</button>
+                              </div>
                             ) : (
-                              <span className="text-[9px] text-amber-500 font-medium shrink-0">Afventer</span>
+                              <button
+                                type="button"
+                                className="text-sm text-foreground/20 hover:text-red-500 transition-colors shrink-0 p-1"
+                                onClick={(e) => { e.stopPropagation(); setConfirmDeleteHistoryId(item.id); }}
+                                title="Slet scan"
+                              >
+                                🗑
+                              </button>
                             )}
-                            <span className="text-foreground/30 text-xs shrink-0">{isExpanded ? "▾" : "›"}</span>
-                          </button>
+                          </div>
 
                           {/* Expanded detail */}
                           {isExpanded ? (
