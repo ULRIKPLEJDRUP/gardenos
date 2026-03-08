@@ -1239,15 +1239,16 @@ export function GardenMapClient() {
     setAddressResults([]);
   }, []);
 
-  const addBookmark = useCallback((name: string, emoji?: string) => {
+  const addBookmark = useCallback((name: string, emoji?: string, coords?: { lat: number; lon: number; zoom?: number }) => {
     const map = mapRef.current;
     if (!map) return;
-    const c = map.getCenter();
+    const center: [number, number] = coords ? [coords.lat, coords.lon] : [map.getCenter().lat, map.getCenter().lng];
+    const zoom = coords?.zoom ?? map.getZoom();
     const bm: MapBookmark = {
       id: Date.now().toString(36),
       name,
-      center: [c.lat, c.lng],
-      zoom: map.getZoom(),
+      center,
+      zoom,
       emoji: emoji || "📍",
     };
     setBookmarks((prev) => { const next = [...prev, bm]; saveBookmarks(next); return next; });
@@ -3620,16 +3621,35 @@ export function GardenMapClient() {
               {addressSearching ? <div className="px-3 py-2 text-xs text-foreground/50">Søger…</div> : null}
               {addressResults.length > 0 ? (
                 <div className="border-t border-border">
-                  {addressResults.map((r, i) => (
-                    <button
-                      key={i}
-                      type="button"
-                      className="w-full text-left px-3 py-2 text-xs hover:bg-accent/10 transition-colors border-b border-border/50 last:border-b-0"
-                      onClick={() => goToLocation(parseFloat(r.lat), parseFloat(r.lon))}
-                    >
-                      📍 {r.display_name}
-                    </button>
-                  ))}
+                  {addressResults.map((r, i) => {
+                    const shortName = r.display_name.split(",")[0].trim();
+                    return (
+                      <div key={i} className="flex items-center gap-1 px-3 py-2 border-b border-border/50 last:border-b-0 hover:bg-accent/5 transition-colors">
+                        <button
+                          type="button"
+                          className="flex-1 text-left text-xs truncate hover:text-accent transition-colors"
+                          onClick={() => goToLocation(parseFloat(r.lat), parseFloat(r.lon))}
+                        >
+                          📍 {r.display_name}
+                        </button>
+                        <button
+                          type="button"
+                          className="shrink-0 rounded border border-accent/30 bg-accent/10 px-1.5 py-0.5 text-[10px] text-accent-dark font-medium hover:bg-accent/20 transition-colors"
+                          onClick={() => {
+                            const lat = parseFloat(r.lat);
+                            const lon = parseFloat(r.lon);
+                            goToLocation(lat, lon);
+                            addBookmark(shortName, "📍", { lat, lon, zoom: 18 });
+                            setAddressResults([]);
+                            setShowAddressSearch(false);
+                          }}
+                          title={`Gem "${shortName}"`}
+                        >
+                          + Gem
+                        </button>
+                      </div>
+                    );
+                  })}
                 </div>
               ) : null}
             </div>
@@ -5819,16 +5839,34 @@ export function GardenMapClient() {
                   </div>
                   {addressResults.length > 0 ? (
                     <div className="mt-1.5 rounded-lg border border-border bg-white overflow-hidden">
-                      {addressResults.map((r, i) => (
-                        <button
-                          key={i}
-                          type="button"
-                          className="w-full text-left px-3 py-2 text-xs hover:bg-accent/10 transition-colors border-b border-border/50 last:border-b-0"
-                          onClick={() => { goToLocation(parseFloat(r.lat), parseFloat(r.lon)); setAddressResults([]); }}
-                        >
-                          📍 {r.display_name}
-                        </button>
-                      ))}
+                      {addressResults.map((r, i) => {
+                        const shortName = r.display_name.split(",")[0].trim();
+                        return (
+                          <div key={i} className="flex items-center gap-1 px-3 py-2 border-b border-border/50 last:border-b-0 hover:bg-accent/5 transition-colors">
+                            <button
+                              type="button"
+                              className="flex-1 text-left text-xs truncate hover:text-accent transition-colors"
+                              onClick={() => { goToLocation(parseFloat(r.lat), parseFloat(r.lon)); }}
+                            >
+                              📍 {r.display_name}
+                            </button>
+                            <button
+                              type="button"
+                              className="shrink-0 rounded border border-accent/30 bg-accent/10 px-1.5 py-0.5 text-[10px] text-accent-dark font-medium hover:bg-accent/20 transition-colors"
+                              onClick={() => {
+                                const lat = parseFloat(r.lat);
+                                const lon = parseFloat(r.lon);
+                                goToLocation(lat, lon);
+                                addBookmark(shortName, "📍", { lat, lon, zoom: 18 });
+                                setAddressResults([]);
+                              }}
+                              title={`Gem "${shortName}" som bogmærke`}
+                            >
+                              + Gem
+                            </button>
+                          </div>
+                        );
+                      })}
                     </div>
                   ) : null}
                 </div>
