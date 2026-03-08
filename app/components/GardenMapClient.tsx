@@ -56,6 +56,8 @@ import {
   getWeatherEmoji,
   getWeatherLabel,
   computeWeatherStats,
+  loadWeatherHistory,
+  getHistorySlice,
   type WeatherData,
 } from "../lib/weatherStore";
 
@@ -1364,6 +1366,8 @@ export function GardenMapClient() {
   const [weatherLoading, setWeatherLoading] = useState(false);
   const [weatherExpanded, setWeatherExpanded] = useState(false);
   const [weatherError, setWeatherError] = useState<string | null>(null);
+  const [weatherHistory, setWeatherHistory] = useState(() => loadWeatherHistory());
+  const [weatherStatRange, setWeatherStatRange] = useState<number>(30);
 
   // Fetch weather on mount + every 30 min
   useEffect(() => {
@@ -1390,6 +1394,7 @@ export function GardenMapClient() {
       try {
         const data = await fetchWeather(lat, lng);
         setWeatherData(data);
+        setWeatherHistory(loadWeatherHistory());
       } catch (err) {
         setWeatherError(err instanceof Error ? err.message : "Vejrdata kunne ikke hentes");
         if (cached) setWeatherData(cached); // use stale cache
@@ -1402,6 +1407,12 @@ export function GardenMapClient() {
     const interval = setInterval(doFetch, 30 * 60 * 1000); // 30 min
     return () => clearInterval(interval);
   }, []);
+
+  const weatherStats = useMemo(() => {
+    const slice = getHistorySlice(weatherHistory, weatherStatRange);
+    if (!slice.length) return null;
+    return { stats: computeWeatherStats(slice), count: slice.length };
+  }, [weatherHistory, weatherStatRange]);
 
   // Persist chat messages
   useEffect(() => {
@@ -7332,21 +7343,38 @@ export function GardenMapClient() {
                       })}
                     </div>
 
-                    {/* Recent stats */}
-                    {weatherData.recentDays.length > 0 && (() => {
-                      const stats = computeWeatherStats(weatherData.recentDays);
-                      return (
-                        <div>
-                          <div className="text-[9px] font-semibold text-foreground/40 uppercase tracking-wider mt-1">Sidste {stats.count} dage</div>
-                          <div className="grid grid-cols-2 gap-x-2 gap-y-0.5 text-[10px] text-foreground/55 mt-0.5">
-                            <span>📈 Snit maks: {stats.avgTempMax}°C</span>
-                            <span>📉 Snit min: {stats.avgTempMin}°C</span>
-                            <span>🌧️ Nedbør: {stats.totalPrecipitation}mm</span>
-                            <span>❄️ Frostdage: {stats.frostDays}</span>
+                    {/* Recent stats with range selector */}
+                    {weatherStats && (
+                      <div>
+                        <div className="flex items-center justify-between">
+                          <div className="text-[9px] font-semibold text-foreground/40 uppercase tracking-wider mt-1">Statistik</div>
+                          <div className="flex gap-1">
+                            {[7, 30, 90, 365].map((d) => (
+                              <button
+                                key={d}
+                                type="button"
+                                className={`rounded px-1.5 py-0.5 text-[9px] font-medium transition-colors border ${
+                                  weatherStatRange === d
+                                    ? "border-sky-400 bg-sky-100 text-sky-800"
+                                    : "border-border/60 bg-white hover:bg-foreground/5 text-foreground/60"
+                                }`}
+                                onClick={() => setWeatherStatRange(d)}
+                              >
+                                {d}d
+                              </button>
+                            ))}
                           </div>
                         </div>
-                      );
-                    })()}
+                        <div className="grid grid-cols-2 gap-x-2 gap-y-0.5 text-[10px] text-foreground/55 mt-0.5">
+                          <span>📈 Snit maks: {weatherStats.stats.avgTempMax}°C</span>
+                          <span>📉 Snit min: {weatherStats.stats.avgTempMin}°C</span>
+                          <span>🌧️ Nedbør: {weatherStats.stats.totalPrecipitation}mm</span>
+                          <span>❄️ Frostdage: {weatherStats.stats.frostDays}</span>
+                          <span>☔ Regndage: {weatherStats.stats.rainDays}</span>
+                          <span className="text-foreground/40">dage: {weatherStats.count}</span>
+                        </div>
+                      </div>
+                    )}
 
                     <div className="text-[8px] text-foreground/25 text-right">Open-Meteo · {new Date(weatherData.fetchedAt).toLocaleTimeString("da-DK", { hour: "2-digit", minute: "2-digit" })}</div>
                   </div>
