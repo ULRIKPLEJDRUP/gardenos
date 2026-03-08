@@ -3,10 +3,15 @@
 // ---------------------------------------------------------------------------
 // Uses getToken() from next-auth/jwt instead of the full auth() wrapper so
 // that Prisma is NOT imported in the Edge Runtime.
+// Auth.js v5 uses "authjs.session-token" as cookie name (not "next-auth.*").
 // ---------------------------------------------------------------------------
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 import { getToken } from "next-auth/jwt";
+
+// Auth.js v5 cookie name depends on protocol
+const COOKIE_NAME_HTTP = "authjs.session-token";
+const COOKIE_NAME_HTTPS = "__Secure-authjs.session-token";
 
 export async function middleware(req: NextRequest) {
   const { pathname } = req.nextUrl;
@@ -30,8 +35,16 @@ export async function middleware(req: NextRequest) {
     return NextResponse.next();
   }
 
+  // Pick the right cookie name based on protocol
+  const isSecure = req.nextUrl.protocol === "https:";
+  const cookieName = isSecure ? COOKIE_NAME_HTTPS : COOKIE_NAME_HTTP;
+
   // Decode JWT – works in Edge Runtime, no DB call needed
-  const token = await getToken({ req, secret: process.env.AUTH_SECRET });
+  const token = await getToken({
+    req,
+    secret: process.env.AUTH_SECRET,
+    cookieName,
+  });
 
   // Not logged in → redirect to login
   if (!token) {
