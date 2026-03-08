@@ -121,16 +121,28 @@ Returnér KUN valid JSON, ingen kommentarer eller forklaringer.`;
     const openaiData = await openaiResponse.json();
     const content: string = openaiData.choices?.[0]?.message?.content ?? "";
 
+    console.log("OpenAI raw response content:", content.slice(0, 500));
+
     // Parse JSON from the response (may be wrapped in ```json ... ```)
     const jsonMatch = content.match(/\{[\s\S]*\}/);
     if (!jsonMatch) {
+      console.error("No JSON found in AI response:", content);
       return NextResponse.json(
         { error: "Kunne ikke parse AI-svar", raw: content },
         { status: 500 },
       );
     }
 
-    const extracted = JSON.parse(jsonMatch[0]);
+    let extracted;
+    try {
+      extracted = JSON.parse(jsonMatch[0]);
+    } catch (parseErr) {
+      console.error("JSON parse error:", parseErr, "Raw match:", jsonMatch[0].slice(0, 300));
+      return NextResponse.json(
+        { error: "Kunne ikke parse AI-svar (ugyldig JSON)", raw: content },
+        { status: 500 },
+      );
+    }
 
     return NextResponse.json({
       ...extracted,

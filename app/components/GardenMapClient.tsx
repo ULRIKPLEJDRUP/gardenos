@@ -6123,10 +6123,12 @@ export function GardenMapClient() {
                           });
                           const data = await res.json();
                           if (!res.ok || data.error) {
-                            setScanError(data.error || "Ukendt fejl fra AI");
-                            if (data.needsConfig) {
-                              setScanError("OPENAI_API_KEY er ikke konfigureret. Tilføj den som miljøvariabel i Vercel.");
-                            }
+                            const msg = data.needsConfig
+                              ? "OPENAI_API_KEY er ikke konfigureret. Tilføj den som miljøvariabel i Vercel."
+                              : data.raw
+                                ? `${data.error}\n\nRåt AI-svar: ${String(data.raw).slice(0, 200)}`
+                                : data.error || "Ukendt fejl fra AI";
+                            setScanError(msg);
                           } else {
                             setScanResult(data);
                           }
