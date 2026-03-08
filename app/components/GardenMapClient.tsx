@@ -5,7 +5,7 @@ import L from "leaflet";
 import "leaflet-draw";
 import "leaflet-path-drag";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { MapContainer, TileLayer, WMSTileLayer, useMap, useMapEvents } from "react-leaflet";
+import { MapContainer, Marker, Popup, TileLayer, WMSTileLayer, useMap, useMapEvents } from "react-leaflet";
 import {
   getAllPlants,
   getPlantById,
@@ -1159,6 +1159,7 @@ export function GardenMapClient() {
   const [newKindError, setNewKindError] = useState<string | null>(null);
   const [undoStack, setUndoStack] = useState<UndoSnapshot[]>([]);
   const [sidebarTab, setSidebarTab] = useState<"create" | "content" | "groups" | "plants" | "view">("create");
+  const [viewSubTab, setViewSubTab] = useState<"steder" | "baggrund" | "synlighed">("steder");
 
   // ── Plant knowledge system state ──
   const [plantSearch, setPlantSearch] = useState("");
@@ -3559,6 +3560,25 @@ export function GardenMapClient() {
             />
           ) : null}
 
+          {/* ── Bookmark pin markers ── */}
+          {bookmarks.map((bm) => (
+            <Marker
+              key={`bm-${bm.id}`}
+              position={bm.center}
+              icon={L.divIcon({
+                className: "bookmark-pin",
+                html: `<div style="font-size:20px;filter:drop-shadow(0 1px 2px rgba(0,0,0,.3));cursor:pointer;text-align:center;line-height:1">${bm.emoji || "📍"}</div>`,
+                iconSize: [28, 28],
+                iconAnchor: [14, 28],
+              })}
+              eventHandlers={{
+                click: () => goToLocation(bm.center[0], bm.center[1], bm.zoom),
+              }}
+            >
+              <Popup><span className="text-xs font-medium">{bm.emoji || "📍"} {bm.name}</span></Popup>
+            </Marker>
+          ))}
+
           <MapDrawControls
             featureGroupRef={featureGroupRef}
             mapRef={mapRef}
@@ -3581,7 +3601,7 @@ export function GardenMapClient() {
         </MapContainer>
 
         {/* ── Address Search Overlay ── */}
-        <div className="absolute top-3 left-3 z-[1000] flex flex-col gap-1" style={{ maxWidth: "320px" }}>
+        <div className="absolute top-3 left-3 z-[1000]" style={{ maxWidth: "320px" }}>
           {showAddressSearch ? (
             <div className="rounded-xl border border-border bg-white shadow-lg">
               <div className="flex items-center gap-1 px-3 py-2">
@@ -3622,24 +3642,10 @@ export function GardenMapClient() {
               🔍 Søg adresse
             </button>
           )}
-
-          {/* Quick bookmark buttons on map */}
-          {bookmarks.length > 0 ? (
-            <div className="flex flex-wrap gap-1 mt-1">
-              {bookmarks.map((bm) => (
-                <button
-                  key={bm.id}
-                  type="button"
-                  className="rounded-lg border border-border bg-white/95 shadow-sm px-2 py-1 text-xs hover:bg-accent/10 transition-colors"
-                  onClick={() => goToLocation(bm.center[0], bm.center[1], bm.zoom)}
-                  title={`${bm.name} (zoom ${bm.zoom})`}
-                >
-                  {bm.emoji || "📍"} {bm.name}
-                </button>
-              ))}
-            </div>
-          ) : null}
         </div>
+
+        {/* ── Bookmark pin markers on the map ── */}
+        {/* These are rendered inside the MapContainer via a portal-like approach below */}
 
         {!isReady ? (
           <div className="absolute inset-0 flex items-center justify-center bg-background/80">
@@ -3710,6 +3716,33 @@ export function GardenMapClient() {
             </button>
           </div>
         </div>
+
+        {/* ── Bookmark Quick-Access Bar ── */}
+        {bookmarks.length > 0 ? (
+          <div className="px-4 pb-1 pt-1 flex items-center gap-1.5 overflow-x-auto scrollbar-none border-b border-border-light">
+            <span className="text-[10px] text-foreground/40 shrink-0">📍</span>
+            {bookmarks.map((bm) => (
+              <button
+                key={bm.id}
+                type="button"
+                className="shrink-0 rounded-full border border-border bg-white px-2.5 py-1 text-[11px] font-medium hover:bg-accent/10 hover:border-accent/30 transition-all shadow-sm whitespace-nowrap"
+                onClick={() => goToLocation(bm.center[0], bm.center[1], bm.zoom)}
+                title={`${bm.name} — zoom ${bm.zoom.toFixed(0)}`}
+              >
+                {bm.emoji || "📍"} {bm.name}
+              </button>
+            ))}
+            <button
+              type="button"
+              className="shrink-0 rounded-full border border-dashed border-foreground/20 px-2 py-1 text-[10px] text-foreground/40 hover:border-accent/40 hover:text-accent transition-all"
+              onClick={() => { setSidebarTab("view"); setViewSubTab("steder"); }}
+              title="Administrer steder"
+            >
+              ＋
+            </button>
+          </div>
+        ) : null}
+
         <div className="flex-1 overflow-y-auto sidebar-scroll px-4 pb-4">
 
         {sidebarTab === "create" ? (
@@ -5742,105 +5775,167 @@ export function GardenMapClient() {
 
         {sidebarTab === "view" ? (
           <div className="mt-3 space-y-3">
-            {/* ── Bogmærker / Steder ── */}
-            <div className="border-b border-border-light pb-3">
-              <label className="block text-[11px] font-semibold text-foreground/60 uppercase tracking-wide mb-2">📍 Gemte steder</label>
-              <p className="text-[10px] text-foreground/40 mb-2">Gem din nuværende kortvisning som et bogmærke – perfekt til hurtigt at hoppe mellem forskellige områder.</p>
-              
-              {bookmarks.length > 0 ? (
-                <div className="space-y-1 mb-2">
-                  {bookmarks.map((bm) => (
-                    <div key={bm.id} className="flex items-center gap-1 rounded-lg border border-border bg-background p-1.5">
-                      {editingBookmarkId === bm.id ? (
-                        <>
-                          <input
-                            type="text"
-                            className="w-8 text-center text-sm border border-border rounded px-0.5"
-                            defaultValue={bm.emoji || "📍"}
-                            onBlur={(e) => updateBookmark(bm.id, { emoji: e.target.value || "📍" })}
-                          />
-                          <input
-                            type="text"
-                            className="flex-1 text-xs border border-border rounded px-1.5 py-0.5"
-                            defaultValue={bm.name}
-                            onBlur={(e) => { updateBookmark(bm.id, { name: e.target.value || bm.name }); setEditingBookmarkId(null); }}
-                            onKeyDown={(e) => { if (e.key === "Enter") { updateBookmark(bm.id, { name: (e.target as HTMLInputElement).value || bm.name }); setEditingBookmarkId(null); } }}
-                            autoFocus
-                          />
-                          <span className="text-[9px] text-foreground/40">z{bm.zoom.toFixed(0)}</span>
-                          <button type="button" className="text-[10px] text-accent" onClick={() => setEditingBookmarkId(null)}>✓</button>
-                        </>
-                      ) : (
-                        <>
-                          <button
-                            type="button"
-                            className="flex-1 text-left text-xs hover:text-accent transition-colors truncate"
-                            onClick={() => goToLocation(bm.center[0], bm.center[1], bm.zoom)}
-                            title={`Zoom ${bm.zoom.toFixed(1)}`}
-                          >
-                            {bm.emoji || "📍"} {bm.name}
-                          </button>
-                          <span className="text-[9px] text-foreground/30 shrink-0">z{bm.zoom.toFixed(0)}</span>
-                          <button
-                            type="button"
-                            className="text-[10px] text-foreground/30 hover:text-accent px-0.5"
-                            onClick={() => {
-                              const map = mapRef.current;
-                              if (map) updateBookmark(bm.id, { center: [map.getCenter().lat, map.getCenter().lng], zoom: map.getZoom() });
-                            }}
-                            title="Opdater til nuværende visning"
-                          >🔄</button>
-                          <button type="button" className="text-[10px] text-foreground/30 hover:text-foreground/60 px-0.5" onClick={() => setEditingBookmarkId(bm.id)} title="Redigér">✏️</button>
-                          <button type="button" className="text-[10px] text-foreground/30 hover:text-red-500 px-0.5" onClick={() => removeBookmark(bm.id)} title="Slet">🗑</button>
-                        </>
-                      )}
-                    </div>
-                  ))}
-                </div>
-              ) : (
-                <p className="text-[10px] text-foreground/30 italic mb-2">Ingen gemte steder endnu.</p>
-              )}
-              
-              <div className="flex gap-1">
-                <input
-                  type="text"
-                  className="w-8 shrink-0 text-center text-sm border border-border rounded-lg px-0.5 py-1"
-                  value={newBookmarkEmoji}
-                  onChange={(e) => setNewBookmarkEmoji(e.target.value)}
-                  title="Vælg emoji"
-                />
-                <input
-                  type="text"
-                  className="flex-1 rounded-lg border border-border px-2 py-1 text-xs placeholder:text-foreground/30"
-                  placeholder="Navn, f.eks. 'Køkkenhaven'…"
-                  value={newBookmarkName}
-                  onChange={(e) => setNewBookmarkName(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter" && newBookmarkName.trim()) {
-                      addBookmark(newBookmarkName.trim(), newBookmarkEmoji);
-                      setNewBookmarkName("");
-                      setNewBookmarkEmoji("📍");
-                    }
-                  }}
-                />
+            {/* ── Visning sub-tabs ── */}
+            <div className="flex gap-1 rounded-lg bg-background p-1 border border-border-light shadow-sm">
+              {(["steder", "baggrund", "synlighed"] as const).map((st) => (
                 <button
+                  key={st}
                   type="button"
-                  className="rounded-lg border border-accent/30 bg-accent/10 px-2 py-1 text-xs text-accent-dark font-medium hover:bg-accent/20 transition-colors disabled:opacity-40"
-                  disabled={!newBookmarkName.trim()}
-                  onClick={() => {
-                    if (newBookmarkName.trim()) {
-                      addBookmark(newBookmarkName.trim(), newBookmarkEmoji);
-                      setNewBookmarkName("");
-                      setNewBookmarkEmoji("📍");
-                    }
-                  }}
+                  className={`flex-1 rounded-md px-2 py-1.5 text-[11px] font-medium transition-all ${
+                    viewSubTab === st
+                      ? "bg-accent text-white shadow-sm"
+                      : "text-foreground/60 hover:bg-foreground/5 hover:text-foreground/80"
+                  }`}
+                  onClick={() => setViewSubTab(st)}
                 >
-                  + Gem
+                  {st === "steder" ? "📍 Steder" : st === "baggrund" ? "🗺️ Baggrund" : "👁 Synlighed"}
+                  {st === "steder" && bookmarks.length > 0 ? ` ${bookmarks.length}` : ""}
                 </button>
-              </div>
+              ))}
             </div>
 
-            <div className="border-b border-border-light pb-3">
+            {/* ── Sub-tab: Steder ── */}
+            {viewSubTab === "steder" ? (
+              <div className="space-y-3">
+                {/* Address search inline */}
+                <div>
+                  <label className="block text-[11px] font-semibold text-foreground/60 uppercase tracking-wide mb-1.5">🔍 Adressesøgning</label>
+                  <div className="flex gap-1">
+                    <input
+                      type="text"
+                      className="flex-1 rounded-lg border border-border px-2 py-1.5 text-xs placeholder:text-foreground/30 focus:border-accent/50 focus:outline-none"
+                      placeholder="F.eks. Strandvejen 152, 8410 Rønde"
+                      value={addressQuery}
+                      onChange={(e) => setAddressQuery(e.target.value)}
+                      onKeyDown={(e) => { if (e.key === "Enter") searchAddress(addressQuery); }}
+                    />
+                    <button
+                      type="button"
+                      className="rounded-lg border border-accent/30 bg-accent/10 px-2.5 py-1.5 text-xs text-accent-dark font-medium hover:bg-accent/20 transition-colors"
+                      onClick={() => searchAddress(addressQuery)}
+                    >
+                      {addressSearching ? "…" : "Søg"}
+                    </button>
+                  </div>
+                  {addressResults.length > 0 ? (
+                    <div className="mt-1.5 rounded-lg border border-border bg-white overflow-hidden">
+                      {addressResults.map((r, i) => (
+                        <button
+                          key={i}
+                          type="button"
+                          className="w-full text-left px-3 py-2 text-xs hover:bg-accent/10 transition-colors border-b border-border/50 last:border-b-0"
+                          onClick={() => { goToLocation(parseFloat(r.lat), parseFloat(r.lon)); setAddressResults([]); }}
+                        >
+                          📍 {r.display_name}
+                        </button>
+                      ))}
+                    </div>
+                  ) : null}
+                </div>
+
+                <div className="border-t border-border-light pt-3">
+                  <label className="block text-[11px] font-semibold text-foreground/60 uppercase tracking-wide mb-1.5">📍 Gemte steder</label>
+                  <p className="text-[10px] text-foreground/40 mb-2">Gem din nuværende kortvisning – hop hurtigt mellem områder med forskellige zoom-niveauer.</p>
+
+                  {bookmarks.length > 0 ? (
+                    <div className="space-y-1 mb-2">
+                      {bookmarks.map((bm) => (
+                        <div key={bm.id} className="flex items-center gap-1 rounded-lg border border-border bg-background p-1.5">
+                          {editingBookmarkId === bm.id ? (
+                            <>
+                              <input
+                                type="text"
+                                className="w-8 text-center text-sm border border-border rounded px-0.5"
+                                defaultValue={bm.emoji || "📍"}
+                                onBlur={(e) => updateBookmark(bm.id, { emoji: e.target.value || "📍" })}
+                              />
+                              <input
+                                type="text"
+                                className="flex-1 text-xs border border-border rounded px-1.5 py-0.5"
+                                defaultValue={bm.name}
+                                onBlur={(e) => { updateBookmark(bm.id, { name: e.target.value || bm.name }); setEditingBookmarkId(null); }}
+                                onKeyDown={(e) => { if (e.key === "Enter") { updateBookmark(bm.id, { name: (e.target as HTMLInputElement).value || bm.name }); setEditingBookmarkId(null); } }}
+                                autoFocus
+                              />
+                              <span className="text-[9px] text-foreground/40">z{bm.zoom.toFixed(0)}</span>
+                              <button type="button" className="text-[10px] text-accent" onClick={() => setEditingBookmarkId(null)}>✓</button>
+                            </>
+                          ) : (
+                            <>
+                              <button
+                                type="button"
+                                className="flex-1 text-left text-xs hover:text-accent transition-colors truncate"
+                                onClick={() => goToLocation(bm.center[0], bm.center[1], bm.zoom)}
+                                title={`Zoom ${bm.zoom.toFixed(1)}`}
+                              >
+                                {bm.emoji || "📍"} {bm.name}
+                              </button>
+                              <span className="text-[9px] text-foreground/30 shrink-0">z{bm.zoom.toFixed(0)}</span>
+                              <button
+                                type="button"
+                                className="text-[10px] text-foreground/30 hover:text-accent px-0.5"
+                                onClick={() => {
+                                  const map = mapRef.current;
+                                  if (map) updateBookmark(bm.id, { center: [map.getCenter().lat, map.getCenter().lng], zoom: map.getZoom() });
+                                }}
+                                title="Opdater til nuværende visning"
+                              >🔄</button>
+                              <button type="button" className="text-[10px] text-foreground/30 hover:text-foreground/60 px-0.5" onClick={() => setEditingBookmarkId(bm.id)} title="Redigér">✏️</button>
+                              <button type="button" className="text-[10px] text-foreground/30 hover:text-red-500 px-0.5" onClick={() => removeBookmark(bm.id)} title="Slet">🗑</button>
+                            </>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="text-[10px] text-foreground/30 italic mb-2">Ingen gemte steder endnu.</p>
+                  )}
+
+                  <div className="flex gap-1">
+                    <input
+                      type="text"
+                      className="w-8 shrink-0 text-center text-sm border border-border rounded-lg px-0.5 py-1"
+                      value={newBookmarkEmoji}
+                      onChange={(e) => setNewBookmarkEmoji(e.target.value)}
+                      title="Vælg emoji"
+                    />
+                    <input
+                      type="text"
+                      className="flex-1 rounded-lg border border-border px-2 py-1 text-xs placeholder:text-foreground/30"
+                      placeholder="Navn, f.eks. 'Køkkenhaven'…"
+                      value={newBookmarkName}
+                      onChange={(e) => setNewBookmarkName(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter" && newBookmarkName.trim()) {
+                          addBookmark(newBookmarkName.trim(), newBookmarkEmoji);
+                          setNewBookmarkName("");
+                          setNewBookmarkEmoji("📍");
+                        }
+                      }}
+                    />
+                    <button
+                      type="button"
+                      className="rounded-lg border border-accent/30 bg-accent/10 px-2 py-1 text-xs text-accent-dark font-medium hover:bg-accent/20 transition-colors disabled:opacity-40"
+                      disabled={!newBookmarkName.trim()}
+                      onClick={() => {
+                        if (newBookmarkName.trim()) {
+                          addBookmark(newBookmarkName.trim(), newBookmarkEmoji);
+                          setNewBookmarkName("");
+                          setNewBookmarkEmoji("📍");
+                        }
+                      }}
+                    >
+                      + Gem
+                    </button>
+                  </div>
+                </div>
+              </div>
+            ) : null}
+
+            {/* ── Sub-tab: Baggrund ── */}
+            {viewSubTab === "baggrund" ? (
+            <div className="space-y-3">
+            <div>
               <label className="block text-[11px] font-semibold text-foreground/60 uppercase tracking-wide mb-2">Baggrundskort</label>
               <div className="space-y-1.5">
               <button
@@ -5982,7 +6077,13 @@ export function GardenMapClient() {
                 ℹ️ Ledningsdata (el, vand, gas, kloak) er ikke offentligt tilgængeligt som kort. Brug <a href="https://ler.dk" target="_blank" rel="noopener noreferrer" className="underline">ler.dk</a> til ledningsoplysninger.
               </p>
             </div>
-            <div className="border-t border-border-light pt-3">
+            </div>
+            ) : null}
+
+            {/* ── Sub-tab: Synlighed ── */}
+            {viewSubTab === "synlighed" ? (
+            <div className="space-y-3">
+            <div>
             <label className="block text-[11px] font-semibold text-foreground/60 uppercase tracking-wide mb-2">Synlighed på kort</label>
             {(["element", "row", "seedbed", "container", "area", "condition"] as const).map((cat) => {
               const isCatHidden = hiddenCategories.has(cat);
@@ -6061,6 +6162,8 @@ export function GardenMapClient() {
               );
             })}
             </div>
+            </div>
+            ) : null}
           </div>
         ) : null}
         </div>
