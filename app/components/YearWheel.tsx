@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useMemo, useState } from "react";
-import { getPlantById, loadPlantInstances, formatMonthRange } from "../lib/plantStore";
+import { getPlantById, loadPlantInstances, formatMonthRange, removeOrphanedInstances } from "../lib/plantStore";
 import type { PlantSpecies, PlantCategory, PlantInstance } from "../lib/plantTypes";
 import { PLANT_CATEGORY_LABELS } from "../lib/plantTypes";
 import {
@@ -87,6 +87,10 @@ export default function YearWheel({ plantDataVersion, plantInstancesVersion, fla
 
   // ── Inventory: plants grouped by category with instance details ──
   const inventory = useMemo(() => {
+    // Clean up orphaned instances (feature was deleted but instance lingered)
+    const validFeatureIds = new Set(featureNameMap.keys());
+    removeOrphanedInstances(validFeatureIds);
+
     const instances = loadPlantInstances();
     // Group instances by speciesId
     const bySpecies = new Map<string, PlantInstance[]>();

@@ -110,6 +110,21 @@ export function removePlantInstance(instanceId: string): void {
   savePlantInstances(all);
 }
 
+/** Remove all plant instances that reference a given featureId (used when deleting a map feature). */
+export function removeInstancesForFeature(featureId: string): void {
+  const all = loadPlantInstances().filter((i) => i.featureId !== featureId);
+  savePlantInstances(all);
+}
+
+/** Remove plant instances whose featureId no longer exists in the given set of valid feature IDs. */
+export function removeOrphanedInstances(validFeatureIds: Set<string>): number {
+  const all = loadPlantInstances();
+  const cleaned = all.filter((i) => validFeatureIds.has(i.featureId));
+  const removed = all.length - cleaned.length;
+  if (removed > 0) savePlantInstances(cleaned);
+  return removed;
+}
+
 export function updatePlantInstance(instanceId: string, updates: Partial<PlantInstance>): void {
   const all = loadPlantInstances();
   const idx = all.findIndex((i) => i.id === instanceId);

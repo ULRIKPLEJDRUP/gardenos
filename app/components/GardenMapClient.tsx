@@ -14,6 +14,8 @@ import {
   getInstancesForFeature,
   addPlantInstance,
   removePlantInstance,
+  removeInstancesForFeature,
+  removeOrphanedInstances,
   updatePlantInstance,
   checkCompanions,
   checkRotation,
@@ -3256,6 +3258,10 @@ export function GardenMapClient() {
       group.removeLayer(layer);
     }
 
+    // Clean up plant instances linked to the deleted feature
+    removeInstancesForFeature(selected.gardenosId);
+    setPlantInstancesVersion((v) => v + 1);
+
     setSelected(null);
     updateSelectionStyles(null);
     rebuildFromGroupAndUpdateSelection();
@@ -3279,6 +3285,12 @@ export function GardenMapClient() {
       group.removeLayer(layer);
     }
 
+    // Clean up plant instances linked to deleted features
+    for (const fid of multiSelectedIds) {
+      removeInstancesForFeature(fid);
+    }
+    setPlantInstancesVersion((v) => v + 1);
+
     setMultiSelectedIds(new Set());
     setSelected(null);
     updateSelectionStyles(null);
@@ -3291,6 +3303,11 @@ export function GardenMapClient() {
 
     pushUndoSnapshot();
     group.clearLayers();
+
+    // Clean up all plant instances (no features remain)
+    removeOrphanedInstances(new Set());
+    setPlantInstancesVersion((v) => v + 1);
+
     setSelected(null);
     updateSelectionStyles(null);
     persistAll();
@@ -3466,6 +3483,10 @@ export function GardenMapClient() {
       for (const layer of layersToRemove) {
         group.removeLayer(layer);
       }
+
+      // Clean up plant instances linked to the deleted feature
+      removeInstancesForFeature(featureId);
+      setPlantInstancesVersion((v) => v + 1);
 
       // If deleted feature was selected, clear selection
       if (selected?.gardenosId === featureId) {
