@@ -117,6 +117,19 @@ export async function POST(request: NextRequest) {
     const personaDef = PERSONAS[persona] ?? PERSONAS.generalist;
     let systemPrompt = personaDef.systemPrompt;
 
+    const now = new Date();
+    const nowDa = new Intl.DateTimeFormat("da-DK", {
+      dateStyle: "full",
+      timeStyle: "short",
+      timeZone: "Europe/Copenhagen",
+    }).format(now);
+    const monthDa = new Intl.DateTimeFormat("da-DK", {
+      month: "long",
+      timeZone: "Europe/Copenhagen",
+    }).format(now);
+
+    systemPrompt += `\n\nVIGTIG TIDSKONTEKST:\nNuværende dato/tid i Danmark (Europe/Copenhagen): ${nowDa}.\nAktuel måned: ${monthDa}.\nBrug altid denne tid aktivt i råd om såning, udplantning, frost-risiko og høsttiming.`;
+
     if (gardenContext) {
       systemPrompt += `\n\n--- BRUGERENS HAVE-KONTEKST ---\n${gardenContext}\n--- SLUT PÅ HAVE-KONTEKST ---\n\nBrug denne kontekst aktivt når du giver råd. Referer til brugerens specifikke bede, planter og forhold.`;
     }

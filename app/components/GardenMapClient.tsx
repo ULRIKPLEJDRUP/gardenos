@@ -48,6 +48,16 @@ import {
   type InfraElement,
   type ElementModeKey,
 } from "../lib/elementData";
+import {
+  fetchWeather,
+  loadWeatherCache,
+  isWeatherCacheFresh,
+  buildWeatherContextString,
+  getWeatherEmoji,
+  getWeatherLabel,
+  computeWeatherStats,
+  type WeatherData,
+} from "../lib/weatherStore";
 
 // ---------------------------------------------------------------------------
 // NOTE: We no longer use Leaflet.draw's L.EditToolbar.Edit for editing.
@@ -1349,6 +1359,50 @@ export function GardenMapClient() {
   const chatEndRef = useRef<HTMLDivElement>(null);
   const chatInputRef = useRef<HTMLTextAreaElement>(null);
 
+  // ── Weather module state ──
+  const [weatherData, setWeatherData] = useState<WeatherData | null>(() => loadWeatherCache());
+  const [weatherLoading, setWeatherLoading] = useState(false);
+  const [weatherExpanded, setWeatherExpanded] = useState(false);
+  const [weatherError, setWeatherError] = useState<string | null>(null);
+
+  // Fetch weather on mount + every 30 min
+  useEffect(() => {
+    const doFetch = async () => {
+      // Get lat/lng from saved view
+      const viewRaw = localStorage.getItem("gardenos:view:v1");
+      let lat = 55.676;
+      let lng = 12.568; // default: Copenhagen
+      if (viewRaw) {
+        try {
+          const v = JSON.parse(viewRaw) as { center?: [number, number] };
+          if (v.center) { lat = v.center[0]; lng = v.center[1]; }
+        } catch { /* use default */ }
+      }
+
+      const cached = loadWeatherCache();
+      if (isWeatherCacheFresh(cached)) {
+        setWeatherData(cached);
+        return;
+      }
+
+      setWeatherLoading(true);
+      setWeatherError(null);
+      try {
+        const data = await fetchWeather(lat, lng);
+        setWeatherData(data);
+      } catch (err) {
+        setWeatherError(err instanceof Error ? err.message : "Vejrdata kunne ikke hentes");
+        if (cached) setWeatherData(cached); // use stale cache
+      } finally {
+        setWeatherLoading(false);
+      }
+    };
+
+    doFetch();
+    const interval = setInterval(doFetch, 30 * 60 * 1000); // 30 min
+    return () => clearInterval(interval);
+  }, []);
+
   // Persist chat messages
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -1366,9 +1420,64 @@ export function GardenMapClient() {
     chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [chatMessages, chatLoading]);
 
+  const estimateDanishClimateZone = useCallback((lat: number, _lng: number) => {
+    // Simple USDA-style estimate for Denmark based on latitude.
+    // North = slightly colder, South = slightly milder.
+    if (lat >= 57.4) return "7a";
+    if (lat >= 56.6) return "7b";
+    return "8a";
+  }, []);
+
   // Build garden context string for AI
   const buildGardenContext = useCallback(() => {
     const parts: string[] = [];
+
+    // 0. Time + location + climate zone (critical for sowing/planting timing)
+    try {
+      const now = new Date();
+      const nowDate = new Intl.DateTimeFormat("da-DK", {
+        dateStyle: "full",
+        timeStyle: "short",
+        timeZone: "Europe/Copenhagen",
+      }).format(now);
+
+      const month = Number(
+        new Intl.DateTimeFormat("en-GB", {
+          month: "numeric",
+          timeZone: "Europe/Copenhagen",
+        }).format(now)
+      );
+
+      const viewRaw = localStorage.getItem("gardenos:view:v1");
+      let locationLine = "Lokation ukendt";
+
+      if (viewRaw) {
+        const view = JSON.parse(viewRaw) as { center?: [number, number]; zoom?: number };
+        const lat = Number(view?.center?.[0]);
+        const lng = Number(view?.center?.[1]);
+
+        if (Number.isFinite(lat) && Number.isFinite(lng)) {
+          const zone = estimateDanishClimateZone(lat, lng);
+          locationLine = `Koordinater: ${lat.toFixed(5)}, ${lng.toFixed(5)} (estimeret klimazone: ${zone})`;
+        }
+      }
+
+      const bookmarkRaw = localStorage.getItem("gardenos:bookmarks:v1");
+      let addressHint = "";
+      if (bookmarkRaw) {
+        const bms = JSON.parse(bookmarkRaw) as Array<{ name?: string; favorite?: boolean }>;
+        const primary = bms.find((b) => b.favorite && b.name) ?? bms.find((b) => b.name);
+        if (primary?.name) {
+          addressHint = `\nSted/adressehint: ${primary.name}`;
+        }
+      }
+
+      parts.push(
+        `Nuværende dato/tid (Danmark): ${nowDate}\nMånedstal: ${month}\n${locationLine}${addressHint}`
+      );
+    } catch {
+      // ignore
+    }
 
     // 1. Garden features (beds, areas, elements)
     try {
@@ -1418,8 +1527,14 @@ export function GardenMapClient() {
       parts.push(`Plantebibliotek (${plants.length} arter):\n${catSummary.join("\n")}`);
     } catch { /* ignore */ }
 
+    // 4. Weather data (current, forecast, stats)
+    try {
+      const weatherCtx = buildWeatherContextString(weatherData);
+      if (weatherCtx) parts.push(weatherCtx);
+    } catch { /* ignore */ }
+
     return parts.length > 0 ? parts.join("\n\n") : "";
-  }, []);
+  }, [estimateDanishClimateZone, weatherData]);
 
   // Send chat message
   const sendChatMessage = useCallback(async () => {
@@ -7158,6 +7273,95 @@ export function GardenMapClient() {
         {/* ── AI Chat / Rådgiver Tab ── */}
         {sidebarTab === "chat" ? (
           <div className="mt-3 flex flex-col" style={{ height: "calc(100vh - 220px)" }}>
+
+            {/* ── Weather card ── */}
+            {weatherData ? (
+              <div className="mb-2 rounded-lg border border-sky-200/60 bg-gradient-to-r from-sky-50 to-blue-50 overflow-hidden">
+                <button
+                  type="button"
+                  className="w-full flex items-center justify-between px-2.5 py-1.5 text-left hover:bg-sky-100/30 transition-colors"
+                  onClick={() => setWeatherExpanded(!weatherExpanded)}
+                >
+                  <div className="flex items-center gap-2">
+                    <span className="text-base">{getWeatherEmoji(weatherData.current.weatherCode)}</span>
+                    <div className="leading-tight">
+                      <span className="text-[13px] font-bold text-foreground/80">{Math.round(weatherData.current.temperature)}°C</span>
+                      <span className="text-[10px] text-foreground/50 ml-1">{getWeatherLabel(weatherData.current.weatherCode)}</span>
+                    </div>
+                    {weatherData.forecast.some((d) => d.tempMin <= 0) && (
+                      <span className="text-[10px] bg-blue-100 text-blue-700 font-semibold rounded px-1 py-0.5">❄️ Frost</span>
+                    )}
+                  </div>
+                  <span className="text-[10px] text-foreground/30">{weatherExpanded ? "▲" : "▼"}</span>
+                </button>
+
+                {weatherExpanded && (
+                  <div className="px-2.5 pb-2 space-y-1.5">
+                    {/* Current details */}
+                    <div className="flex gap-3 text-[10px] text-foreground/55">
+                      <span>💧 {weatherData.current.humidity}%</span>
+                      <span>💨 {weatherData.current.windSpeed} km/t</span>
+                      <span>🌡️ Føles {Math.round(weatherData.current.apparentTemperature)}°C</span>
+                    </div>
+
+                    {/* Frost warning */}
+                    {weatherData.forecast.some((d) => d.tempMin <= 0) && (
+                      <div className="rounded bg-blue-100/80 border border-blue-200 px-2 py-1 text-[10px] text-blue-800 font-medium">
+                        ❄️ Nattefrost forventet: {weatherData.forecast.filter((d) => d.tempMin <= 0).map((d) => {
+                          const dt = new Date(d.date + "T12:00:00");
+                          return dt.toLocaleDateString("da-DK", { weekday: "short", day: "numeric", month: "short" });
+                        }).join(", ")}
+                      </div>
+                    )}
+
+                    {/* 7-day forecast */}
+                    <div className="text-[9px] font-semibold text-foreground/40 uppercase tracking-wider mt-1">Prognose</div>
+                    <div className="space-y-px">
+                      {weatherData.forecast.slice(0, 7).map((d) => {
+                        const dt = new Date(d.date + "T12:00:00");
+                        const dayName = dt.toLocaleDateString("da-DK", { weekday: "short" });
+                        const dayNum = dt.getDate();
+                        return (
+                          <div key={d.date} className="flex items-center text-[10px] text-foreground/60 gap-1">
+                            <span className="w-10 font-medium text-foreground/70">{dayName} {dayNum}</span>
+                            <span className="w-5 text-center">{getWeatherEmoji(d.weatherCode)}</span>
+                            <span className="w-14 text-right font-mono text-[9px]">{Math.round(d.tempMin)}° / {Math.round(d.tempMax)}°</span>
+                            <span className="flex-1 text-right text-blue-500 text-[9px]">{d.precipitation > 0 ? `${d.precipitation}mm` : "–"}</span>
+                          </div>
+                        );
+                      })}
+                    </div>
+
+                    {/* Recent stats */}
+                    {weatherData.recentDays.length > 0 && (() => {
+                      const stats = computeWeatherStats(weatherData.recentDays);
+                      return (
+                        <div>
+                          <div className="text-[9px] font-semibold text-foreground/40 uppercase tracking-wider mt-1">Sidste {stats.count} dage</div>
+                          <div className="grid grid-cols-2 gap-x-2 gap-y-0.5 text-[10px] text-foreground/55 mt-0.5">
+                            <span>📈 Snit maks: {stats.avgTempMax}°C</span>
+                            <span>📉 Snit min: {stats.avgTempMin}°C</span>
+                            <span>🌧️ Nedbør: {stats.totalPrecipitation}mm</span>
+                            <span>❄️ Frostdage: {stats.frostDays}</span>
+                          </div>
+                        </div>
+                      );
+                    })()}
+
+                    <div className="text-[8px] text-foreground/25 text-right">Open-Meteo · {new Date(weatherData.fetchedAt).toLocaleTimeString("da-DK", { hour: "2-digit", minute: "2-digit" })}</div>
+                  </div>
+                )}
+              </div>
+            ) : weatherLoading ? (
+              <div className="mb-2 rounded-lg border border-sky-200/40 bg-sky-50/50 px-2.5 py-2 text-[10px] text-foreground/40 text-center">
+                🌤️ Henter vejrdata…
+              </div>
+            ) : weatherError ? (
+              <div className="mb-2 rounded-lg border border-amber-200/60 bg-amber-50/50 px-2.5 py-1.5 text-[10px] text-amber-700 text-center">
+                ⚠️ {weatherError}
+              </div>
+            ) : null}
+
             {/* Persona selector */}
             <div className="mb-2">
               <label className="block text-[10px] font-semibold text-foreground/50 uppercase tracking-wide mb-1">
