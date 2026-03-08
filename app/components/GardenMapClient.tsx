@@ -3685,7 +3685,33 @@ export function GardenMapClient() {
       </div>
 
       <aside className="row-start-2 flex flex-col border-t border-border bg-sidebar-bg md:border-l md:border-t-0 overflow-hidden">
-        <div className="px-4 pt-3 pb-1">
+        {/* ── Bookmark Quick-Access Top Bar ── */}
+        {bookmarks.length > 0 ? (
+          <div className="px-4 pt-2 pb-1 flex items-center gap-1.5 overflow-x-auto scrollbar-none border-b border-border-light bg-sidebar-bg">
+            <span className="text-[10px] text-foreground/40 shrink-0">📍</span>
+            {bookmarks.map((bm) => (
+              <button
+                key={bm.id}
+                type="button"
+                className="shrink-0 rounded-full border border-border bg-white px-2.5 py-1 text-[11px] font-medium hover:bg-accent/10 hover:border-accent/30 transition-all shadow-sm whitespace-nowrap"
+                onClick={() => goToLocation(bm.center[0], bm.center[1], bm.zoom)}
+                title={`${bm.name} — zoom ${bm.zoom.toFixed(0)}`}
+              >
+                {bm.emoji || "📍"} {bm.name}
+              </button>
+            ))}
+            <button
+              type="button"
+              className="shrink-0 rounded-full border border-dashed border-foreground/20 px-2 py-1 text-[10px] text-foreground/40 hover:border-accent/40 hover:text-accent transition-all"
+              onClick={() => { setSidebarTab("view"); setViewSubTab("steder"); }}
+              title="Administrer steder"
+            >
+              ＋
+            </button>
+          </div>
+        ) : null}
+
+        <div className="px-4 pt-2 pb-1">
           <div className="flex gap-1 rounded-lg bg-background p-1 border border-border-light shadow-sm">
             <button
               type="button"
@@ -3757,32 +3783,6 @@ export function GardenMapClient() {
             </button>
           </div>
         </div>
-
-        {/* ── Bookmark Quick-Access Bar ── */}
-        {bookmarks.length > 0 ? (
-          <div className="px-4 pb-1 pt-1 flex items-center gap-1.5 overflow-x-auto scrollbar-none border-b border-border-light">
-            <span className="text-[10px] text-foreground/40 shrink-0">📍</span>
-            {bookmarks.map((bm) => (
-              <button
-                key={bm.id}
-                type="button"
-                className="shrink-0 rounded-full border border-border bg-white px-2.5 py-1 text-[11px] font-medium hover:bg-accent/10 hover:border-accent/30 transition-all shadow-sm whitespace-nowrap"
-                onClick={() => goToLocation(bm.center[0], bm.center[1], bm.zoom)}
-                title={`${bm.name} — zoom ${bm.zoom.toFixed(0)}`}
-              >
-                {bm.emoji || "📍"} {bm.name}
-              </button>
-            ))}
-            <button
-              type="button"
-              className="shrink-0 rounded-full border border-dashed border-foreground/20 px-2 py-1 text-[10px] text-foreground/40 hover:border-accent/40 hover:text-accent transition-all"
-              onClick={() => { setSidebarTab("view"); setViewSubTab("steder"); }}
-              title="Administrer steder"
-            >
-              ＋
-            </button>
-          </div>
-        ) : null}
 
         <div className="flex-1 overflow-y-auto sidebar-scroll px-4 pb-4">
 
