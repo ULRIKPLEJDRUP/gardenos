@@ -7130,7 +7130,7 @@ export function GardenMapClient() {
                   <div className="text-center py-8">
                     <p className="text-3xl mb-2">📚</p>
                     <p className="text-sm text-foreground/50">Ingen scans endnu.</p>
-                    <p className="text-[10px] text-foreground/30 mt-1">Gå til "📷 Scan" og tag et billede.</p>
+                    <p className="text-[10px] text-foreground/30 mt-1">Gå til {"\"📷 Scan\""} og tag et billede.</p>
                   </div>
                 ) : (
                   <div className="space-y-2 max-h-[60vh] overflow-y-auto sidebar-scroll">
@@ -7855,7 +7855,7 @@ export function GardenMapClient() {
                           </li>
                           <li>
                             <strong>Opret ankerpunkter herunder</strong> — gå hen til hver pæl, stå lige ved den,
-                            og tryk "+ Opret anker her" (bruger din GPS). Giv dem et navn (fx "Rød pæl ved hæk").
+                            og tryk {"\"+ Opret anker her\""} (bruger din GPS). Giv dem et navn (fx {"\"Rød pæl ved hæk\""}).
                           </li>
                           <li>
                             <strong>Når du vil markere et præcist punkt:</strong> mål afstanden med målebånd
