@@ -1309,7 +1309,7 @@ export function GardenMapClient() {
   const [newKindText, setNewKindText] = useState("");
   const [newKindError, setNewKindError] = useState<string | null>(null);
   const [undoStack, setUndoStack] = useState<UndoSnapshot[]>([]);
-  const [sidebarTab, setSidebarTab] = useState<"create" | "content" | "groups" | "plants" | "view" | "scan">("create");
+  const [sidebarTab, setSidebarTab] = useState<"create" | "content" | "groups" | "plants" | "view" | "scan" | "chat">("create");
   const [viewSubTab, setViewSubTab] = useState<"steder" | "baggrund" | "synlighed" | "ankre">("steder");
 
   // ── Scan / frøpose-genkendelse state ──
@@ -1330,6 +1330,189 @@ export function GardenMapClient() {
   const [transferCategory, setTransferCategory] = useState<PlantCategory>("vegetable");
   const [expandedHistoryId, setExpandedHistoryId] = useState<string | null>(null);
   const [confirmDeleteHistoryId, setConfirmDeleteHistoryId] = useState<string | null>(null);
+
+  // ── AI Chat / Rådgiver state ──
+  type ChatMsg = { role: "user" | "assistant"; content: string; ts: number };
+  const CHAT_STORAGE_KEY = "gardenos:chat:history:v1";
+  const CHAT_PERSONA_KEY = "gardenos:chat:persona:v1";
+
+  const [chatMessages, setChatMessages] = useState<ChatMsg[]>(() => {
+    if (typeof window === "undefined") return [];
+    try { const raw = localStorage.getItem(CHAT_STORAGE_KEY); return raw ? JSON.parse(raw) : []; } catch { return []; }
+  });
+  const [chatInput, setChatInput] = useState("");
+  const [chatLoading, setChatLoading] = useState(false);
+  const [chatPersona, setChatPersona] = useState<string>(() => {
+    if (typeof window === "undefined") return "generalist";
+    return localStorage.getItem(CHAT_PERSONA_KEY) ?? "generalist";
+  });
+  const chatEndRef = useRef<HTMLDivElement>(null);
+  const chatInputRef = useRef<HTMLTextAreaElement>(null);
+
+  // Persist chat messages
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    localStorage.setItem(CHAT_STORAGE_KEY, JSON.stringify(chatMessages));
+  }, [chatMessages]);
+
+  // Persist persona choice
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    localStorage.setItem(CHAT_PERSONA_KEY, chatPersona);
+  }, [chatPersona]);
+
+  // Scroll to bottom on new messages
+  useEffect(() => {
+    chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [chatMessages, chatLoading]);
+
+  // Build garden context string for AI
+  const buildGardenContext = useCallback(() => {
+    const parts: string[] = [];
+
+    // 1. Garden features (beds, areas, elements)
+    try {
+      const layoutRaw = localStorage.getItem("gardenos:layout:v1");
+      if (layoutRaw) {
+        const layout = JSON.parse(layoutRaw);
+        if (layout?.features?.length) {
+          const featureSummaries = layout.features.map((f: GardenFeature) => {
+            const p = f.properties;
+            const name = p.name || p.kind || "Unavngivet";
+            const cat = p.category || "";
+            const planted = p.planted ? `, plantet: ${p.planted}` : "";
+            const species = p.speciesId ? `, art-id: ${p.speciesId}` : "";
+            return `- ${name} (${cat}${planted}${species})`;
+          });
+          parts.push(`Haven har ${layout.features.length} elementer:\n${featureSummaries.join("\n")}`);
+        }
+      }
+    } catch { /* ignore */ }
+
+    // 2. Plant instances in beds
+    try {
+      const instancesRaw = localStorage.getItem("gardenos:plants:instances:v1");
+      if (instancesRaw) {
+        const instances = JSON.parse(instancesRaw);
+        if (Array.isArray(instances) && instances.length > 0) {
+          const summary = instances.map((inst: { speciesId?: string; varietyId?: string; featureId?: string; quantity?: number; notes?: string }) => {
+            return `- Art: ${inst.speciesId || "?"}, sort: ${inst.varietyId || "standard"}, bed: ${inst.featureId || "?"}, antal: ${inst.quantity || 1}${inst.notes ? `, noter: ${inst.notes}` : ""}`;
+          });
+          parts.push(`Plantede instanser (${instances.length}):\n${summary.join("\n")}`);
+        }
+      }
+    } catch { /* ignore */ }
+
+    // 3. Available plant species (just names for context)
+    try {
+      const plants = getAllPlants();
+      const byCategory: Record<string, string[]> = {};
+      plants.forEach((p) => {
+        const cat = PLANT_CATEGORY_LABELS[p.category] || p.category;
+        if (!byCategory[cat]) byCategory[cat] = [];
+        byCategory[cat].push(p.name);
+      });
+      const catSummary = Object.entries(byCategory).map(([cat, names]) =>
+        `- ${cat}: ${names.join(", ")}`
+      );
+      parts.push(`Plantebibliotek (${plants.length} arter):\n${catSummary.join("\n")}`);
+    } catch { /* ignore */ }
+
+    return parts.length > 0 ? parts.join("\n\n") : "";
+  }, []);
+
+  // Send chat message
+  const sendChatMessage = useCallback(async () => {
+    const text = chatInput.trim();
+    if (!text || chatLoading) return;
+
+    const userMsg: ChatMsg = { role: "user", content: text, ts: Date.now() };
+    setChatMessages((prev) => [...prev, userMsg]);
+    setChatInput("");
+    setChatLoading(true);
+
+    try {
+      const gardenContext = buildGardenContext();
+
+      // Build messages array for API (last 20 messages for context)
+      const recentMessages = [...chatMessages.slice(-20), userMsg].map((m) => ({
+        role: m.role as "user" | "assistant",
+        content: m.content,
+      }));
+
+      const response = await fetch("/api/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          messages: recentMessages,
+          persona: chatPersona,
+          gardenContext,
+        }),
+      });
+
+      if (!response.ok) {
+        const errData = await response.json().catch(() => ({ error: "Ukendt fejl" }));
+        throw new Error(errData.error || `HTTP ${response.status}`);
+      }
+
+      // Read streaming response
+      const reader = response.body?.getReader();
+      if (!reader) throw new Error("Ingen stream modtaget");
+
+      const decoder = new TextDecoder();
+      let assistantText = "";
+      let buffer = "";
+
+      // Add empty assistant message that we'll update
+      setChatMessages((prev) => [...prev, { role: "assistant", content: "", ts: Date.now() }]);
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split("\n");
+        buffer = lines.pop() ?? "";
+
+        for (const line of lines) {
+          const trimmed = line.trim();
+          if (!trimmed || !trimmed.startsWith("data: ")) continue;
+          const data = trimmed.slice(6);
+          if (data === "[DONE]") continue;
+
+          try {
+            const parsed = JSON.parse(data);
+            if (parsed.content) {
+              assistantText += parsed.content;
+              setChatMessages((prev) => {
+                const updated = [...prev];
+                updated[updated.length - 1] = { role: "assistant", content: assistantText, ts: Date.now() };
+                return updated;
+              });
+            }
+          } catch { /* skip */ }
+        }
+      }
+
+      if (!assistantText) {
+        // Remove empty assistant message if no content was received
+        setChatMessages((prev) => prev.slice(0, -1));
+      }
+    } catch (err) {
+      const errMsg = err instanceof Error ? err.message : "Ukendt fejl";
+      setChatMessages((prev) => [
+        ...prev,
+        { role: "assistant", content: `⚠️ Fejl: ${errMsg}`, ts: Date.now() },
+      ]);
+    } finally {
+      setChatLoading(false);
+    }
+  }, [chatInput, chatLoading, chatMessages, chatPersona, buildGardenContext]);
+
+  const clearChatHistory = useCallback(() => {
+    setChatMessages([]);
+    localStorage.removeItem(CHAT_STORAGE_KEY);
+  }, []);
 
   const addToScanHistory = useCallback(async (type: ScanType, imageDataUrl: string, data: Record<string, unknown>) => {
     const thumbnail = await createThumbnail(imageDataUrl);
@@ -4077,6 +4260,17 @@ export function GardenMapClient() {
               onClick={() => { setSidebarTab("view"); setHighlightedGroupId(null); }}
             >
               👁 Visning
+            </button>
+            <button
+              type="button"
+              className={`flex-1 rounded-md px-1 py-1.5 text-[11px] font-medium transition-all ${
+                sidebarTab === "chat"
+                  ? "bg-accent text-white shadow-sm"
+                  : "text-foreground/60 hover:bg-foreground/5 hover:text-foreground/80"
+              }`}
+              onClick={() => { setSidebarTab("chat"); setHighlightedGroupId(null); }}
+            >
+              💬 Rådgiver
             </button>
           </div>
         </div>
@@ -6958,6 +7152,147 @@ export function GardenMapClient() {
                 ) : null}
               </div>
             ) : null}
+          </div>
+        ) : null}
+
+        {/* ── AI Chat / Rådgiver Tab ── */}
+        {sidebarTab === "chat" ? (
+          <div className="mt-3 flex flex-col" style={{ height: "calc(100vh - 220px)" }}>
+            {/* Persona selector */}
+            <div className="mb-2">
+              <label className="block text-[10px] font-semibold text-foreground/50 uppercase tracking-wide mb-1">
+                Vælg rådgiver
+              </label>
+              <div className="flex flex-wrap gap-1">
+                {[
+                  { id: "generalist", emoji: "🌿", label: "Have-ekspert" },
+                  { id: "forest-garden", emoji: "🌳", label: "Skovhave" },
+                  { id: "traditional", emoji: "🚜", label: "Traditionel" },
+                  { id: "organic", emoji: "🌱", label: "Økologisk" },
+                  { id: "kids", emoji: "🧒", label: "Børn" },
+                ].map((p) => (
+                  <button
+                    key={p.id}
+                    type="button"
+                    className={`rounded-lg border px-2 py-1 text-[11px] font-medium transition-all ${
+                      chatPersona === p.id
+                        ? "border-accent/40 bg-accent-light text-accent-dark shadow-sm"
+                        : "border-border bg-background hover:bg-foreground/5 text-foreground/60"
+                    }`}
+                    onClick={() => setChatPersona(p.id)}
+                  >
+                    {p.emoji} {p.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Chat messages area */}
+            <div className="flex-1 overflow-y-auto rounded-lg border border-border-light bg-white/60 p-2 space-y-2 mb-2 sidebar-scroll" style={{ minHeight: 120 }}>
+              {chatMessages.length === 0 ? (
+                <div className="flex flex-col items-center justify-center h-full text-center py-8">
+                  <div className="text-3xl mb-2">💬</div>
+                  <p className="text-[12px] font-medium text-foreground/60">Spørg din haverådgiver</p>
+                  <p className="text-[10px] text-foreground/40 mt-1 max-w-[200px]">
+                    Stil spørgsmål om dine bede, planter, afstande, såtider – AI&apos;en kender din have!
+                  </p>
+                  <div className="mt-3 space-y-1">
+                    {[
+                      "Hvornår skal jeg så tomater?",
+                      "Hvor tæt kan jeg plante jordbær?",
+                      "Hvad passer godt sammen med gulerødder?",
+                    ].map((q) => (
+                      <button
+                        key={q}
+                        type="button"
+                        className="block w-full text-left text-[10px] text-accent hover:text-accent-dark bg-accent-light/50 hover:bg-accent-light rounded px-2 py-1 transition-colors"
+                        onClick={() => { setChatInput(q); chatInputRef.current?.focus(); }}
+                      >
+                        💡 {q}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              ) : (
+                chatMessages.map((msg, i) => (
+                  <div
+                    key={`${msg.ts}-${i}`}
+                    className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}
+                  >
+                    <div
+                      className={`max-w-[85%] rounded-xl px-3 py-2 text-[12px] leading-relaxed ${
+                        msg.role === "user"
+                          ? "bg-accent text-white rounded-br-sm"
+                          : "bg-foreground/5 text-foreground rounded-bl-sm"
+                      }`}
+                    >
+                      {msg.role === "assistant" ? (
+                        <div className="whitespace-pre-wrap break-words">
+                          {msg.content || (
+                            <span className="inline-flex items-center gap-1 text-foreground/40">
+                              <span className="animate-pulse">●</span>
+                              <span className="animate-pulse" style={{ animationDelay: "0.2s" }}>●</span>
+                              <span className="animate-pulse" style={{ animationDelay: "0.4s" }}>●</span>
+                            </span>
+                          )}
+                        </div>
+                      ) : (
+                        <div className="whitespace-pre-wrap break-words">{msg.content}</div>
+                      )}
+                    </div>
+                  </div>
+                ))
+              )}
+              {chatLoading && chatMessages[chatMessages.length - 1]?.role !== "assistant" && (
+                <div className="flex justify-start">
+                  <div className="bg-foreground/5 rounded-xl px-3 py-2 text-[12px] text-foreground/40">
+                    <span className="animate-pulse">●</span>
+                    <span className="animate-pulse" style={{ animationDelay: "0.2s" }}>●</span>
+                    <span className="animate-pulse" style={{ animationDelay: "0.4s" }}>●</span>
+                  </div>
+                </div>
+              )}
+              <div ref={chatEndRef} />
+            </div>
+
+            {/* Input area */}
+            <div className="flex gap-1 items-end">
+              <textarea
+                ref={chatInputRef}
+                className="flex-1 rounded-lg border border-border-light bg-white px-3 py-2 text-[12px] resize-none focus:outline-none focus:ring-2 focus:ring-accent/30 focus:border-accent transition-all"
+                rows={2}
+                placeholder="Skriv dit spørgsmål..."
+                value={chatInput}
+                onChange={(e) => setChatInput(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && !e.shiftKey) {
+                    e.preventDefault();
+                    sendChatMessage();
+                  }
+                }}
+                disabled={chatLoading}
+              />
+              <button
+                type="button"
+                className="rounded-lg bg-accent text-white px-3 py-2 text-[12px] font-medium hover:bg-accent-dark transition-colors disabled:opacity-40"
+                onClick={sendChatMessage}
+                disabled={chatLoading || !chatInput.trim()}
+                title="Send besked"
+              >
+                ➤
+              </button>
+            </div>
+
+            {/* Clear history button */}
+            {chatMessages.length > 0 && (
+              <button
+                type="button"
+                className="mt-2 text-[10px] text-foreground/40 hover:text-red-500 transition-colors text-center"
+                onClick={clearChatHistory}
+              >
+                🗑 Ryd samtalehistorik
+              </button>
+            )}
           </div>
         ) : null}
 
