@@ -188,6 +188,13 @@ export function loadWeatherHistory(): WeatherDay[] {
   }
 }
 
+/** Return the last N days of history (sorted oldest→newest). If days<=0, returns all. */
+export function getHistorySlice(history: WeatherDay[], days: number): WeatherDay[] {
+  if (!history.length) return [];
+  if (days <= 0) return history;
+  return history.slice(-days);
+}
+
 // ---------------------------------------------------------------------------
 // Simple statistics
 // ---------------------------------------------------------------------------
