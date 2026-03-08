@@ -13,6 +13,9 @@ export type PlantCategory =
   | "flower"
   | "tree"
   | "bush"
+  | "perennial"
+  | "grass"
+  | "climber"
   | "cover-crop"
   | "soil-amendment";
 
@@ -23,6 +26,9 @@ export const PLANT_CATEGORY_LABELS: Record<PlantCategory, string> = {
   flower: "Blomster",
   tree: "Træer",
   bush: "Buske",
+  perennial: "Stauder",
+  grass: "Græsser",
+  climber: "Klatreplanter",
   "cover-crop": "Dækafgrøder",
   "soil-amendment": "Jordforbedrere",
 };
