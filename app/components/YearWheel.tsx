@@ -149,10 +149,40 @@ export default function YearWheel({ plantDataVersion, plantInstancesVersion, fla
     }));
   }, [gardenPlants]);
 
+  // ── Track which (speciesId, category) combos were completed and when ──
+  // If "Plant Æbletræ ud" was completed in Feb, hide it from Mar onward.
+  const completedPlantKeys = useMemo(() => {
+    const keyMonth = new Map<string, number>(); // "speciesId:category" → earliest month completed
+    for (const task of allPlantTasksYear) {
+      if (task.speciesId && completedIds.has(task.id)) {
+        const key = `${task.speciesId}:${task.category}`;
+        const existing = keyMonth.get(key);
+        if (existing === undefined || task.month < existing) {
+          keyMonth.set(key, task.month);
+        }
+      }
+    }
+    return keyMonth;
+  }, [allPlantTasksYear, completedIds]);
+
+  /** Returns true if a plant task should be hidden (completed in an earlier month) */
+  const isHiddenByEarlierCompletion = useCallback(
+    (task: YearWheelTask) => {
+      if (!task.speciesId) return false;
+      const key = `${task.speciesId}:${task.category}`;
+      const doneInMonth = completedPlantKeys.get(key);
+      // Hide if it was completed in a strictly earlier month
+      return doneInMonth !== undefined && doneInMonth < task.month;
+    },
+    [completedPlantKeys]
+  );
+
   // ── Build tasks for the selected month ──
   const tasksForMonth = useMemo(() => {
-    // Plant-generated tasks for this garden
-    const plantTasks = allPlantTasksYear.filter((t) => t.month === selectedMonth);
+    // Plant-generated tasks for this garden (hide if completed in earlier month)
+    const plantTasks = allPlantTasksYear
+      .filter((t) => t.month === selectedMonth)
+      .filter((t) => !isHiddenByEarlierCompletion(t));
 
     // Custom tasks
     const customs = customTasks.filter((t) => t.month === selectedMonth);
@@ -164,13 +194,15 @@ export default function YearWheel({ plantDataVersion, plantInstancesVersion, fla
       return all.filter((t) => t.category === filterCategory);
     }
     return all;
-  }, [selectedMonth, allPlantTasksYear, customTasks, filterCategory]);
+  }, [selectedMonth, allPlantTasksYear, customTasks, filterCategory, isHiddenByEarlierCompletion]);
 
   // ── Year overview: count tasks per month ──
   const yearOverview = useMemo(() => {
     const counts: { month: number; total: number; completed: number; categories: Record<string, number> }[] = [];
     for (let m = 1; m <= 12; m++) {
-      const plantTasks = allPlantTasksYear.filter((t) => t.month === m);
+      const plantTasks = allPlantTasksYear
+        .filter((t) => t.month === m)
+        .filter((t) => !isHiddenByEarlierCompletion(t));
       const customs = customTasks.filter((t) => t.month === m);
       const all = [...plantTasks, ...customs];
       const categories: Record<string, number> = {};
@@ -184,7 +216,7 @@ export default function YearWheel({ plantDataVersion, plantInstancesVersion, fla
       counts.push({ month: m, total: all.length, completed: completedCount, categories });
     }
     return counts;
-  }, [allPlantTasksYear, customTasks, completedIds]);
+  }, [allPlantTasksYear, customTasks, completedIds, isHiddenByEarlierCompletion]);
 
   // ── Handlers ──
   const toggleComplete = useCallback((id: string) => {
