@@ -3345,12 +3345,95 @@ export function GardenMapClient() {
             ) : null}
           </div>
         </div>
-        <div className="text-[11px] text-muted font-medium">
-          {multiSelectedIds.size > 0
-            ? `${multiSelectedIds.size} valgt — Shift+klik for flere`
-            : drawMode === "select"
-            ? "◎ Markér"
-            : "✎ Tegner…"}
+        <div className="flex items-center gap-2 overflow-hidden min-w-0">
+          {/* ── Bookmark pills ── */}
+          {bookmarks.length > 0 ? (
+            <div className="flex items-center gap-1 overflow-x-auto scrollbar-none min-w-0">
+              <span className="text-[10px] text-foreground/40 shrink-0">📍</span>
+              {bookmarks.map((bm) => (
+                <button
+                  key={bm.id}
+                  type="button"
+                  className="shrink-0 rounded-full border border-border bg-white px-2 py-0.5 text-[10px] font-medium hover:bg-accent/10 hover:border-accent/30 transition-all shadow-sm whitespace-nowrap"
+                  onClick={() => goToLocation(bm.center[0], bm.center[1], bm.zoom)}
+                  title={`${bm.name} — zoom ${bm.zoom.toFixed(0)}`}
+                >
+                  {bm.emoji || "📍"} {bm.name}
+                </button>
+              ))}
+              <button
+                type="button"
+                className="shrink-0 rounded-full border border-dashed border-foreground/20 px-1.5 py-0.5 text-[10px] text-foreground/40 hover:border-accent/40 hover:text-accent transition-all"
+                onClick={() => { setSidebarTab("view"); setViewSubTab("steder"); }}
+                title="Administrer steder"
+              >
+                ＋
+              </button>
+            </div>
+          ) : null}
+          {bookmarks.length > 0 ? <div className="h-5 w-px bg-border shrink-0" /> : null}
+          {/* ── Address search ── */}
+          <div className="relative shrink-0">
+            {showAddressSearch ? (
+              <div className="flex items-center gap-1 rounded-md border border-border bg-white px-2 py-1 shadow-sm">
+                <span className="text-xs">🔍</span>
+                <input
+                  type="text"
+                  className="w-40 bg-transparent text-xs outline-none placeholder:text-foreground/40"
+                  placeholder="Søg adresse..."
+                  value={addressQuery}
+                  onChange={(e) => setAddressQuery(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === "Enter") searchAddress(addressQuery); if (e.key === "Escape") { setShowAddressSearch(false); setAddressResults([]); } }}
+                  autoFocus
+                />
+                <button type="button" className="text-foreground/40 hover:text-foreground/70 text-xs px-0.5" onClick={() => { setShowAddressSearch(false); setAddressResults([]); setAddressQuery(""); }}>✕</button>
+              </div>
+            ) : (
+              <button
+                type="button"
+                className="rounded-md px-2.5 py-1.5 text-xs text-foreground/60 hover:bg-foreground/5 transition-colors flex items-center gap-1"
+                onClick={() => setShowAddressSearch(true)}
+                title="Søg adresse (Nominatim)"
+              >
+                🔍 Søg
+              </button>
+            )}
+            {/* Search results dropdown */}
+            {showAddressSearch && (addressSearching || addressResults.length > 0) ? (
+              <div className="absolute top-full right-0 mt-1 w-72 rounded-xl border border-border bg-white shadow-lg z-[9999]">
+                {addressSearching ? <div className="px-3 py-2 text-xs text-foreground/50">Søger…</div> : null}
+                {addressResults.map((r, i) => {
+                  const shortName = r.display_name.split(",")[0].trim();
+                  return (
+                    <div key={i} className="flex items-center gap-1 px-3 py-2 border-b border-border/50 last:border-b-0 hover:bg-accent/5 transition-colors">
+                      <button
+                        type="button"
+                        className="flex-1 text-left text-xs truncate hover:text-accent transition-colors"
+                        onClick={() => goToLocation(parseFloat(r.lat), parseFloat(r.lon))}
+                      >
+                        📍 {r.display_name}
+                      </button>
+                      <button
+                        type="button"
+                        className="shrink-0 rounded border border-accent/30 bg-accent/10 px-1.5 py-0.5 text-[10px] text-accent-dark font-medium hover:bg-accent/20 transition-colors"
+                        onClick={() => {
+                          const lat = parseFloat(r.lat);
+                          const lon = parseFloat(r.lon);
+                          goToLocation(lat, lon);
+                          addBookmark(shortName, "📍", { lat, lon, zoom: 18 });
+                          setAddressResults([]);
+                          setShowAddressSearch(false);
+                        }}
+                        title={`Gem "${shortName}"`}
+                      >
+                        + Gem
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
+            ) : null}
+          </div>
         </div>
       </div>
       <style>{`
@@ -3611,68 +3694,7 @@ export function GardenMapClient() {
           />
         </MapContainer>
 
-        {/* ── Address Search Overlay ── */}
-        <div className="absolute top-3 right-3 z-[1000]" style={{ maxWidth: "320px" }}>
-          {showAddressSearch ? (
-            <div className="rounded-xl border border-border bg-white shadow-lg">
-              <div className="flex items-center gap-1 px-3 py-2">
-                <span className="text-sm">🔍</span>
-                <input
-                  type="text"
-                  className="flex-1 bg-transparent text-sm outline-none placeholder:text-foreground/40"
-                  placeholder="Søg adresse..."
-                  value={addressQuery}
-                  onChange={(e) => setAddressQuery(e.target.value)}
-                  onKeyDown={(e) => { if (e.key === "Enter") searchAddress(addressQuery); if (e.key === "Escape") { setShowAddressSearch(false); setAddressResults([]); } }}
-                  autoFocus
-                />
-                <button type="button" className="text-foreground/40 hover:text-foreground/70 text-xs px-1" onClick={() => { setShowAddressSearch(false); setAddressResults([]); setAddressQuery(""); }}>✕</button>
-              </div>
-              {addressSearching ? <div className="px-3 py-2 text-xs text-foreground/50">Søger…</div> : null}
-              {addressResults.length > 0 ? (
-                <div className="border-t border-border">
-                  {addressResults.map((r, i) => {
-                    const shortName = r.display_name.split(",")[0].trim();
-                    return (
-                      <div key={i} className="flex items-center gap-1 px-3 py-2 border-b border-border/50 last:border-b-0 hover:bg-accent/5 transition-colors">
-                        <button
-                          type="button"
-                          className="flex-1 text-left text-xs truncate hover:text-accent transition-colors"
-                          onClick={() => goToLocation(parseFloat(r.lat), parseFloat(r.lon))}
-                        >
-                          📍 {r.display_name}
-                        </button>
-                        <button
-                          type="button"
-                          className="shrink-0 rounded border border-accent/30 bg-accent/10 px-1.5 py-0.5 text-[10px] text-accent-dark font-medium hover:bg-accent/20 transition-colors"
-                          onClick={() => {
-                            const lat = parseFloat(r.lat);
-                            const lon = parseFloat(r.lon);
-                            goToLocation(lat, lon);
-                            addBookmark(shortName, "📍", { lat, lon, zoom: 18 });
-                            setAddressResults([]);
-                            setShowAddressSearch(false);
-                          }}
-                          title={`Gem "${shortName}"`}
-                        >
-                          + Gem
-                        </button>
-                      </div>
-                    );
-                  })}
-                </div>
-              ) : null}
-            </div>
-          ) : (
-            <button
-              type="button"
-              className="rounded-xl border border-border bg-white shadow-md px-3 py-2 text-sm hover:bg-gray-50 transition-colors flex items-center gap-2"
-              onClick={() => setShowAddressSearch(true)}
-            >
-              🔍 Søg adresse
-            </button>
-          )}
-        </div>
+
 
         {/* ── Bookmark pin markers on the map ── */}
         {/* These are rendered inside the MapContainer via a portal-like approach below */}
@@ -3685,31 +3707,7 @@ export function GardenMapClient() {
       </div>
 
       <aside className="row-start-2 flex flex-col border-t border-border bg-sidebar-bg md:border-l md:border-t-0 overflow-hidden">
-        {/* ── Bookmark Quick-Access Top Bar ── */}
-        {bookmarks.length > 0 ? (
-          <div className="px-4 pt-2 pb-1 flex items-center gap-1.5 overflow-x-auto scrollbar-none border-b border-border-light bg-sidebar-bg">
-            <span className="text-[10px] text-foreground/40 shrink-0">📍</span>
-            {bookmarks.map((bm) => (
-              <button
-                key={bm.id}
-                type="button"
-                className="shrink-0 rounded-full border border-border bg-white px-2.5 py-1 text-[11px] font-medium hover:bg-accent/10 hover:border-accent/30 transition-all shadow-sm whitespace-nowrap"
-                onClick={() => goToLocation(bm.center[0], bm.center[1], bm.zoom)}
-                title={`${bm.name} — zoom ${bm.zoom.toFixed(0)}`}
-              >
-                {bm.emoji || "📍"} {bm.name}
-              </button>
-            ))}
-            <button
-              type="button"
-              className="shrink-0 rounded-full border border-dashed border-foreground/20 px-2 py-1 text-[10px] text-foreground/40 hover:border-accent/40 hover:text-accent transition-all"
-              onClick={() => { setSidebarTab("view"); setViewSubTab("steder"); }}
-              title="Administrer steder"
-            >
-              ＋
-            </button>
-          </div>
-        ) : null}
+
 
         <div className="px-4 pt-2 pb-1">
           <div className="flex gap-1 rounded-lg bg-background p-1 border border-border-light shadow-sm">
