@@ -53,15 +53,25 @@ Udtræk al synlig information og returnér som JSON med disse felter:
   "notes": "Evt. andre bemærkninger"
 }
 Returnér KUN valid JSON, ingen kommentarer eller forklaringer.`
-        : `Du analyserer et billede af en plante i en have.
-Identificér planten så præcist som muligt og returnér som JSON:
+        : `Du er en ekspert-botaniker og haveekspert. Du analyserer et foto af en plante taget i en dansk have.
+Identificér planten så præcist som muligt — art, evt. sort, og vurder egenskaber.
+
+Returnér JSON med disse felter:
 {
-  "name": "Bedste bud på sortsnavn, eller 'Ukendt sort'",
-  "speciesName": "Planteart på dansk (fx 'Tomat', 'Gulerod')",
-  "description": "Beskrivelse af hvad du ser — størrelse, form, farve, tilstand",
-  "color": "Farve på frugt/blad/blomst",
+  "speciesName": "Dansk artsnavn (fx 'Mælkebøtte', 'Tomat', 'Brændenælde')",
+  "latinName": "Latinsk artsnavn (fx 'Taraxacum officinale')",
+  "name": "Evt. specifik sort hvis genkendelig, ellers samme som speciesName",
+  "description": "Kort beskrivelse af planten — hvad du ser, kendetegn, størrelse",
+  "isWeed": <true/false — er det ukrudt i en have-kontekst?>,
+  "isEdible": <true/false — er nogen del af planten spiselig?>,
+  "isPoisonous": <true/false — er planten giftig for mennesker?>,
+  "isInvasive": <true/false — er den invasiv i Danmark?>,
+  "habitat": "Hvor planten typisk gror (fx 'Græsplæne, vejkant', 'Dyrket i køkkenhave')",
+  "color": "Dominerende farve(r)",
   "heightCm": <estimeret højde i cm, tal eller null>,
-  "notes": "Andre observationer — sygdomstegn, modenhed, sortskendetegn"
+  "careAdvice": "Kort plejeråd eller anbefaling — hvad bør haveejeren gøre? Fjerne? Beholde? Pleje?",
+  "confidence": "Høj / Middel / Lav — din sikkerhed i identifikationen",
+  "notes": "Andre observationer — sygdomstegn, modenhed, årstidskendetegn"
 }
 Returnér KUN valid JSON, ingen kommentarer eller forklaringer.`;
 

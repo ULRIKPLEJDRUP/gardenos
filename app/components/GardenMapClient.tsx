@@ -1167,6 +1167,7 @@ export function GardenMapClient() {
   const [viewSubTab, setViewSubTab] = useState<"steder" | "baggrund" | "synlighed">("steder");
 
   // ── Scan / frøpose-genkendelse state ──
+  const [scanMode, setScanMode] = useState<"seed-packet" | "identify">("seed-packet");
   const [scanImage, setScanImage] = useState<string | null>(null);
   const [scanAnalyzing, setScanAnalyzing] = useState(false);
   const [scanResult, setScanResult] = useState<Record<string, unknown> | null>(null);
@@ -5819,8 +5820,40 @@ export function GardenMapClient() {
         {sidebarTab === "scan" ? (
           <div className="mt-3 space-y-3">
             <div>
-              <label className="block text-[11px] font-semibold text-foreground/60 uppercase tracking-wide mb-1.5">📷 Scan frøpose / etiket</label>
-              <p className="text-[10px] text-foreground/40 mb-3">Tag et foto af en frøpose, plantelabel eller emballage — AI’en aflæser informationen og opretter planten for dig.</p>
+              {/* Mode switcher */}
+              <div className="flex gap-1 rounded-lg bg-background p-1 border border-border-light shadow-sm mb-3">
+                <button
+                  type="button"
+                  className={`flex-1 rounded-md px-2 py-1.5 text-[11px] font-medium transition-all ${
+                    scanMode === "seed-packet"
+                      ? "bg-accent text-white shadow-sm"
+                      : "text-foreground/60 hover:bg-foreground/5 hover:text-foreground/80"
+                  }`}
+                  onClick={() => { setScanMode("seed-packet"); setScanResult(null); setScanError(null); setScanSaved(false); }}
+                >
+                  🌱 Frøpose
+                </button>
+                <button
+                  type="button"
+                  className={`flex-1 rounded-md px-2 py-1.5 text-[11px] font-medium transition-all ${
+                    scanMode === "identify"
+                      ? "bg-emerald-600 text-white shadow-sm"
+                      : "text-foreground/60 hover:bg-foreground/5 hover:text-foreground/80"
+                  }`}
+                  onClick={() => { setScanMode("identify"); setScanResult(null); setScanError(null); setScanSaved(false); }}
+                >
+                  🔍 Identificér
+                </button>
+              </div>
+
+              <label className="block text-[11px] font-semibold text-foreground/60 uppercase tracking-wide mb-1.5">
+                {scanMode === "identify" ? "🌿 Identificér plante" : "📷 Scan frøpose / etiket"}
+              </label>
+              <p className="text-[10px] text-foreground/40 mb-3">
+                {scanMode === "identify"
+                  ? "Tag et foto af en plante i haven \u2014 AI\u2019en identificerer arten og fort\u00e6ller om det er ukrudt, spiseligt, giftigt m.m."
+                  : "Tag et foto af en fr\u00f8pose, plantelabel eller emballage \u2014 AI\u2019en afl\u00e6ser informationen og opretter planten for dig."}
+              </p>
 
               {/* Hidden file input */}
               <input
@@ -5885,13 +5918,13 @@ export function GardenMapClient() {
                           const res = await fetch("/api/analyze-image", {
                             method: "POST",
                             headers: { "Content-Type": "application/json" },
-                            body: JSON.stringify({ image: scanImage, type: "seed-packet" }),
+                            body: JSON.stringify({ image: scanImage, type: scanMode === "identify" ? "plant-photo" : "seed-packet" }),
                           });
                           const data = await res.json();
                           if (!res.ok || data.error) {
                             setScanError(data.error || "Ukendt fejl fra AI");
                             if (data.needsConfig) {
-                              setScanError("OPENAI_API_KEY er ikke konfigureret. Tilføj den som miljøvariabel i Vercel for at aktivere frøpose-scanning.");
+                              setScanError("OPENAI_API_KEY er ikke konfigureret. Tilføj den som miljøvariabel i Vercel.");
                             }
                           } else {
                             setScanResult(data);
@@ -5902,7 +5935,7 @@ export function GardenMapClient() {
                         setScanAnalyzing(false);
                       }}
                     >
-                      🧠 Analysér med AI
+                      {scanMode === "identify" ? "🌿 Identificér plante" : "🧠 Analysér frøpose"}
                     </button>
                   ) : null}
 
@@ -5923,8 +5956,8 @@ export function GardenMapClient() {
                 </div>
               ) : null}
 
-              {/* Results */}
-              {scanResult ? (
+              {/* Results — seed packet mode */}
+              {scanResult && scanMode === "seed-packet" ? (
                 <div className="rounded-lg border border-accent/20 bg-accent/5 p-3 space-y-2 mb-3">
                   <p className="text-[11px] font-semibold text-accent-dark">✅ Data fundet fra frøpose</p>
 
@@ -6087,17 +6120,121 @@ export function GardenMapClient() {
                 </div>
               ) : null}
 
+              {/* Results — plant identification mode */}
+              {scanResult && scanMode === "identify" ? (
+                <div className="rounded-lg border border-emerald-300/40 bg-emerald-50/50 p-3 space-y-2 mb-3">
+                  <p className="text-[11px] font-semibold text-emerald-700">🌿 Plante identificeret</p>
+
+                  <div className="space-y-1.5">
+                    {scanResult.speciesName ? (
+                      <div>
+                        <span className="text-[9px] text-foreground/40 uppercase">Planteart</span>
+                        <p className="text-sm font-bold text-foreground/90">{String(scanResult.speciesName)}</p>
+                      </div>
+                    ) : null}
+                    {scanResult.latinName ? (
+                      <div>
+                        <span className="text-[9px] text-foreground/40 uppercase">Latinsk navn</span>
+                        <p className="text-xs italic text-foreground/60">{String(scanResult.latinName)}</p>
+                      </div>
+                    ) : null}
+                    {scanResult.name && scanResult.name !== scanResult.speciesName ? (
+                      <div>
+                        <span className="text-[9px] text-foreground/40 uppercase">Sort / variant</span>
+                        <p className="text-xs font-medium text-foreground/70">{String(scanResult.name)}</p>
+                      </div>
+                    ) : null}
+
+                    {/* Classification badges */}
+                    <div className="flex flex-wrap gap-1 pt-1">
+                      {scanResult.isWeed !== undefined ? (
+                        <span className={`inline-block rounded-full px-2 py-0.5 text-[10px] font-medium ${
+                          scanResult.isWeed ? "bg-red-100 text-red-700" : "bg-green-100 text-green-700"
+                        }`}>
+                          {scanResult.isWeed ? "🌾 Ukrudt" : "✅ Ikke ukrudt"}
+                        </span>
+                      ) : null}
+                      {scanResult.isEdible !== undefined ? (
+                        <span className={`inline-block rounded-full px-2 py-0.5 text-[10px] font-medium ${
+                          scanResult.isEdible ? "bg-green-100 text-green-700" : "bg-amber-100 text-amber-700"
+                        }`}>
+                          {scanResult.isEdible ? "🍽 Spiselig" : "🚫 Ikke spiselig"}
+                        </span>
+                      ) : null}
+                      {scanResult.isPoisonous !== undefined && scanResult.isPoisonous ? (
+                        <span className="inline-block rounded-full bg-red-100 text-red-700 px-2 py-0.5 text-[10px] font-medium">
+                          ☠️ Giftig
+                        </span>
+                      ) : null}
+                      {scanResult.isInvasive !== undefined && scanResult.isInvasive ? (
+                        <span className="inline-block rounded-full bg-orange-100 text-orange-700 px-2 py-0.5 text-[10px] font-medium">
+                          ⚠️ Invasiv
+                        </span>
+                      ) : null}
+                    </div>
+
+                    {scanResult.description ? (
+                      <div className="pt-1">
+                        <span className="text-[9px] text-foreground/40 uppercase">Beskrivelse</span>
+                        <p className="text-[10px] text-foreground/60 leading-relaxed">{String(scanResult.description)}</p>
+                      </div>
+                    ) : null}
+                    {scanResult.habitat ? (
+                      <div>
+                        <span className="text-[9px] text-foreground/40 uppercase">Vokser typisk</span>
+                        <p className="text-[10px] text-foreground/60">{String(scanResult.habitat)}</p>
+                      </div>
+                    ) : null}
+                    {scanResult.color ? (
+                      <div>
+                        <span className="text-[9px] text-foreground/40 uppercase">Farve</span>
+                        <p className="text-xs text-foreground/70">{String(scanResult.color)}</p>
+                      </div>
+                    ) : null}
+                    {scanResult.heightCm ? (
+                      <div>
+                        <span className="text-[9px] text-foreground/40 uppercase">Estimeret højde</span>
+                        <p className="text-xs text-foreground/70">ca. {String(scanResult.heightCm)} cm</p>
+                      </div>
+                    ) : null}
+                    {scanResult.careAdvice ? (
+                      <div className="pt-1">
+                        <span className="text-[9px] text-foreground/40 uppercase">Plejeråd / anbefaling</span>
+                        <p className="text-[10px] text-foreground/60 leading-relaxed">{String(scanResult.careAdvice)}</p>
+                      </div>
+                    ) : null}
+                    {scanResult.notes ? (
+                      <div>
+                        <span className="text-[9px] text-foreground/40 uppercase">Bemærkninger</span>
+                        <p className="text-[10px] text-foreground/60 italic">{String(scanResult.notes)}</p>
+                      </div>
+                    ) : null}
+                    {scanResult.confidence ? (
+                      <p className="text-[9px] text-foreground/30 pt-1">Sikkerhed: {String(scanResult.confidence)}</p>
+                    ) : null}
+                  </div>
+                </div>
+              ) : null}
+
               {/* Help text when no image */}
               {!scanImage && !scanResult ? (
                 <div className="rounded-lg border border-border bg-background p-3">
-                  <p className="text-[11px] font-medium text-foreground/60 mb-1.5">Sådan virker det:</p>
-                  <ol className="text-[10px] text-foreground/50 space-y-1 list-decimal ml-3">
-                    <li>Tag et foto af frøposen eller etiketten</li>
-                    <li>AI’en aflæser sort, så/høst-tider, afstand m.m.</li>
-                    <li>Gem planten i din database med ét klik</li>
-                    <li>Brug den når du planlægger dine bede</li>
-                  </ol>
-                  <p className="text-[9px] text-foreground/30 mt-2 italic">Kræver at OPENAI_API_KEY er konfigureret som miljøvariabel.</p>
+                  <p className="text-[11px] font-medium text-foreground/60 mb-1.5">S\u00e5dan virker det:</p>
+                  {scanMode === "identify" ? (
+                    <ol className="text-[10px] text-foreground/50 space-y-1 list-decimal ml-3">
+                      <li>Tag et foto af planten i din have</li>
+                      <li>AI\u2019en identificerer art, ukrudt/spiselig/giftig</li>
+                      <li>F\u00e5 plejer\u00e5d og anbefaling</li>
+                    </ol>
+                  ) : (
+                    <ol className="text-[10px] text-foreground/50 space-y-1 list-decimal ml-3">
+                      <li>Tag et foto af fr\u00f8posen eller etiketten</li>
+                      <li>AI\u2019en afl\u00e6ser sort, s\u00e5/h\u00f8st-tider, afstand m.m.</li>
+                      <li>Gem planten i din database med \u00e9t klik</li>
+                      <li>Brug den n\u00e5r du planl\u00e6gger dine bede</li>
+                    </ol>
+                  )}
+                  <p className="text-[9px] text-foreground/30 mt-2 italic">Kr\u00e6ver at OPENAI_API_KEY er konfigureret som milj\u00f8variabel.</p>
                 </div>
               ) : null}
             </div>
