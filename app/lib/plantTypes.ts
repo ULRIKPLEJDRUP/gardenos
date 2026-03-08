@@ -109,6 +109,21 @@ export type PlantFamily =
   | "poaceae"
   | "lamiaceae"
   | "rosaceae"
+  | "ranunculaceae"
+  | "saxifragaceae"
+  | "paeoniaceae"
+  | "iridaceae"
+  | "geraniaceae"
+  | "asparagaceae"
+  | "asphodelaceae"
+  | "dryopteridaceae"
+  | "boraginaceae"
+  | "cyperaceae"
+  | "araliaceae"
+  | "aristolochiaceae"
+  | "cannabaceae"
+  | "caprifoliaceae"
+  | "vitaceae"
   | "other";
 
 export const PLANT_FAMILY_LABELS: Record<PlantFamily, string> = {
@@ -122,6 +137,21 @@ export const PLANT_FAMILY_LABELS: Record<PlantFamily, string> = {
   poaceae: "Græsfamilien",
   lamiaceae: "Læbeblomstfamilien",
   rosaceae: "Rosenfamilien",
+  ranunculaceae: "Ranunkelfamilien",
+  saxifragaceae: "Stenbrækfamilien",
+  paeoniaceae: "Pæonfamilien",
+  iridaceae: "Irisfamilien",
+  geraniaceae: "Storkenæbfamilien",
+  asparagaceae: "Aspargesfamilien",
+  asphodelaceae: "Affodillfamilien",
+  dryopteridaceae: "Bregnefamilien",
+  boraginaceae: "Rubladfamilien",
+  cyperaceae: "Halvgræsfamilien",
+  araliaceae: "Vedbendfamilien",
+  aristolochiaceae: "Sølvranke-familien",
+  cannabaceae: "Hampefamilien",
+  caprifoliaceae: "Gedebladfamilien",
+  vitaceae: "Vinfamilien",
   other: "Anden",
 };
 
