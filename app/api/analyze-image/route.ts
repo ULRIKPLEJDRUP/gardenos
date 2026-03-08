@@ -4,6 +4,10 @@
 // ---------------------------------------------------------------------------
 import { NextRequest, NextResponse } from "next/server";
 
+// Route segment config – allow large base64 image payloads & longer AI timeout
+export const maxDuration = 60; // seconds (Vercel Pro: up to 300)
+export const dynamic = "force-dynamic";
+
 export async function POST(request: NextRequest) {
   try {
     const { image, type } = await request.json();

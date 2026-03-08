@@ -258,3 +258,12 @@ body {
     background: rgba(127, 29, 29, 0.3);
   }
 }
+
+/* Trilateration preview pin pulse */
+@keyframes pulse {
+  0%, 100% { transform: scale(1); opacity: 1; }
+  50% { transform: scale(1.25); opacity: 0.7; }
+}
+.tri-preview-pin div {
+  animation: pulse 1.5s infinite ease-in-out;
+}

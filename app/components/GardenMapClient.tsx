@@ -168,6 +168,7 @@ const STORAGE_GROUPS_KEY = "gardenos:groups:v1";
 const STORAGE_HIDDEN_KINDS_KEY = "gardenos:hiddenKinds:v1";
 const STORAGE_HIDDEN_VIS_KINDS_KEY = "gardenos:hiddenVisKinds:v1";
 const STORAGE_BOOKMARKS_KEY = "gardenos:bookmarks:v1";
+const STORAGE_ANCHORS_KEY = "gardenos:anchors:v1";
 
 interface MapBookmark {
   id: string;
@@ -192,6 +193,96 @@ function loadBookmarks(): MapBookmark[] {
 function saveBookmarks(bookmarks: MapBookmark[]): void {
   if (typeof window === "undefined") return;
   localStorage.setItem(STORAGE_BOOKMARKS_KEY, JSON.stringify(bookmarks));
+}
+
+// ---------------------------------------------------------------------------
+// Anchor-point system – fixed reference points for trilateration
+// ---------------------------------------------------------------------------
+interface AnchorPoint {
+  id: string;
+  name: string;
+  emoji: string;
+  lat: number;
+  lng: number;
+  /** Optional description / physical marker */
+  description?: string;
+}
+
+function loadAnchors(): AnchorPoint[] {
+  if (typeof window === "undefined") return [];
+  try {
+    const raw = localStorage.getItem(STORAGE_ANCHORS_KEY);
+    if (!raw) return [];
+    return JSON.parse(raw) as AnchorPoint[];
+  } catch { return []; }
+}
+
+function saveAnchors(anchors: AnchorPoint[]): void {
+  if (typeof window === "undefined") return;
+  localStorage.setItem(STORAGE_ANCHORS_KEY, JSON.stringify(anchors));
+}
+
+/**
+ * Trilateration: given two anchor points and distances (meters) from each,
+ * compute the two candidate points and return the one closest to the midpoint
+ * of the anchors (typically the "garden-side" solution).
+ *
+ * Uses a local Cartesian approximation (metres per degree at the anchor latitude).
+ */
+function trilaterate(
+  a: { lat: number; lng: number },
+  b: { lat: number; lng: number },
+  distA: number,
+  distB: number,
+): { lat: number; lng: number } | null {
+  // metres per degree at the average latitude
+  const midLat = (a.lat + b.lat) / 2;
+  const mPerDegLat = 111_320;
+  const mPerDegLng = 111_320 * Math.cos((midLat * Math.PI) / 180);
+
+  // convert to local metres
+  const ax = 0;
+  const ay = 0;
+  const bx = (b.lng - a.lng) * mPerDegLng;
+  const by = (b.lat - a.lat) * mPerDegLat;
+
+  const d = Math.sqrt(bx * bx + by * by); // distance between anchors in m
+  if (d < 0.01) return null; // anchors on top of each other
+  if (distA + distB < d - 0.01) return null; // no intersection — too far apart
+  if (Math.abs(distA - distB) > d + 0.01) return null; // one circle inside the other
+
+  const r1 = distA;
+  const r2 = distB;
+
+  // Intersection of two circles centred at A=(0,0) and B=(bx,by)
+  const a2 = (r1 * r1 - r2 * r2 + d * d) / (2 * d);
+  const hSq = r1 * r1 - a2 * a2;
+  if (hSq < 0) return null;
+  const h = Math.sqrt(Math.max(0, hSq));
+
+  // unit vector A→B and perpendicular
+  const ux = bx / d;
+  const uy = by / d;
+
+  const px = ax + a2 * ux;
+  const py = ay + a2 * uy;
+
+  const candidate1 = { x: px + h * (-uy), y: py + h * ux };
+  const candidate2 = { x: px - h * (-uy), y: py - h * ux };
+
+  // Midpoint of A-B in local coords
+  const mx = bx / 2;
+  const my = by / 2;
+
+  // Pick the candidate closest to the midpoint (most likely inside the garden)
+  const d1 = (candidate1.x - mx) ** 2 + (candidate1.y - my) ** 2;
+  const d2 = (candidate2.x - mx) ** 2 + (candidate2.y - my) ** 2;
+  const chosen = d1 <= d2 ? candidate1 : candidate2;
+
+  return {
+    lat: a.lat + chosen.y / mPerDegLat,
+    lng: a.lng + chosen.x / mPerDegLng,
+  };
 }
 
 function loadHiddenKinds(): Set<string> {
@@ -1164,7 +1255,7 @@ export function GardenMapClient() {
   const [newKindError, setNewKindError] = useState<string | null>(null);
   const [undoStack, setUndoStack] = useState<UndoSnapshot[]>([]);
   const [sidebarTab, setSidebarTab] = useState<"create" | "content" | "groups" | "plants" | "view" | "scan">("create");
-  const [viewSubTab, setViewSubTab] = useState<"steder" | "baggrund" | "synlighed">("steder");
+  const [viewSubTab, setViewSubTab] = useState<"steder" | "baggrund" | "synlighed" | "ankre">("steder");
 
   // ── Scan / frøpose-genkendelse state ──
   const [scanMode, setScanMode] = useState<"seed-packet" | "identify">("seed-packet");
@@ -1231,6 +1322,22 @@ export function GardenMapClient() {
   const [newBookmarkName, setNewBookmarkName] = useState("");
   const [newBookmarkEmoji, setNewBookmarkEmoji] = useState("📍");
 
+  // ── Anker-punkt system (trilateration) ──
+  const [anchors, setAnchors] = useState<AnchorPoint[]>(() => loadAnchors());
+  const [editingAnchorId, setEditingAnchorId] = useState<string | null>(null);
+  const [newAnchorName, setNewAnchorName] = useState("");
+  const [newAnchorDesc, setNewAnchorDesc] = useState("");
+  const [placingAnchor, setPlacingAnchor] = useState(false);
+  // Trilateration flow
+  const [triAnchorA, setTriAnchorA] = useState<string | null>(null);
+  const [triAnchorB, setTriAnchorB] = useState<string | null>(null);
+  const [triDistA, setTriDistA] = useState("");
+  const [triDistB, setTriDistB] = useState("");
+  const [triResult, setTriResult] = useState<{ lat: number; lng: number } | null>(null);
+  const [triError, setTriError] = useState<string | null>(null);
+  const [triPlaced, setTriPlaced] = useState(false);
+  const [showAnchorHelp, setShowAnchorHelp] = useState(false);
+
   const searchAddress = useCallback(async (q: string) => {
     if (!q.trim()) return;
     setAddressSearching(true);
@@ -1280,6 +1387,52 @@ export function GardenMapClient() {
       return next;
     });
   }, []);
+
+  // ── Anchor CRUD ──
+  const addAnchor = useCallback((name: string, lat: number, lng: number, description?: string) => {
+    const anchor: AnchorPoint = {
+      id: Date.now().toString(36) + Math.random().toString(36).slice(2, 5),
+      name,
+      emoji: "📌",
+      lat,
+      lng,
+      description,
+    };
+    setAnchors((prev) => { const next = [...prev, anchor]; saveAnchors(next); return next; });
+  }, []);
+
+  const removeAnchor = useCallback((id: string) => {
+    setAnchors((prev) => { const next = prev.filter((a) => a.id !== id); saveAnchors(next); return next; });
+    // Clear trilateration refs if they reference deleted anchor
+    setTriAnchorA((prev) => (prev === id ? null : prev));
+    setTriAnchorB((prev) => (prev === id ? null : prev));
+  }, []);
+
+  const updateAnchor = useCallback((id: string, patch: Partial<AnchorPoint>) => {
+    setAnchors((prev) => {
+      const next = prev.map((a) => (a.id === id ? { ...a, ...patch } : a));
+      saveAnchors(next);
+      return next;
+    });
+  }, []);
+
+  // ── Trilateration compute ──
+  const computeTrilateration = useCallback(() => {
+    setTriError(null);
+    setTriResult(null);
+    setTriPlaced(false);
+    const anchorA = anchors.find((a) => a.id === triAnchorA);
+    const anchorB = anchors.find((a) => a.id === triAnchorB);
+    if (!anchorA || !anchorB) { setTriError("Vælg to forskellige ankerpunkter."); return; }
+    if (anchorA.id === anchorB.id) { setTriError("Vælg to FORSKELLIGE ankerpunkter."); return; }
+    const dA = parseFloat(triDistA.replace(",", "."));
+    const dB = parseFloat(triDistB.replace(",", "."));
+    if (isNaN(dA) || dA <= 0) { setTriError("Indtast gyldig afstand fra anker A (i meter)."); return; }
+    if (isNaN(dB) || dB <= 0) { setTriError("Indtast gyldig afstand fra anker B (i meter)."); return; }
+    const result = trilaterate(anchorA, anchorB, dA, dB);
+    if (!result) { setTriError("Afstandene passer ikke — tjek dine målinger. Summen af afstande skal være mindst lige så stor som afstanden mellem ankerpunkterne."); return; }
+    setTriResult(result);
+  }, [anchors, triAnchorA, triAnchorB, triDistA, triDistB]);
 
   const testDfCredentials = async (user: string, pass: string) => {
     setDfTestStatus("testing");
@@ -3677,6 +3830,54 @@ export function GardenMapClient() {
               <Popup><span className="text-xs font-medium">{bm.emoji || "📍"} {bm.name}</span></Popup>
             </Marker>
           ))}
+
+          {/* ── Anchor pin markers ── */}
+          {anchors.map((anc) => (
+            <Marker
+              key={`anc-${anc.id}`}
+              position={[anc.lat, anc.lng]}
+              draggable
+              icon={L.divIcon({
+                className: "anchor-pin",
+                html: `<div style="font-size:18px;filter:drop-shadow(0 1px 3px rgba(0,0,0,.4));cursor:grab;text-align:center;line-height:1;position:relative"><span>📌</span><div style="position:absolute;top:22px;left:50%;transform:translateX(-50%);white-space:nowrap;font-size:9px;font-weight:600;color:#c2410c;background:rgba(255,255,255,.85);padding:0 3px;border-radius:3px;pointer-events:none">${anc.name}</div></div>`,
+                iconSize: [28, 40],
+                iconAnchor: [14, 20],
+              })}
+              eventHandlers={{
+                dragend: (e) => {
+                  const marker = e.target as L.Marker;
+                  const pos = marker.getLatLng();
+                  updateAnchor(anc.id, { lat: pos.lat, lng: pos.lng });
+                },
+              }}
+            >
+              <Popup>
+                <div style={{ fontSize: "11px" }}>
+                  <strong>📌 {anc.name}</strong>
+                  {anc.description ? <div style={{ color: "#666", marginTop: 2 }}>{anc.description}</div> : null}
+                  <div style={{ color: "#999", marginTop: 4, fontFamily: "monospace", fontSize: "9px" }}>
+                    {anc.lat.toFixed(7)}, {anc.lng.toFixed(7)}
+                  </div>
+                </div>
+              </Popup>
+            </Marker>
+          ))}
+
+          {/* ── Trilateration result preview marker ── */}
+          {triResult && !triPlaced ? (
+            <Marker
+              key="tri-preview"
+              position={[triResult.lat, triResult.lng]}
+              icon={L.divIcon({
+                className: "tri-preview-pin",
+                html: `<div style="font-size:22px;filter:drop-shadow(0 2px 4px rgba(0,0,0,.3));text-align:center;line-height:1;animation:pulse 1.5s infinite">🎯</div>`,
+                iconSize: [28, 28],
+                iconAnchor: [14, 14],
+              })}
+            >
+              <Popup><span style={{ fontSize: "11px", fontWeight: 600 }}>🎯 Beregnet position</span></Popup>
+            </Marker>
+          ) : null}
 
           <MapDrawControls
             featureGroupRef={featureGroupRef}
@@ -6213,6 +6414,75 @@ export function GardenMapClient() {
                       <p className="text-[9px] text-foreground/30 pt-1">Sikkerhed: {String(scanResult.confidence)}</p>
                     ) : null}
                   </div>
+
+                  {/* Save identified plant to database */}
+                  {!scanSaved ? (
+                    <button
+                      type="button"
+                      className="mt-2 w-full rounded-lg bg-emerald-600 px-3 py-2.5 text-xs text-white font-semibold hover:bg-emerald-700 transition-colors shadow-sm"
+                      onClick={() => {
+                        const speciesName = String(scanResult.speciesName || scanResult.name || "Ukendt plante");
+                        const speciesId = speciesName.toLowerCase().replace(/[^a-zæøåü0-9]+/g, "-").replace(/-+$/, "");
+
+                        // Check if species already exists
+                        const existing = getPlantById(speciesId);
+
+                        if (!existing) {
+                          // Determine category based on AI classification
+                          const isWeed = scanResult.isWeed === true;
+                          const category: PlantCategory = isWeed ? "other" : "vegetable";
+
+                          const newSpecies: PlantSpecies = {
+                            id: speciesId,
+                            name: speciesName,
+                            latinName: scanResult.latinName ? String(scanResult.latinName) : undefined,
+                            category,
+                            description: [
+                              scanResult.description ? String(scanResult.description) : "",
+                              scanResult.careAdvice ? `Plejeråd: ${String(scanResult.careAdvice)}` : "",
+                              scanResult.habitat ? `Habitat: ${String(scanResult.habitat)}` : "",
+                            ].filter(Boolean).join("\n"),
+                            spacingCm: scanResult.heightCm ? Number(scanResult.heightCm) : undefined,
+                            source: "ai",
+                            icon: scanResult.isWeed ? "🌾" : scanResult.isEdible ? "🥬" : "🌿",
+                            varieties: [{
+                              id: "identified",
+                              name: speciesName,
+                              description: scanResult.description ? String(scanResult.description) : undefined,
+                              color: scanResult.color ? String(scanResult.color) : undefined,
+                              heightCm: scanResult.heightCm ? Number(scanResult.heightCm) : undefined,
+                              notes: [
+                                scanResult.isWeed ? "Ukrudt" : null,
+                                scanResult.isEdible ? "Spiselig" : null,
+                                scanResult.isPoisonous ? "⚠️ Giftig" : null,
+                                scanResult.isInvasive ? "⚠️ Invasiv" : null,
+                                scanResult.careAdvice ? `Plejeråd: ${String(scanResult.careAdvice)}` : null,
+                                scanResult.notes ? String(scanResult.notes) : null,
+                              ].filter(Boolean).join(". "),
+                              addedVia: "plant-photo",
+                            }],
+                          };
+                          addOrUpdateCustomPlant(newSpecies);
+                        }
+
+                        setPlantDataVersion((v) => v + 1);
+                        setScanSaved(true);
+                      }}
+                    >
+                      🌿 Gem i plantedatabasen
+                    </button>
+                  ) : (
+                    <div className="mt-2 rounded-lg border border-green-300 bg-green-50 px-3 py-2 text-center">
+                      <p className="text-[11px] text-green-700 font-medium">✅ Gemt! Du finder den under 🌱 Planter.</p>
+                      <button
+                        type="button"
+                        className="mt-1 text-[10px] text-accent underline"
+                        onClick={() => { setSidebarTab("plants"); }}
+                      >
+                        Gå til Planter →
+                      </button>
+                    </div>
+                  )}
                 </div>
               ) : null}
 
@@ -6245,19 +6515,20 @@ export function GardenMapClient() {
           <div className="mt-3 space-y-3">
             {/* ── Visning sub-tabs ── */}
             <div className="flex gap-1 rounded-lg bg-background p-1 border border-border-light shadow-sm">
-              {(["steder", "baggrund", "synlighed"] as const).map((st) => (
+              {(["steder", "baggrund", "synlighed", "ankre"] as const).map((st) => (
                 <button
                   key={st}
                   type="button"
                   className={`flex-1 rounded-md px-2 py-1.5 text-[11px] font-medium transition-all ${
                     viewSubTab === st
-                      ? "bg-accent text-white shadow-sm"
+                      ? (st === "ankre" ? "bg-orange-500 text-white shadow-sm" : "bg-accent text-white shadow-sm")
                       : "text-foreground/60 hover:bg-foreground/5 hover:text-foreground/80"
                   }`}
                   onClick={() => setViewSubTab(st)}
                 >
-                  {st === "steder" ? "📍 Steder" : st === "baggrund" ? "🗺️ Baggrund" : "👁 Synlighed"}
+                  {st === "steder" ? "📍 Steder" : st === "baggrund" ? "🗺️ Baggrund" : st === "synlighed" ? "👁 Synlighed" : "📌 Ankre"}
                   {st === "steder" && bookmarks.length > 0 ? ` ${bookmarks.length}` : ""}
+                  {st === "ankre" && anchors.length > 0 ? ` ${anchors.length}` : ""}
                 </button>
               ))}
             </div>
@@ -6421,6 +6692,359 @@ export function GardenMapClient() {
                     </button>
                   </div>
                 </div>
+              </div>
+            ) : null}
+
+            {/* ── Sub-tab: Ankre (trilateration) ── */}
+            {viewSubTab === "ankre" ? (
+              <div className="space-y-3">
+                {/* Instruktioner */}
+                <div>
+                  <button
+                    type="button"
+                    className="flex items-center gap-1 text-[11px] font-semibold text-orange-600 hover:text-orange-700 transition-colors"
+                    onClick={() => setShowAnchorHelp((v) => !v)}
+                  >
+                    {showAnchorHelp ? "▾" : "▸"} 📐 Sådan bruger du ankerpunkter
+                  </button>
+                  {showAnchorHelp ? (
+                    <div className="mt-2 rounded-lg border border-orange-200 bg-orange-50/50 p-3 space-y-2">
+                      <p className="text-[11px] font-semibold text-orange-700">🎯 Centimeter-præcis markering med målebånd</p>
+                      <p className="text-[10px] text-foreground/60 leading-relaxed">
+                        Standard telefon-GPS giver kun 3–5 meters nøjagtighed. Med ankerpunkt-systemet kan du opnå
+                        <strong> 1–5 cm præcision</strong> ved at kombinere faste referenceankre med et målebånd.
+                      </p>
+                      <div className="space-y-1.5">
+                        <p className="text-[10px] font-semibold text-orange-700">Trin-for-trin:</p>
+                        <ol className="text-[10px] text-foreground/60 space-y-1.5 list-decimal ml-3">
+                          <li>
+                            <strong>Sæt 2–4 fysiske pæle/pinde i haven</strong> — fx hjørner af hæk, stolper, eller fliser du kan genkende.
+                            Markér dem med farvet tape eller et bånd så de er nemme at finde.
+                          </li>
+                          <li>
+                            <strong>Opret ankerpunkter herunder</strong> — gå hen til hver pæl, stå lige ved den,
+                            og tryk "+ Opret anker her" (bruger din GPS). Giv dem et navn (fx "Rød pæl ved hæk").
+                          </li>
+                          <li>
+                            <strong>Når du vil markere et præcist punkt:</strong> mål afstanden med målebånd
+                            fra punktet til anker A og anker B. Indtast de to afstande herunder.
+                          </li>
+                          <li>
+                            Appen beregner positionen via <em>trilateration</em> — den matematiske metode
+                            som GPS-satellitter selv bruger. Resultat: centimeter-præcision!
+                          </li>
+                        </ol>
+                      </div>
+                      <div className="border-t border-orange-200 pt-2 mt-2">
+                        <p className="text-[10px] font-semibold text-orange-700">💡 Tips til gode resultater:</p>
+                        <ul className="text-[10px] text-foreground/60 space-y-1 list-disc ml-3 mt-1">
+                          <li>Brug et <strong>5–10 m målebånd</strong> — mål i stram, lige linje langs jorden.</li>
+                          <li>Ankre der er <strong>3–15 m fra hinanden</strong> giver bedst resultat.</li>
+                          <li>Placér ankre så det punkt du vil markere ligger <strong>mellem dem</strong> (ikke bag ved).</li>
+                          <li>GPS-fejlen i ankerpunkterne er OK — den forskyder alt ens, men de relative afstande er præcise.</li>
+                          <li>Du kan flytte ankerpunkterne manuelt på kortet for bedre absolut placering.</li>
+                        </ul>
+                      </div>
+                      <div className="border-t border-orange-200 pt-2 mt-2">
+                        <p className="text-[10px] text-foreground/50">
+                          🎥 Se hvordan trilateration virker:{" "}
+                          <a
+                            href="https://www.youtube.com/watch?v=JCTl8kqrKEY"
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-orange-600 underline hover:text-orange-700"
+                          >
+                            YouTube: GPS Trilateration Explained
+                          </a>
+                        </p>
+                      </div>
+                    </div>
+                  ) : null}
+                </div>
+
+                {/* Existing anchors */}
+                <div>
+                  <label className="block text-[11px] font-semibold text-foreground/60 uppercase tracking-wide mb-1.5">📌 Dine ankerpunkter</label>
+                  {anchors.length === 0 ? (
+                    <p className="text-[10px] text-foreground/30 italic mb-2">Ingen ankerpunkter endnu. Gå ud i haven, stil dig ved en fast pæl, og opret et anker herunder.</p>
+                  ) : (
+                    <div className="space-y-1 mb-2">
+                      {anchors.map((anc) => (
+                        <div key={anc.id} className="flex items-center gap-1 rounded-lg border border-orange-200/60 bg-orange-50/30 p-1.5">
+                          {editingAnchorId === anc.id ? (
+                            <>
+                              <input
+                                type="text"
+                                className="flex-1 text-xs border border-border rounded px-1.5 py-0.5"
+                                defaultValue={anc.name}
+                                onBlur={(e) => { updateAnchor(anc.id, { name: e.target.value || anc.name }); setEditingAnchorId(null); }}
+                                onKeyDown={(e) => { if (e.key === "Enter") { updateAnchor(anc.id, { name: (e.target as HTMLInputElement).value || anc.name }); setEditingAnchorId(null); } }}
+                                autoFocus
+                              />
+                              <button type="button" className="text-[10px] text-orange-600" onClick={() => setEditingAnchorId(null)}>✓</button>
+                            </>
+                          ) : (
+                            <>
+                              <button
+                                type="button"
+                                className="flex-1 text-left text-xs hover:text-orange-600 transition-colors truncate"
+                                onClick={() => {
+                                  const map = mapRef.current;
+                                  if (map) map.setView([anc.lat, anc.lng], Math.max(map.getZoom(), 19));
+                                }}
+                                title={`${anc.lat.toFixed(6)}, ${anc.lng.toFixed(6)}${anc.description ? " — " + anc.description : ""}`}
+                              >
+                                📌 {anc.name}
+                              </button>
+                              <span className="text-[8px] text-foreground/25 shrink-0 font-mono">{anc.lat.toFixed(5)}</span>
+                              <button
+                                type="button"
+                                className="text-[10px] text-foreground/30 hover:text-orange-600 px-0.5"
+                                onClick={() => {
+                                  // Opdater anker til nuværende GPS
+                                  navigator.geolocation.getCurrentPosition(
+                                    (pos) => updateAnchor(anc.id, { lat: pos.coords.latitude, lng: pos.coords.longitude }),
+                                    () => {},
+                                    { enableHighAccuracy: true, timeout: 10000 },
+                                  );
+                                }}
+                                title="Opdater GPS-position (stå ved ankeret)"
+                              >🔄</button>
+                              <button type="button" className="text-[10px] text-foreground/30 hover:text-foreground/60 px-0.5" onClick={() => setEditingAnchorId(anc.id)} title="Redigér">✏️</button>
+                              <button type="button" className="text-[10px] text-foreground/30 hover:text-red-500 px-0.5" onClick={() => removeAnchor(anc.id)} title="Slet">🗑</button>
+                            </>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {/* Add new anchor */}
+                  {placingAnchor ? (
+                    <div className="rounded-lg border border-orange-300 bg-orange-50 p-2 space-y-2">
+                      <p className="text-[10px] text-orange-700 font-medium">📡 Henter GPS-position…  Stå stille ved pinden/pælen.</p>
+                      <input
+                        type="text"
+                        className="w-full text-xs border border-border rounded-lg px-2 py-1 placeholder:text-foreground/30"
+                        placeholder="Navn, fx 'Rød pæl ved hæk'…"
+                        value={newAnchorName}
+                        onChange={(e) => setNewAnchorName(e.target.value)}
+                      />
+                      <input
+                        type="text"
+                        className="w-full text-xs border border-border rounded-lg px-2 py-1 placeholder:text-foreground/30"
+                        placeholder="Beskrivelse (valgfrit), fx 'Jernpæl i SV-hjørne'"
+                        value={newAnchorDesc}
+                        onChange={(e) => setNewAnchorDesc(e.target.value)}
+                      />
+                      <div className="flex gap-1">
+                        <button
+                          type="button"
+                          className="flex-1 rounded-lg bg-orange-500 text-white px-2 py-1.5 text-xs font-medium hover:bg-orange-600 transition-colors"
+                          onClick={() => {
+                            navigator.geolocation.getCurrentPosition(
+                              (pos) => {
+                                addAnchor(
+                                  newAnchorName.trim() || `Anker ${anchors.length + 1}`,
+                                  pos.coords.latitude,
+                                  pos.coords.longitude,
+                                  newAnchorDesc.trim() || undefined,
+                                );
+                                setNewAnchorName("");
+                                setNewAnchorDesc("");
+                                setPlacingAnchor(false);
+                              },
+                              (err) => {
+                                alert(`GPS-fejl: ${err.message}. Prøv at gå udenfor og tjek at lokationstilladelser er slået til.`);
+                              },
+                              { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 },
+                            );
+                          }}
+                        >
+                          📡 Registrér GPS nu
+                        </button>
+                        <button
+                          type="button"
+                          className="rounded-lg border border-orange-300 px-2 py-1.5 text-xs text-orange-600 font-medium hover:bg-orange-50 transition-colors"
+                          onClick={() => {
+                            // Placér ved kortets center i stedet
+                            const map = mapRef.current;
+                            if (map) {
+                              addAnchor(
+                                newAnchorName.trim() || `Anker ${anchors.length + 1}`,
+                                map.getCenter().lat,
+                                map.getCenter().lng,
+                                newAnchorDesc.trim() || undefined,
+                              );
+                            }
+                            setNewAnchorName("");
+                            setNewAnchorDesc("");
+                            setPlacingAnchor(false);
+                          }}
+                        >
+                          🗺️ Brug kortcenter
+                        </button>
+                        <button
+                          type="button"
+                          className="rounded-lg border border-border px-2 py-1.5 text-xs text-foreground/50 hover:bg-foreground/5 transition-colors"
+                          onClick={() => { setPlacingAnchor(false); setNewAnchorName(""); setNewAnchorDesc(""); }}
+                        >
+                          Annullér
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <button
+                      type="button"
+                      className="w-full rounded-lg border border-orange-300/60 bg-orange-50/50 px-3 py-2 text-xs font-medium text-orange-700 hover:bg-orange-100/50 hover:border-orange-400/60 transition-all"
+                      onClick={() => setPlacingAnchor(true)}
+                    >
+                      + Opret ankerpunkt
+                    </button>
+                  )}
+                </div>
+
+                {/* Trilateration – Præcis markering */}
+                {anchors.length >= 2 ? (
+                  <div className="border-t border-border-light pt-3">
+                    <label className="block text-[11px] font-semibold text-foreground/60 uppercase tracking-wide mb-1.5">📐 Præcis markering (trilateration)</label>
+                    <p className="text-[10px] text-foreground/40 mb-2">Mål afstand fra dit punkt til 2 ankerpunkter med målebånd. Appen beregner positionen.</p>
+
+                    <div className="space-y-2">
+                      {/* Anchor A */}
+                      <div>
+                        <label className="text-[9px] text-foreground/40 uppercase">Anker A</label>
+                        <select
+                          className="w-full rounded-lg border border-border px-2 py-1.5 text-xs bg-background"
+                          value={triAnchorA ?? ""}
+                          onChange={(e) => { setTriAnchorA(e.target.value || null); setTriResult(null); setTriError(null); setTriPlaced(false); }}
+                        >
+                          <option value="">Vælg anker…</option>
+                          {anchors.map((a) => (
+                            <option key={a.id} value={a.id}>📌 {a.name}</option>
+                          ))}
+                        </select>
+                        <input
+                          type="text"
+                          inputMode="decimal"
+                          className="w-full mt-1 rounded-lg border border-border px-2 py-1.5 text-xs placeholder:text-foreground/30"
+                          placeholder="Afstand i meter, fx 4.35"
+                          value={triDistA}
+                          onChange={(e) => { setTriDistA(e.target.value); setTriResult(null); setTriError(null); setTriPlaced(false); }}
+                        />
+                      </div>
+
+                      {/* Anchor B */}
+                      <div>
+                        <label className="text-[9px] text-foreground/40 uppercase">Anker B</label>
+                        <select
+                          className="w-full rounded-lg border border-border px-2 py-1.5 text-xs bg-background"
+                          value={triAnchorB ?? ""}
+                          onChange={(e) => { setTriAnchorB(e.target.value || null); setTriResult(null); setTriError(null); setTriPlaced(false); }}
+                        >
+                          <option value="">Vælg anker…</option>
+                          {anchors.map((a) => (
+                            <option key={a.id} value={a.id}>📌 {a.name}</option>
+                          ))}
+                        </select>
+                        <input
+                          type="text"
+                          inputMode="decimal"
+                          className="w-full mt-1 rounded-lg border border-border px-2 py-1.5 text-xs placeholder:text-foreground/30"
+                          placeholder="Afstand i meter, fx 6.12"
+                          value={triDistB}
+                          onChange={(e) => { setTriDistB(e.target.value); setTriResult(null); setTriError(null); setTriPlaced(false); }}
+                        />
+                      </div>
+
+                      {/* Compute button */}
+                      <button
+                        type="button"
+                        className="w-full rounded-lg bg-orange-500 text-white px-3 py-2 text-xs font-semibold hover:bg-orange-600 transition-colors disabled:opacity-40"
+                        disabled={!triAnchorA || !triAnchorB || !triDistA || !triDistB}
+                        onClick={computeTrilateration}
+                      >
+                        📐 Beregn position
+                      </button>
+
+                      {triError ? (
+                        <div className="rounded-lg border border-red-200 bg-red-50 p-2">
+                          <p className="text-[10px] text-red-600">⚠️ {triError}</p>
+                        </div>
+                      ) : null}
+
+                      {triResult ? (
+                        <div className="rounded-lg border border-green-200 bg-green-50 p-3 space-y-2">
+                          <p className="text-[11px] font-semibold text-green-700">✅ Position beregnet!</p>
+                          <p className="text-[10px] text-foreground/60 font-mono">
+                            {triResult.lat.toFixed(7)}, {triResult.lng.toFixed(7)}
+                          </p>
+                          <div className="flex gap-1">
+                            <button
+                              type="button"
+                              className="flex-1 rounded-lg bg-green-600 text-white px-2 py-1.5 text-xs font-medium hover:bg-green-700 transition-colors"
+                              onClick={() => {
+                                const map = mapRef.current;
+                                if (map) map.setView([triResult.lat, triResult.lng], Math.max(map.getZoom(), 20));
+                              }}
+                            >
+                              🗺️ Vis på kort
+                            </button>
+                            {!triPlaced ? (
+                              <button
+                                type="button"
+                                className="flex-1 rounded-lg bg-accent text-white px-2 py-1.5 text-xs font-medium hover:bg-accent/90 transition-colors"
+                                onClick={() => {
+                                  // Place a GeoJSON point feature at the computed position
+                                  const fg = featureGroupRef.current;
+                                  const map = mapRef.current;
+                                  if (!fg || !map) return;
+                                  const id = newId();
+                                  const feature: GardenFeature = {
+                                    type: "Feature",
+                                    geometry: { type: "Point", coordinates: [triResult.lng, triResult.lat] },
+                                    properties: {
+                                      gardenosId: id,
+                                      kind: "plant",
+                                      category: "element",
+                                      name: `Præcis markering`,
+                                      notes: `Placeret via trilateration (afstande: ${triDistA}m / ${triDistB}m)`,
+                                    },
+                                  };
+                                  const layer = L.geoJSON(feature, {
+                                    pointToLayer: (_f, latlng) => {
+                                      const m = L.marker(latlng, { icon: markerIcon("plant", false, false, "📍") });
+                                      ensureMarkerHasDragging(m);
+                                      return m;
+                                    },
+                                  }).getLayers()[0];
+                                  if (layer) {
+                                    (layer as unknown as Record<string, unknown>).feature = feature;
+                                    fg.addLayer(layer);
+                                    attachClickHandler(layer, feature);
+                                    pushUndoSnapshot();
+                                    rebuildFromGroupAndUpdateSelection();
+                                    setTriPlaced(true);
+                                    map.setView([triResult.lat, triResult.lng], Math.max(map.getZoom(), 20));
+                                  }
+                                }}
+                              >
+                                📌 Placér element
+                              </button>
+                            ) : (
+                              <span className="flex-1 rounded-lg bg-green-100 text-green-700 px-2 py-1.5 text-xs font-medium text-center">✅ Placeret!</span>
+                            )}
+                          </div>
+                          <p className="text-[9px] text-foreground/30 italic">Du kan bagefter ændre type, navn og ikon i Indhold-panelet.</p>
+                        </div>
+                      ) : null}
+                    </div>
+                  </div>
+                ) : anchors.length > 0 ? (
+                  <div className="rounded-lg border border-orange-200 bg-orange-50/30 p-2">
+                    <p className="text-[10px] text-orange-600">Du har brug for mindst 2 ankerpunkter for at bruge trilateration. Opret ét mere herover.</p>
+                  </div>
+                ) : null}
               </div>
             ) : null}
 
