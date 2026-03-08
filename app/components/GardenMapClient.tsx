@@ -1319,6 +1319,8 @@ export function GardenMapClient() {
   const [scanResult, setScanResult] = useState<Record<string, unknown> | null>(null);
   const [scanError, setScanError] = useState<string | null>(null);
   const [scanSaved, setScanSaved] = useState(false);
+  const [scanSaveExpanded, setScanSaveExpanded] = useState(false);
+  const [scanSaveCategory, setScanSaveCategory] = useState<PlantCategory>("bush");
   const scanInputRef = useRef<HTMLInputElement>(null);
 
   // ── Scan history (bibliotek) ──
@@ -6543,63 +6545,112 @@ export function GardenMapClient() {
 
                   {/* Save identified plant to database */}
                   {!scanSaved ? (
-                    <button
-                      type="button"
-                      className="mt-2 w-full rounded-lg bg-emerald-600 px-3 py-2.5 text-xs text-white font-semibold hover:bg-emerald-700 transition-colors shadow-sm"
-                      onClick={() => {
-                        const speciesName = String(scanResult.speciesName || scanResult.name || "Ukendt plante");
-                        const speciesId = speciesName.toLowerCase().replace(/[^a-zæøåü0-9]+/g, "-").replace(/-+$/, "");
+                    scanSaveExpanded ? (
+                      <div className="mt-2 rounded-lg border border-accent/30 bg-accent/5 p-2.5 space-y-2">
+                        <p className="text-[10px] font-medium text-accent-dark">Vælg kategori for planten:</p>
+                        <div className="grid grid-cols-2 gap-1">
+                          {(Object.entries(PLANT_CATEGORY_LABELS) as [PlantCategory, string][]).map(([cat, label]) => (
+                            <button
+                              key={cat}
+                              type="button"
+                              className={`rounded-md border px-2 py-1.5 text-[10px] font-medium transition-all ${
+                                scanSaveCategory === cat
+                                  ? "border-accent bg-accent text-white"
+                                  : "border-border bg-background text-foreground/60 hover:bg-foreground/5"
+                              }`}
+                              onClick={() => setScanSaveCategory(cat)}
+                            >
+                              {label}
+                            </button>
+                          ))}
+                        </div>
+                        <div className="flex gap-1">
+                          <button
+                            type="button"
+                            className="flex-1 rounded-lg bg-emerald-600 text-white px-2 py-2 text-xs font-semibold hover:bg-emerald-700 transition-colors"
+                            onClick={() => {
+                              const speciesName = String(scanResult.speciesName || scanResult.name || "Ukendt plante");
+                              const speciesId = speciesName.toLowerCase().replace(/[^a-zæøåü0-9]+/g, "-").replace(/-+$/, "");
 
-                        // Check if species already exists
-                        const existing = getPlantById(speciesId);
+                              const existing = getPlantById(speciesId);
 
-                        if (!existing) {
-                          // Determine category based on AI classification
-                          const isWeed = scanResult.isWeed === true;
-                          const category: PlantCategory = isWeed ? "flower" : "vegetable";
+                              if (existing) {
+                                // Add as variety to existing species
+                                const variety: PlantVariety = {
+                                  id: "identified-" + Date.now().toString(36),
+                                  name: speciesName,
+                                  description: scanResult.description ? String(scanResult.description) : undefined,
+                                  color: scanResult.color ? String(scanResult.color) : undefined,
+                                  heightCm: scanResult.heightCm ? Number(scanResult.heightCm) : undefined,
+                                  notes: [
+                                    scanResult.careAdvice ? `Plejeråd: ${String(scanResult.careAdvice)}` : null,
+                                    scanResult.notes ? String(scanResult.notes) : null,
+                                  ].filter(Boolean).join(". ") || undefined,
+                                  addedVia: "plant-photo",
+                                };
+                                addVarietyToSpecies(speciesId, variety);
+                              } else {
+                                const newSpecies: PlantSpecies = {
+                                  id: speciesId,
+                                  name: speciesName,
+                                  latinName: scanResult.latinName ? String(scanResult.latinName) : undefined,
+                                  category: scanSaveCategory,
+                                  description: [
+                                    scanResult.description ? String(scanResult.description) : "",
+                                    scanResult.careAdvice ? `Plejeråd: ${String(scanResult.careAdvice)}` : "",
+                                    scanResult.habitat ? `Habitat: ${String(scanResult.habitat)}` : "",
+                                  ].filter(Boolean).join("\n"),
+                                  spacingCm: scanResult.heightCm ? Number(scanResult.heightCm) : undefined,
+                                  source: "ai",
+                                  icon: scanResult.isWeed ? "🌾" : scanResult.isEdible ? "🥬" : "🌿",
+                                  varieties: [{
+                                    id: "identified",
+                                    name: speciesName,
+                                    description: scanResult.description ? String(scanResult.description) : undefined,
+                                    color: scanResult.color ? String(scanResult.color) : undefined,
+                                    heightCm: scanResult.heightCm ? Number(scanResult.heightCm) : undefined,
+                                    notes: [
+                                      scanResult.isWeed ? "Ukrudt" : null,
+                                      scanResult.isEdible ? "Spiselig" : null,
+                                      scanResult.isPoisonous ? "⚠️ Giftig" : null,
+                                      scanResult.isInvasive ? "⚠️ Invasiv" : null,
+                                      scanResult.careAdvice ? `Plejeråd: ${String(scanResult.careAdvice)}` : null,
+                                      scanResult.notes ? String(scanResult.notes) : null,
+                                    ].filter(Boolean).join(". "),
+                                    addedVia: "plant-photo",
+                                  }],
+                                };
+                                addOrUpdateCustomPlant(newSpecies);
+                              }
 
-                          const newSpecies: PlantSpecies = {
-                            id: speciesId,
-                            name: speciesName,
-                            latinName: scanResult.latinName ? String(scanResult.latinName) : undefined,
-                            category,
-                            description: [
-                              scanResult.description ? String(scanResult.description) : "",
-                              scanResult.careAdvice ? `Plejeråd: ${String(scanResult.careAdvice)}` : "",
-                              scanResult.habitat ? `Habitat: ${String(scanResult.habitat)}` : "",
-                            ].filter(Boolean).join("\n"),
-                            spacingCm: scanResult.heightCm ? Number(scanResult.heightCm) : undefined,
-                            source: "ai",
-                            icon: scanResult.isWeed ? "🌾" : scanResult.isEdible ? "🥬" : "🌿",
-                            varieties: [{
-                              id: "identified",
-                              name: speciesName,
-                              description: scanResult.description ? String(scanResult.description) : undefined,
-                              color: scanResult.color ? String(scanResult.color) : undefined,
-                              heightCm: scanResult.heightCm ? Number(scanResult.heightCm) : undefined,
-                              notes: [
-                                scanResult.isWeed ? "Ukrudt" : null,
-                                scanResult.isEdible ? "Spiselig" : null,
-                                scanResult.isPoisonous ? "⚠️ Giftig" : null,
-                                scanResult.isInvasive ? "⚠️ Invasiv" : null,
-                                scanResult.careAdvice ? `Plejeråd: ${String(scanResult.careAdvice)}` : null,
-                                scanResult.notes ? String(scanResult.notes) : null,
-                              ].filter(Boolean).join(". "),
-                              addedVia: "plant-photo",
-                            }],
-                          };
-                          addOrUpdateCustomPlant(newSpecies);
-                        }
-
-                        setPlantDataVersion((v) => v + 1);
-                        setScanSaved(true);
-                      }}
-                    >
-                      🌿 Gem i plantedatabasen
-                    </button>
+                              setPlantDataVersion((v) => v + 1);
+                              setScanSaved(true);
+                              setScanSaveExpanded(false);
+                            }}
+                          >
+                            ✅ Gem som {PLANT_CATEGORY_LABELS[scanSaveCategory]}
+                          </button>
+                          <button
+                            type="button"
+                            className="rounded-lg border border-border px-2 py-2 text-xs text-foreground/50 hover:bg-foreground/5"
+                            onClick={() => setScanSaveExpanded(false)}
+                          >
+                            ✕
+                          </button>
+                        </div>
+                      </div>
+                    ) : (
+                      <button
+                        type="button"
+                        className="mt-2 w-full rounded-lg bg-emerald-600 px-3 py-2.5 text-xs text-white font-semibold hover:bg-emerald-700 transition-colors shadow-sm"
+                        onClick={() => setScanSaveExpanded(true)}
+                      >
+                        🌿 Gem i plantedatabasen…
+                      </button>
+                    )
                   ) : (
                     <div className="mt-2 rounded-lg border border-green-300 bg-green-50 px-3 py-2 text-center">
-                      <p className="text-[11px] text-green-700 font-medium">✅ Gemt! Du finder den under 🌱 Planter.</p>
+                      <p className="text-[11px] text-green-700 font-medium">✅ Gemt som {PLANT_CATEGORY_LABELS[scanSaveCategory]}! Du finder den under 🌱 Planter.</p>
                       <button
                         type="button"
                         className="mt-1 text-[10px] text-accent underline"
@@ -6816,8 +6867,15 @@ export function GardenMapClient() {
                                                 addedVia: item.type === "seed-packet" ? "seed-packet" : "plant-photo",
                                               }],
                                             };
+                                            console.log("[ScanTransfer] Creating new species:", JSON.stringify(newSpecies, null, 2));
                                             addOrUpdateCustomPlant(newSpecies);
                                           }
+
+                                          // Verify it was saved
+                                          const verify = getAllPlants();
+                                          const found = verify.find((p) => p.id === speciesId);
+                                          console.log("[ScanTransfer] Verify after save:", found ? `✅ Found '${found.name}' in category '${found.category}'` : "❌ NOT FOUND");
+                                          console.log("[ScanTransfer] Total plants:", verify.length);
 
                                           setPlantDataVersion((v) => v + 1);
                                           markScanTransferred(item.id, transferCategory);
