@@ -124,6 +124,17 @@ export type PlantFamily =
   | "cannabaceae"
   | "caprifoliaceae"
   | "vitaceae"
+  | "fagaceae"
+  | "betulaceae"
+  | "salicaceae"
+  | "sapindaceae"
+  | "oleaceae"
+  | "ulmaceae"
+  | "pinaceae"
+  | "cupressaceae"
+  | "taxaceae"
+  | "tiliaceae"
+  | "juglandaceae"
   | "other";
 
 export const PLANT_FAMILY_LABELS: Record<PlantFamily, string> = {
@@ -152,6 +163,17 @@ export const PLANT_FAMILY_LABELS: Record<PlantFamily, string> = {
   cannabaceae: "Hampefamilien",
   caprifoliaceae: "Gedebladfamilien",
   vitaceae: "Vinfamilien",
+  fagaceae: "Bøgefamilien",
+  betulaceae: "Birkefamilien",
+  salicaceae: "Pilefamilien",
+  sapindaceae: "Ahornfamilien",
+  oleaceae: "Olivenfamilien",
+  ulmaceae: "Elmefamilien",
+  pinaceae: "Fyrrfamilien",
+  cupressaceae: "Cypressfamilien",
+  taxaceae: "Taksfamilien",
+  tiliaceae: "Lindefamilien",
+  juglandaceae: "Valndødfamilien",
   other: "Anden",
 };
 
