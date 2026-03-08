@@ -3612,7 +3612,7 @@ export function GardenMapClient() {
         </MapContainer>
 
         {/* ── Address Search Overlay ── */}
-        <div className="absolute top-3 left-3 z-[1000]" style={{ maxWidth: "320px" }}>
+        <div className="absolute top-3 right-3 z-[1000]" style={{ maxWidth: "320px" }}>
           {showAddressSearch ? (
             <div className="rounded-xl border border-border bg-white shadow-lg">
               <div className="flex items-center gap-1 px-3 py-2">
