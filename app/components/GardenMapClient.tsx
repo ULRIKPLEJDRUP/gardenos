@@ -41,6 +41,8 @@ import VarietyManager from "./VarietyManager";
 import PlantEditor from "./PlantEditor";
 import IconPicker from "./IconPicker";
 import YearWheel from "./YearWheel";
+import TaskList from "./TaskList";
+import { createTask, parseAiResponse } from "../lib/taskStore";
 import {
   ALL_INFRA_ELEMENTS,
   getInfraElementById,
@@ -1324,8 +1326,12 @@ export function GardenMapClient() {
   const [newKindText, setNewKindText] = useState("");
   const [newKindError, setNewKindError] = useState<string | null>(null);
   const [undoStack, setUndoStack] = useState<UndoSnapshot[]>([]);
-  const [sidebarTab, setSidebarTab] = useState<"create" | "content" | "groups" | "plants" | "view" | "scan" | "chat" | "calendar">("create");
+  const [sidebarTab, setSidebarTab] = useState<"create" | "content" | "groups" | "plants" | "view" | "scan" | "chat" | "calendar" | "tasks">("create");
   const [viewSubTab, setViewSubTab] = useState<"steder" | "baggrund" | "synlighed" | "ankre">("steder");
+
+  // ── Task list state ──
+  const [taskVersion, setTaskVersion] = useState(0);
+  const [taskSavedFlash, setTaskSavedFlash] = useState<string | false>(false);
 
   // ── Scan / frøpose-genkendelse state ──
   const [scanMode, setScanMode] = useState<"seed-packet" | "identify">("seed-packet");
@@ -1512,33 +1518,100 @@ export function GardenMapClient() {
       }
     } catch { /* ignore */ }
 
-    // 2. Plant instances in beds
+    // 2. Plant instances with FULL species data (harvest, sowing, etc.)
     try {
       const instancesRaw = localStorage.getItem("gardenos:plants:instances:v1");
       if (instancesRaw) {
-        const instances = JSON.parse(instancesRaw);
-        if (Array.isArray(instances) && instances.length > 0) {
-          const summary = instances.map((inst: { speciesId?: string; varietyId?: string; featureId?: string; quantity?: number; notes?: string }) => {
-            return `- Art: ${inst.speciesId || "?"}, sort: ${inst.varietyId || "standard"}, bed: ${inst.featureId || "?"}, antal: ${inst.quantity || 1}${inst.notes ? `, noter: ${inst.notes}` : ""}`;
-          });
-          parts.push(`Plantede instanser (${instances.length}):\n${summary.join("\n")}`);
+        const instances = JSON.parse(instancesRaw) as Array<{
+          speciesId?: string; varietyId?: string; varietyName?: string;
+          featureId?: string; count?: number; plantedAt?: string; notes?: string;
+        }>;
+        if (instances.length > 0) {
+          // Build a lookup: featureId → name
+          const featureNames = new Map<string, string>();
+          try {
+            const lr = localStorage.getItem("gardenos:layout:v1");
+            if (lr) {
+              const lj = JSON.parse(lr);
+              for (const f of lj?.features ?? []) {
+                const id = f.properties?.gardenosId;
+                const nm = f.properties?.name || f.properties?.kind || "Unavngivet";
+                if (id) featureNames.set(id, nm);
+              }
+            }
+          } catch { /* ignore */ }
+
+          // Group instances by species and enrich with full PlantSpecies data
+          const bySpecies = new Map<string, typeof instances>();
+          for (const inst of instances) {
+            const sid = inst.speciesId ?? "unknown";
+            const arr = bySpecies.get(sid) ?? [];
+            arr.push(inst);
+            bySpecies.set(sid, arr);
+          }
+
+          const plantLines: string[] = [];
+          for (const [speciesId, insts] of bySpecies) {
+            const sp = getPlantById(speciesId);
+            if (!sp) {
+              plantLines.push(`- ${speciesId}: ${insts.length} stk (ukendt art)`);
+              continue;
+            }
+            const totalCount = insts.reduce((s, i) => s + (i.count ?? 1), 0);
+            const locations = [...new Set(insts.map(i => featureNames.get(i.featureId ?? "") ?? "ukendt bed"))];
+            const varieties = [...new Set(insts.filter(i => i.varietyName).map(i => i.varietyName!))];
+
+            let line = `- ${sp.icon ?? ""} ${sp.name} (${sp.latinName ?? speciesId}): ${totalCount} stk`;
+            line += `, placering: ${locations.join(", ")}`;
+            if (varieties.length) line += `, sorter: ${varieties.join(", ")}`;
+            line += `, kategori: ${PLANT_CATEGORY_LABELS[sp.category] ?? sp.category}`;
+            if (sp.lifecycle) line += `, livscyklus: ${sp.lifecycle}`;
+            if (sp.sowIndoor) line += `, forspiring indendørs: ${formatMonthRange(sp.sowIndoor)}`;
+            if (sp.sowOutdoor) line += `, direkte s\u00e5ning: ${formatMonthRange(sp.sowOutdoor)}`;
+            if (sp.plantOut) line += `, udplantning: ${formatMonthRange(sp.plantOut)}`;
+            if (sp.harvest) line += `, h\u00f8st: ${formatMonthRange(sp.harvest)}`;
+            if (sp.light) line += `, lys: ${sp.light}`;
+            if (sp.water) line += `, vand: ${sp.water}`;
+            if (sp.frostHardy) line += `, frostfast: ja`;
+            if (sp.harvestTips) line += `, h\u00f8sttips: ${sp.harvestTips}`;
+            if (sp.pests?.length) line += `, skadedyr: ${sp.pests.join(", ")}`;
+            if (sp.diseases?.length) line += `, sygdomme: ${sp.diseases.join(", ")}`;
+            const planted = insts.find(i => i.plantedAt);
+            if (planted?.plantedAt) line += `, plantet dato: ${planted.plantedAt}`;
+
+            plantLines.push(line);
+          }
+
+          parts.push(
+            `BRUGERENS PLANTEDE PLANTER I HAVEN (${instances.length} instanser, ${bySpecies.size} arter):\n` +
+            `Dette er de faktiske planter brugeren har i sin have RIGHT NOW:\n${plantLines.join("\n")}`
+          );
         }
       }
     } catch { /* ignore */ }
 
-    // 3. Available plant species (just names for context)
+    // 3. Species NOT planted but available in database (brief, for suggestions only)
     try {
-      const plants = getAllPlants();
-      const byCategory: Record<string, string[]> = {};
-      plants.forEach((p) => {
-        const cat = PLANT_CATEGORY_LABELS[p.category] || p.category;
-        if (!byCategory[cat]) byCategory[cat] = [];
-        byCategory[cat].push(p.name);
-      });
-      const catSummary = Object.entries(byCategory).map(([cat, names]) =>
-        `- ${cat}: ${names.join(", ")}`
-      );
-      parts.push(`Plantebibliotek (${plants.length} arter):\n${catSummary.join("\n")}`);
+      const allPlants = getAllPlants();
+      const instancesRaw = localStorage.getItem("gardenos:plants:instances:v1");
+      const plantedIds = new Set<string>();
+      if (instancesRaw) {
+        const instances = JSON.parse(instancesRaw) as Array<{ speciesId?: string }>;
+        instances.forEach(i => { if (i.speciesId) plantedIds.add(i.speciesId); });
+      }
+      const unplanted = allPlants.filter(p => !plantedIds.has(p.id));
+      if (unplanted.length > 0) {
+        const byCategory: Record<string, string[]> = {};
+        unplanted.forEach((p) => {
+          const cat = PLANT_CATEGORY_LABELS[p.category] || p.category;
+          if (!byCategory[cat]) byCategory[cat] = [];
+          byCategory[cat].push(p.name);
+        });
+        const catSummary = Object.entries(byCategory).map(([cat, names]) =>
+          `- ${cat}: ${names.join(", ")}`
+        );
+        parts.push(`Plantebibliotek (IKKE plantet endnu, ${unplanted.length} arter tilg\u00e6ngelige til forslag):\n${catSummary.join("\n")}`);
+      }
     } catch { /* ignore */ }
 
     // 4. Weather data (current, forecast, stats)
@@ -4437,99 +4510,44 @@ export function GardenMapClient() {
       <aside className="row-start-2 flex flex-col border-t border-border bg-sidebar-bg md:border-l md:border-t-0 overflow-hidden">
 
 
-        <div className="px-4 pt-2 pb-1">
-          <div className="flex gap-1 rounded-lg bg-background p-1 border border-border-light shadow-sm overflow-x-auto scrollbar-hide">
-            <button
-              type="button"
-              className={`flex-1 rounded-md px-1 py-1.5 text-[11px] font-medium transition-all ${
-                sidebarTab === "create"
-                  ? "bg-accent text-white shadow-sm"
-                  : "text-foreground/60 hover:bg-foreground/5 hover:text-foreground/80"
-              }`}
-              onClick={() => { setSidebarTab("create"); setHighlightedGroupId(null); }}
-            >
-              ＋ Opret
-            </button>
-            <button
-              type="button"
-              className={`flex-1 rounded-md px-1 py-1.5 text-[11px] font-medium transition-all ${
-                sidebarTab === "content"
-                  ? "bg-accent text-white shadow-sm"
-                  : "text-foreground/60 hover:bg-foreground/5 hover:text-foreground/80"
-              } ${selected ? "" : "opacity-40"}`}
-              onClick={() => { setSidebarTab("content"); setHighlightedGroupId(null); }}
-              disabled={!selected}
-              title={selected ? "" : "Vælg noget på kortet for at se indhold"}
-            >
-              ◉ Indhold
-            </button>
-            <button
-              type="button"
-              className={`flex-1 rounded-md px-1 py-1.5 text-[11px] font-medium transition-all ${
-                sidebarTab === "groups"
-                  ? "bg-accent text-white shadow-sm"
-                  : "text-foreground/60 hover:bg-foreground/5 hover:text-foreground/80"
-              }`}
-              onClick={() => setSidebarTab("groups")}
-            >
-              ⊞ Grupper{allGroups.length > 0 ? ` ${allGroups.length}` : ""}
-            </button>
-            <button
-              type="button"
-              className={`flex-1 rounded-md px-1 py-1.5 text-[11px] font-medium transition-all ${
-                sidebarTab === "plants"
-                  ? "bg-accent text-white shadow-sm"
-                  : "text-foreground/60 hover:bg-foreground/5 hover:text-foreground/80"
-              }`}
-              onClick={() => { setSidebarTab("plants"); setHighlightedGroupId(null); }}
-            >
-              🌱 Planter
-            </button>
-            <button
-              type="button"
-              className={`flex-1 rounded-md px-1 py-1.5 text-[11px] font-medium transition-all ${
-                sidebarTab === "scan"
-                  ? "bg-accent text-white shadow-sm"
-                  : "text-foreground/60 hover:bg-foreground/5 hover:text-foreground/80"
-              }`}
-              onClick={() => { setSidebarTab("scan"); setHighlightedGroupId(null); }}
-            >
-              📷 Scan
-            </button>
-            <button
-              type="button"
-              className={`flex-1 rounded-md px-1 py-1.5 text-[11px] font-medium transition-all ${
-                sidebarTab === "view"
-                  ? "bg-accent text-white shadow-sm"
-                  : "text-foreground/60 hover:bg-foreground/5 hover:text-foreground/80"
-              }`}
-              onClick={() => { setSidebarTab("view"); setHighlightedGroupId(null); }}
-            >
-              👁 Visning
-            </button>
-            <button
-              type="button"
-              className={`flex-1 rounded-md px-1 py-1.5 text-[11px] font-medium transition-all ${
-                sidebarTab === "calendar"
-                  ? "bg-accent text-white shadow-sm"
-                  : "text-foreground/60 hover:bg-foreground/5 hover:text-foreground/80"
-              }`}
-              onClick={() => { setSidebarTab("calendar"); setHighlightedGroupId(null); }}
-            >
-              📅 Årshjul
-            </button>
-            <button
-              type="button"
-              className={`flex-1 rounded-md px-1 py-1.5 text-[11px] font-medium transition-all ${
-                sidebarTab === "chat"
-                  ? "bg-accent text-white shadow-sm"
-                  : "text-foreground/60 hover:bg-foreground/5 hover:text-foreground/80"
-              }`}
-              onClick={() => { setSidebarTab("chat"); setHighlightedGroupId(null); }}
-            >
-              💬 Rådgiver
-            </button>
-          </div>
+        <div className="px-3 pt-2 pb-0.5">
+          <nav className="flex items-stretch gap-px overflow-x-auto scrollbar-hide">
+            {[
+              { id: "create" as const, icon: "＋", label: "Opret" },
+              { id: "content" as const, icon: "◉", label: "Indhold", disabled: !selected },
+              { id: "groups" as const, icon: "⊞", label: `Grupper${allGroups.length > 0 ? " " + allGroups.length : ""}` },
+              { id: "plants" as const, icon: "🌱", label: "Planter" },
+              { id: "scan" as const, icon: "📷", label: "Scan" },
+              { id: "view" as const, icon: "👁", label: "Visning" },
+              { id: "tasks" as const, icon: "📋", label: "Opgaver" },
+              { id: "calendar" as const, icon: "📅", label: "Årshjul" },
+              { id: "chat" as const, icon: "💬", label: "Rådgiver" },
+            ].map((tab) => {
+              const isActive = sidebarTab === tab.id;
+              const isDisabled = "disabled" in tab && tab.disabled;
+              return (
+                <button
+                  key={tab.id}
+                  type="button"
+                  disabled={!!isDisabled}
+                  className={`flex flex-col items-center justify-center rounded-xl px-2 py-1.5 min-w-[46px] transition-all ${
+                    isActive
+                      ? "bg-accent text-white shadow-md -translate-y-px"
+                      : isDisabled
+                      ? "text-foreground/20 cursor-not-allowed"
+                      : "text-foreground/50 hover:bg-foreground/[0.06] hover:text-foreground/70"
+                  }`}
+                  onClick={() => { setSidebarTab(tab.id); if (tab.id !== "groups") setHighlightedGroupId(null); }}
+                  title={isDisabled ? "Vælg noget på kortet først" : tab.label}
+                >
+                  <span className={`text-[15px] leading-none ${isActive ? "" : ""}`}>{tab.icon}</span>
+                  <span className={`text-[8px] font-semibold mt-0.5 leading-tight tracking-tight whitespace-nowrap ${
+                    isActive ? "" : "text-foreground/40"
+                  }`}>{tab.label}</span>
+                </button>
+              );
+            })}
+          </nav>
         </div>
 
         <div className="flex-1 overflow-y-auto sidebar-scroll px-4 pb-4">
@@ -7417,6 +7435,16 @@ export function GardenMapClient() {
           <YearWheel plantDataVersion={plantDataVersion} plantInstancesVersion={plantInstancesVersion} flashFeatureIds={flashFeatureIds} />
         ) : null}
 
+        {/* ── Task List / Opgaveliste Tab ── */}
+        {sidebarTab === "tasks" ? (
+          <TaskList
+            taskVersion={taskVersion}
+            goToYearWheel={(_month) => {
+              setSidebarTab("calendar");
+            }}
+          />
+        ) : null}
+
         {/* ── AI Chat / Rådgiver Tab ── */}
         {sidebarTab === "chat" ? (
           <div className="mt-3 flex flex-col" style={{ height: "calc(100vh - 220px)" }}>
@@ -7587,25 +7615,54 @@ export function GardenMapClient() {
                     key={`${msg.ts}-${i}`}
                     className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}
                   >
-                    <div
-                      className={`max-w-[85%] rounded-xl px-3 py-2 text-[12px] leading-relaxed ${
-                        msg.role === "user"
-                          ? "bg-accent text-white rounded-br-sm"
-                          : "bg-foreground/5 text-foreground rounded-bl-sm"
-                      }`}
-                    >
-                      {msg.role === "assistant" ? (
-                        <div className="whitespace-pre-wrap break-words">
-                          {msg.content || (
-                            <span className="inline-flex items-center gap-1 text-foreground/40">
-                              <span className="animate-pulse">●</span>
-                              <span className="animate-pulse" style={{ animationDelay: "0.2s" }}>●</span>
-                              <span className="animate-pulse" style={{ animationDelay: "0.4s" }}>●</span>
-                            </span>
-                          )}
-                        </div>
-                      ) : (
-                        <div className="whitespace-pre-wrap break-words">{msg.content}</div>
+                    <div className="max-w-[85%]">
+                      <div
+                        className={`rounded-xl px-3 py-2 text-[12px] leading-relaxed ${
+                          msg.role === "user"
+                            ? "bg-accent text-white rounded-br-sm"
+                            : "bg-foreground/5 text-foreground rounded-bl-sm"
+                        }`}
+                      >
+                        {msg.role === "assistant" ? (
+                          <div className="whitespace-pre-wrap break-words">
+                            {msg.content || (
+                              <span className="inline-flex items-center gap-1 text-foreground/40">
+                                <span className="animate-pulse">●</span>
+                                <span className="animate-pulse" style={{ animationDelay: "0.2s" }}>●</span>
+                                <span className="animate-pulse" style={{ animationDelay: "0.4s" }}>●</span>
+                              </span>
+                            )}
+                          </div>
+                        ) : (
+                          <div className="whitespace-pre-wrap break-words">{msg.content}</div>
+                        )}
+                      </div>
+                      {/* Save assistant message as task */}
+                      {msg.role === "assistant" && msg.content && !chatLoading && (
+                        <button
+                          type="button"
+                          className="mt-0.5 text-[9px] text-foreground/30 hover:text-violet-500 transition-colors flex items-center gap-0.5"
+                          onClick={() => {
+                            // Parse AI response → clean title (first line), stripped description, auto-extracted month
+                            const parsed = parseAiResponse(msg.content);
+                            createTask({
+                              title: parsed.title,
+                              description: parsed.description,
+                              month: parsed.month,
+                              source: "ai-advisor",
+                            });
+                            setTaskVersion((v) => v + 1);
+                            const mNames = ["","jan","feb","mar","apr","maj","jun","jul","aug","sep","okt","nov","dec"];
+                            const flashMsg = parsed.month
+                              ? `✅ Gemt! «${parsed.title.slice(0, 40)}» → 📅 ${mNames[parsed.month]}`
+                              : `✅ Gemt! «${parsed.title.slice(0, 50)}»`;
+                            setTaskSavedFlash(flashMsg);
+                            setTimeout(() => setTaskSavedFlash(false), 3000);
+                          }}
+                          title="Gem dette som en opgave"
+                        >
+                          📋 Gem som opgave
+                        </button>
                       )}
                     </div>
                   </div>
@@ -7653,13 +7710,22 @@ export function GardenMapClient() {
 
             {/* Clear history button */}
             {chatMessages.length > 0 && (
-              <button
-                type="button"
-                className="mt-2 text-[10px] text-foreground/40 hover:text-red-500 transition-colors text-center"
-                onClick={clearChatHistory}
-              >
-                🗑 Ryd samtalehistorik
-              </button>
+              <div className="mt-2 flex items-center justify-center gap-3">
+                <button
+                  type="button"
+                  className="text-[10px] text-foreground/40 hover:text-red-500 transition-colors"
+                  onClick={clearChatHistory}
+                >
+                  🗑 Ryd samtalehistorik
+                </button>
+              </div>
+            )}
+
+            {/* Task saved flash */}
+            {taskSavedFlash && (
+              <div className="mt-1 rounded-lg bg-violet-100 border border-violet-200 px-3 py-1.5 text-[11px] text-violet-700 font-medium text-center animate-pulse">
+                {taskSavedFlash} — Se 📋 Opgaver
+              </div>
             )}
           </div>
         ) : null}
