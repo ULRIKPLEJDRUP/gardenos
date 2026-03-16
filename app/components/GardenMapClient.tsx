@@ -22,7 +22,10 @@ import {
   formatMonthRange,
   addOrUpdateCustomPlant,
   addVarietyToSpecies,
+  getPlantRecommendations,
+  RECOMMENDATION_STRATEGY_LABELS,
   type CompanionCheck,
+  type RecommendationStrategy,
 } from "../lib/plantStore";
 import type { PlantSpecies, PlantInstance, PlantCategory, PlantVariety, PlacementType, ForestGardenLayer } from "../lib/plantTypes";
 import {
@@ -2687,6 +2690,12 @@ export function GardenMapClient() {
   const [autoElementSearch, setAutoElementSearch] = useState("");
   const [autoElementCount, setAutoElementCount] = useState(0); // 0 = auto-max
   const [autoElementEdgeMarginCm, setAutoElementEdgeMarginCm] = useState(15);
+
+  // ── Plant recommendation state (shared by auto-row + auto-element) ──
+  const [recRowOpen, setRecRowOpen] = useState(false);
+  const [recRowStrategies, setRecRowStrategies] = useState<RecommendationStrategy[]>([]);
+  const [recElemOpen, setRecElemOpen] = useState(false);
+  const [recElemStrategies, setRecElemStrategies] = useState<RecommendationStrategy[]>([]);
 
   // ── Bed-resize row adjustment state ──
   const [bedResizeProposal, setBedResizeProposal] = useState<BedResizeProposal | null>(null);
@@ -7154,6 +7163,106 @@ export function GardenMapClient() {
                         </div>
                       </div>
 
+                      {/* ── 💡 Anbefalinger (auto-row) ── */}
+                      {(() => {
+                        // Collect existing species in this bed (rows + point features)
+                        const bedSpeciesIds = [
+                          ...bedRowFeatures.map((f) => f.properties?.speciesId).filter((id): id is string => !!id),
+                          ...bedPointFeatures.map((f) => f.properties?.speciesId).filter((id): id is string => !!id),
+                        ];
+                        const uniqueBedSpeciesIds = [...new Set(bedSpeciesIds)];
+                        const recommendations = recRowOpen
+                          ? getPlantRecommendations(uniqueBedSpeciesIds, recRowStrategies, "row")
+                          : [];
+
+                        return (
+                          <div className="rounded-md border border-amber-300/40 bg-amber-50/30 p-2 space-y-1.5">
+                            <button
+                              type="button"
+                              className="flex w-full items-center gap-1 text-left"
+                              onClick={() => setRecRowOpen(!recRowOpen)}
+                            >
+                              <span className="text-[10px] font-semibold text-amber-700/70 uppercase tracking-wide">💡 Anbefalinger</span>
+                              <span className="ml-auto text-[9px] text-foreground/30">{recRowOpen ? "▲" : "▼"}</span>
+                            </button>
+                            {recRowOpen ? (
+                              <div className="space-y-1.5">
+                                {uniqueBedSpeciesIds.length === 0 ? (
+                                  <p className="text-[9px] text-foreground/40">Tomt bed — anbefalinger baseres på generel diversitet.</p>
+                                ) : (
+                                  <p className="text-[9px] text-foreground/40">
+                                    Baseret på {uniqueBedSpeciesIds.length} eksisterende art{uniqueBedSpeciesIds.length !== 1 ? "er" : ""} i bedet.
+                                  </p>
+                                )}
+                                {/* Strategy chips */}
+                                <div className="flex flex-wrap gap-1">
+                                  {(Object.entries(RECOMMENDATION_STRATEGY_LABELS) as [RecommendationStrategy, string][]).map(([key, label]) => {
+                                    const active = recRowStrategies.includes(key);
+                                    return (
+                                      <button
+                                        key={key}
+                                        type="button"
+                                        className={`rounded-full px-2 py-0.5 text-[9px] font-medium border transition-colors ${
+                                          active
+                                            ? "bg-amber-100 border-amber-400 text-amber-800"
+                                            : "bg-white/60 border-border text-foreground/50 hover:border-amber-300"
+                                        }`}
+                                        onClick={() => {
+                                          setRecRowStrategies((prev) =>
+                                            active ? prev.filter((s) => s !== key) : [...prev, key]
+                                          );
+                                        }}
+                                      >
+                                        {label}
+                                      </button>
+                                    );
+                                  })}
+                                </div>
+                                {/* Recommendation results */}
+                                {recommendations.length > 0 ? (
+                                  <div className="max-h-48 overflow-y-auto space-y-0.5">
+                                    {recommendations.map((rec) => (
+                                      <button
+                                        key={rec.species.id}
+                                        type="button"
+                                        className="flex w-full items-start gap-1.5 rounded-md px-2 py-1 text-left text-xs hover:bg-amber-100/40 transition-colors"
+                                        onClick={() => {
+                                          setAutoRowSpeciesId(rec.species.id);
+                                          setAutoRowVarietyId(null);
+                                          setAutoRowSearch("");
+                                          setAutoRowCount(0);
+                                          setAutoRowEdgeMarginCm(Math.round((rec.species.rowSpacingCm ?? 30) / 2));
+                                          setAutoRowOverflow(false);
+                                          setRecRowOpen(false);
+                                        }}
+                                        title={rec.reasons.map((r) => `${r.emoji} ${r.text}`).join("\n")}
+                                      >
+                                        <span className="text-sm leading-none mt-0.5">{rec.species.icon ?? "🌱"}</span>
+                                        <div className="flex-1 min-w-0">
+                                          <p className="text-xs font-medium truncate">{rec.species.name}</p>
+                                          <div className="flex flex-wrap gap-0.5 mt-0.5">
+                                            {rec.reasons.filter((r) => r.score > 0).slice(0, 3).map((r, i) => (
+                                              <span key={i} className="inline-block rounded-full bg-amber-100/60 px-1.5 py-px text-[8px] text-amber-700">
+                                                {r.emoji} {r.text}
+                                              </span>
+                                            ))}
+                                          </div>
+                                        </div>
+                                        <span className="shrink-0 rounded-full bg-green-100 px-1.5 py-px text-[9px] font-bold text-green-700">
+                                          +{rec.totalScore}
+                                        </span>
+                                      </button>
+                                    ))}
+                                  </div>
+                                ) : (
+                                  <p className="text-[9px] text-foreground/30 italic">Vælg en eller flere strategier for at se anbefalinger.</p>
+                                )}
+                              </div>
+                            ) : null}
+                          </div>
+                        );
+                      })()}
+
                       {/* Species picker */}
                       {!selectedSpecies ? (
                         <div className="space-y-1.5">
@@ -7520,6 +7629,104 @@ export function GardenMapClient() {
                         {bedRowFeatures.length > 0 ? ` og respekterer ${bedRowFeatures.length} eksisterende rækker` : ""}.
                         {nearbyPointFeatures.length > 0 ? ` ${nearbyPointFeatures.length} eksist. element(er) i nærheden respekteres (også fra nabobede).` : ""}
                       </p>
+
+                      {/* ── 💡 Anbefalinger (auto-element) ── */}
+                      {(() => {
+                        const bedSpeciesIds = [
+                          ...nearbyPointFeatures.map((f) => f.properties?.speciesId).filter((id): id is string => !!id),
+                          ...bedRowFeatures.map((f) => f.properties?.speciesId).filter((id): id is string => !!id),
+                        ];
+                        const uniqueBedSpeciesIds = [...new Set(bedSpeciesIds)];
+                        const recommendations = recElemOpen
+                          ? getPlantRecommendations(uniqueBedSpeciesIds, recElemStrategies, "element")
+                          : [];
+
+                        return (
+                          <div className="rounded-md border border-green-300/40 bg-green-50/30 p-2 space-y-1.5">
+                            <button
+                              type="button"
+                              className="flex w-full items-center gap-1 text-left"
+                              onClick={() => setRecElemOpen(!recElemOpen)}
+                            >
+                              <span className="text-[10px] font-semibold text-green-700/70 uppercase tracking-wide">💡 Anbefalinger</span>
+                              <span className="ml-auto text-[9px] text-foreground/30">{recElemOpen ? "▲" : "▼"}</span>
+                            </button>
+                            {recElemOpen ? (
+                              <div className="space-y-1.5">
+                                {uniqueBedSpeciesIds.length === 0 ? (
+                                  <p className="text-[9px] text-foreground/40">Tomt bed — anbefalinger baseres på generel diversitet.</p>
+                                ) : (
+                                  <p className="text-[9px] text-foreground/40">
+                                    Baseret på {uniqueBedSpeciesIds.length} eksisterende art{uniqueBedSpeciesIds.length !== 1 ? "er" : ""} i/nær bedet.
+                                  </p>
+                                )}
+                                {/* Strategy chips */}
+                                <div className="flex flex-wrap gap-1">
+                                  {(Object.entries(RECOMMENDATION_STRATEGY_LABELS) as [RecommendationStrategy, string][]).map(([key, label]) => {
+                                    const active = recElemStrategies.includes(key);
+                                    return (
+                                      <button
+                                        key={key}
+                                        type="button"
+                                        className={`rounded-full px-2 py-0.5 text-[9px] font-medium border transition-colors ${
+                                          active
+                                            ? "bg-green-100 border-green-400 text-green-800"
+                                            : "bg-white/60 border-border text-foreground/50 hover:border-green-300"
+                                        }`}
+                                        onClick={() => {
+                                          setRecElemStrategies((prev) =>
+                                            active ? prev.filter((s) => s !== key) : [...prev, key]
+                                          );
+                                        }}
+                                      >
+                                        {label}
+                                      </button>
+                                    );
+                                  })}
+                                </div>
+                                {/* Recommendation results */}
+                                {recommendations.length > 0 ? (
+                                  <div className="max-h-48 overflow-y-auto space-y-0.5">
+                                    {recommendations.map((rec) => (
+                                      <button
+                                        key={rec.species.id}
+                                        type="button"
+                                        className="flex w-full items-start gap-1.5 rounded-md px-2 py-1 text-left text-xs hover:bg-green-100/40 transition-colors"
+                                        onClick={() => {
+                                          setAutoElementSpeciesId(rec.species.id);
+                                          setAutoElementSearch("");
+                                          setAutoElementVarietyId(null);
+                                          const halfSpreadCm = Math.ceil((rec.species.spreadDiameterCm ?? rec.species.spacingCm ?? 30) / 2);
+                                          if (halfSpreadCm > autoElementEdgeMarginCm) setAutoElementEdgeMarginCm(halfSpreadCm);
+                                          setRecElemOpen(false);
+                                        }}
+                                        title={rec.reasons.map((r) => `${r.emoji} ${r.text}`).join("\n")}
+                                      >
+                                        <span className="text-sm leading-none mt-0.5">{rec.species.icon ?? "🌱"}</span>
+                                        <div className="flex-1 min-w-0">
+                                          <p className="text-xs font-medium truncate">{rec.species.name}</p>
+                                          <div className="flex flex-wrap gap-0.5 mt-0.5">
+                                            {rec.reasons.filter((r) => r.score > 0).slice(0, 3).map((r, i) => (
+                                              <span key={i} className="inline-block rounded-full bg-green-100/60 px-1.5 py-px text-[8px] text-green-700">
+                                                {r.emoji} {r.text}
+                                              </span>
+                                            ))}
+                                          </div>
+                                        </div>
+                                        <span className="shrink-0 rounded-full bg-green-100 px-1.5 py-px text-[9px] font-bold text-green-700">
+                                          +{rec.totalScore}
+                                        </span>
+                                      </button>
+                                    ))}
+                                  </div>
+                                ) : (
+                                  <p className="text-[9px] text-foreground/30 italic">Vælg en eller flere strategier for at se anbefalinger.</p>
+                                )}
+                              </div>
+                            ) : null}
+                          </div>
+                        );
+                      })()}
 
                       {/* Species picker */}
                       {!selectedSpecies ? (
