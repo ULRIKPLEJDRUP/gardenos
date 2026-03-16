@@ -913,11 +913,11 @@ function getExistingRowOffsetsInBed(
     (lat - midLat) * M_PER_DEG_LAT,
   ]);
 
-  // Find principal axes — same logic as computeAutoRows (max-span projection)
-  let bestLongSpan = 0;
-  let bestLongUx = 1, bestLongUy = 0;
-  let bestShortSpan = Infinity;
-  let bestShortUx = 0, bestShortUy = 1;
+  // Find principal axes — same logic as computeAutoRows (min-perpendicular-span)
+  let minPerpSpan = Infinity;
+  let minPerpUx = 1, minPerpUy = 0;
+  let maxPerpSpan = 0;
+  let maxPerpUx = 0, maxPerpUy = 1;
 
   const testedDirs = new Set<string>();
   for (let i = 0; i < mRing.length; i++) {
@@ -930,25 +930,20 @@ function getExistingRowOffsetsInBed(
     const dirKey = `${(ux >= 0 ? ux : -ux).toFixed(6)},${(ux >= 0 ? uy : -uy).toFixed(6)}`;
     if (testedDirs.has(dirKey)) continue;
     testedDirs.add(dirKey);
-    let minProj = Infinity, maxProj = -Infinity;
     let minPerp = Infinity, maxPerp = -Infinity;
     for (const pt of mRing) {
-      const proj = pt[0] * ux + pt[1] * uy;
       const perp = -pt[0] * uy + pt[1] * ux;
-      if (proj < minProj) minProj = proj;
-      if (proj > maxProj) maxProj = proj;
       if (perp < minPerp) minPerp = perp;
       if (perp > maxPerp) maxPerp = perp;
     }
-    const span = maxProj - minProj;
     const perpSpan = maxPerp - minPerp;
-    if (span > bestLongSpan) { bestLongSpan = span; bestLongUx = ux; bestLongUy = uy; }
-    if (perpSpan < bestShortSpan) { bestShortSpan = perpSpan; bestShortUx = ux; bestShortUy = uy; }
+    if (perpSpan < minPerpSpan) { minPerpSpan = perpSpan; minPerpUx = ux; minPerpUy = uy; }
+    if (perpSpan > maxPerpSpan) { maxPerpSpan = perpSpan; maxPerpUx = ux; maxPerpUy = uy; }
   }
-  if (bestLongSpan < 1e-6) return [];
+  if (minPerpSpan === Infinity) return [];
 
-  const chosenUx = direction === "width" ? bestShortUx : bestLongUx;
-  const chosenUy = direction === "width" ? bestShortUy : bestLongUy;
+  const chosenUx = direction === "width" ? maxPerpUx : minPerpUx;
+  const chosenUy = direction === "width" ? maxPerpUy : minPerpUy;
   const longDir: [number, number] = [chosenUx, chosenUy];
   const shortDir: [number, number] = [-longDir[1], longDir[0]];
 
@@ -1628,14 +1623,16 @@ function computeAutoRows(
       label: o.label,
     }));
 
-  // ── 2. Find principal axes — rows run along the longest or shortest span ──
+  // ── 2. Find principal axes — minimum-width bounding rectangle approach ──
   // For each unique edge direction, project ALL vertices onto that direction
-  // and its perpendicular. The direction with the biggest span is "length".
-  // This correctly handles polygons with extra intermediate vertices from Leaflet editing.
-  let bestLongSpan = 0;
-  let bestLongUx = 1, bestLongUy = 0;  // default: horizontal
-  let bestShortSpan = Infinity;
-  let bestShortUx = 0, bestShortUy = 1; // default: vertical
+  // and measure the PERPENDICULAR span. The direction with the SMALLEST
+  // perpendicular span is the long axis (rows run this way); the direction
+  // with the LARGEST perpendicular span is the short axis.
+  // This avoids the diagonal-is-longest trap that max-parallel-span causes.
+  let minPerpSpan = Infinity;
+  let minPerpUx = 1, minPerpUy = 0;   // "length" direction (long axis)
+  let maxPerpSpan = 0;
+  let maxPerpUx = 0, maxPerpUy = 1;   // "width" direction (short axis)
 
   const testedDirs = new Set<string>();
   for (let i = 0; i < mRing.length; i++) {
@@ -1650,34 +1647,30 @@ function computeAutoRows(
     if (testedDirs.has(dirKey)) continue;
     testedDirs.add(dirKey);
 
-    // Project all vertices onto this direction
-    let minProj = Infinity, maxProj = -Infinity;
+    // Project all vertices onto the perpendicular direction
     let minPerp = Infinity, maxPerp = -Infinity;
     for (const pt of mRing) {
-      const proj = pt[0] * ux + pt[1] * uy;
       const perp = -pt[0] * uy + pt[1] * ux;
-      if (proj < minProj) minProj = proj;
-      if (proj > maxProj) maxProj = proj;
       if (perp < minPerp) minPerp = perp;
       if (perp > maxPerp) maxPerp = perp;
     }
-    const span = maxProj - minProj;
     const perpSpan = maxPerp - minPerp;
 
-    if (span > bestLongSpan) {
-      bestLongSpan = span;
-      bestLongUx = ux; bestLongUy = uy;
+    if (perpSpan < minPerpSpan) {
+      minPerpSpan = perpSpan;
+      minPerpUx = ux; minPerpUy = uy;
     }
-    if (perpSpan < bestShortSpan) {
-      bestShortSpan = perpSpan;
-      bestShortUx = ux; bestShortUy = uy;
+    if (perpSpan > maxPerpSpan) {
+      maxPerpSpan = perpSpan;
+      maxPerpUx = ux; maxPerpUy = uy;
     }
   }
-  if (bestLongSpan < 1e-6) return null;
+  if (minPerpSpan === Infinity) return null;
 
-  // Pick direction: "length" uses the max-span axis, "width" uses the min-perpendicular axis
-  const chosenUx = direction === "width" ? bestShortUx : bestLongUx;
-  const chosenUy = direction === "width" ? bestShortUy : bestLongUy;
+  // "length" → rows along long axis (min perpendicular span)
+  // "width"  → rows along short axis (max perpendicular span)
+  const chosenUx = direction === "width" ? maxPerpUx : minPerpUx;
+  const chosenUy = direction === "width" ? maxPerpUy : minPerpUy;
 
   // Unit vectors in metric space
   const longDir: [number, number] = [chosenUx, chosenUy]; // parallel to rows
