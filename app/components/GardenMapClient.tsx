@@ -965,26 +965,86 @@ function getExistingRowOffsetsInBed(
  */
 type Obstacle2D = {
   center: [number, number];   // [lng, lat]
-  radiusM: number;            // exclusion radius in meters
+  radiusM: number;            // full canopy/spread exclusion radius in meters
+  trunkRadiusM: number;       // trunk-only exclusion radius (used when layers coexist)
   label: string;              // display name for warnings
   layer?: ForestGardenLayer;  // forest garden layer (for coexistence check)
 };
 
 /**
+ * Compute a smart edge margin (cm) for auto-element placement.
+ *
+ * Trees / canopy layers: the canopy extends HIGH above ground and can overhang
+ * the bed boundary — only the trunk/root zone needs to be inside the bed.
+ * Shrubs: lower canopy, partially extends over boundaries — moderate margin.
+ * Other (herbs, ground-cover): full half-spread so the plant stays inside the bed.
+ */
+function computeSmartEdgeMarginCm(sp: { spreadDiameterCm?: number; spacingCm?: number; forestGardenLayer?: ForestGardenLayer; category?: string }): number {
+  const spreadCm = sp.spreadDiameterCm ?? sp.spacingCm ?? 30;
+  const layer = sp.forestGardenLayer;
+  const cat = sp.category;
+
+  // Trees: canopy is 3-20 m up — only trunk needs to be in bed
+  if (layer === "canopy" || layer === "sub-canopy" || cat === "tree") {
+    // Trunk zone ≈ 5 % of canopy spread, minimum 30 cm
+    return Math.max(30, Math.ceil(spreadCm * 0.05));
+  }
+
+  // Shrubs: lower canopy can extend a bit beyond bed boundaries
+  if (layer === "shrub" || cat === "shrub") {
+    // Stem zone ≈ 20 % of spread, minimum 15 cm
+    return Math.max(15, Math.ceil(spreadCm * 0.20));
+  }
+
+  // Herbaceous, ground-cover, climbers etc.: half-spread keeps plant inside bed
+  return Math.max(10, Math.ceil(spreadCm / 2));
+}
+
+/**
+ * Estimate trunk-only exclusion radius in meters for a species.
+ * Used when two plants occupy compatible forest-garden layers: you can plant
+ * ground-cover UNDER a tree canopy, but not literally on top of the trunk.
+ */
+function getTrunkExclusionRadiusM(sp: { spreadDiameterCm?: number; spacingCm?: number; forestGardenLayer?: ForestGardenLayer; category?: string }): number {
+  const spreadCm = sp.spreadDiameterCm ?? sp.spacingCm ?? 30;
+  const layer = sp.forestGardenLayer;
+  const cat = sp.category;
+
+  if (layer === "canopy" || cat === "tree") {
+    // Large tree trunk ≈ 5 % of canopy diameter, minimum 25 cm radius
+    return Math.max(0.25, (spreadCm * 0.05) / 100);
+  }
+  if (layer === "sub-canopy") {
+    return Math.max(0.20, (spreadCm * 0.06) / 100);
+  }
+  if (layer === "shrub" || cat === "bush") {
+    // Shrub stem zone ≈ 15 % of spread diameter, minimum 10 cm
+    return Math.max(0.10, (spreadCm * 0.15) / 100);
+  }
+  // Default: use full radius (no meaningful trunk/canopy distinction)
+  return Math.max(0.15, spreadCm / 200);
+}
+
+/**
  * Compute the exclusion radius in meters for a feature inside a bed.
+ * Returns both the full canopy/spread radius and a trunk-only radius.
  * Uses spreadDiameterCm → spacingCm → rowSpacingCm → category-based default.
  */
 function getFeatureExclusionRadiusM(
   speciesId: string | undefined,
   elementTypeId: string | undefined,
-): { radiusM: number; label: string } {
+): { radiusM: number; trunkRadiusM: number; label: string } {
   if (speciesId) {
     const sp = getPlantById(speciesId);
     if (sp) {
       const diamCm = sp.spreadDiameterCm ?? sp.spacingCm ?? sp.rowSpacingCm;
       const radiusCm = diamCm ? diamCm / 2 : 30;
       const label = `${sp.icon ?? "🌱"} ${sp.name} (${Math.round(radiusCm * 2)} cm Ø)`;
-      return { radiusM: Math.max(radiusCm / 100, 0.15), label };
+      return {
+        radiusM: Math.max(radiusCm / 100, 0.15),
+        trunkRadiusM: getTrunkExclusionRadiusM(sp),
+        label,
+      };
     }
   }
   if (elementTypeId) {
@@ -992,10 +1052,10 @@ function getFeatureExclusionRadiusM(
     if (el) {
       const radiusCm = el.exclusionRadiusCm ?? 15;
       const label = `${el.icon} ${el.name} (${radiusCm} cm radius)`;
-      return { radiusM: Math.max(radiusCm / 100, 0.10), label };
+      return { radiusM: Math.max(radiusCm / 100, 0.10), trunkRadiusM: Math.max(radiusCm / 100, 0.10), label };
     }
   }
-  return { radiusM: 0.15, label: "Ukendt element (15 cm)" };
+  return { radiusM: 0.15, trunkRadiusM: 0.15, label: "Ukendt element (15 cm)" };
 }
 
 /**
@@ -1152,6 +1212,7 @@ function computeAutoElements(
       (o.center[1] - midLat) * M_PER_DEG_LAT,
     ] as [number, number],
     radiusM: o.radiusM,
+    trunkRadiusM: o.trunkRadiusM,
     label: o.label,
     layer: o.layer,
   }));
@@ -1207,12 +1268,23 @@ function computeAutoElements(
     // c) Check distance to circle obstacles
     let blocked = false;
     for (const obs of mCircles) {
-      // Forest garden layer coexistence: skip obstacle if layers can share space
-      if (newElementLayer && obs.layer && canLayersCoexist(newElementLayer, obs.layer)) continue;
       const dx = pt[0] - obs.center[0];
       const dy = pt[1] - obs.center[1];
       const dist = Math.sqrt(dx * dx + dy * dy);
-      // New element's half-spacing + obstacle's exclusion radius
+
+      // Forest garden layer coexistence: compatible layers can share horizontal
+      // space, but still exclude the trunk/stem zone of the obstacle.
+      if (newElementLayer && obs.layer && canLayersCoexist(newElementLayer, obs.layer)) {
+        // Only block if literally overlapping the trunk/stem
+        if (dist < obs.trunkRadiusM + 0.05) {
+          blocked = true;
+          hitObstacles.add(obs.label);
+          break;
+        }
+        continue; // canopy zone is fine — layers coexist vertically
+      }
+
+      // Incompatible layers: full canopy/spread exclusion
       if (dist < halfSpacingM + obs.radiusM) {
         blocked = true;
         hitObstacles.add(obs.label);
@@ -4655,7 +4727,7 @@ export function GardenMapClient() {
       if (!pointInRing(pt, ring)) return;
       const excl = getFeatureExclusionRadiusM(lf.properties?.speciesId, lf.properties?.elementTypeId);
       if (excl) {
-        obstacles2D.push({ center: pt, radiusM: excl.radiusM, label: excl.label });
+        obstacles2D.push({ center: pt, radiusM: excl.radiusM, trunkRadiusM: excl.trunkRadiusM, label: excl.label });
       }
     });
 
@@ -4861,7 +4933,7 @@ export function GardenMapClient() {
       if (excl) {
         // Include the obstacle's forest garden layer for coexistence check
         const obstacleSpecies = lf.properties?.speciesId ? getPlantById(lf.properties.speciesId) : null;
-        circleObstacles.push({ center: pt, radiusM: excl.radiusM, label: excl.label, layer: obstacleSpecies?.forestGardenLayer });
+        circleObstacles.push({ center: pt, radiusM: excl.radiusM, trunkRadiusM: excl.trunkRadiusM, label: excl.label, layer: obstacleSpecies?.forestGardenLayer });
       }
     });
 
@@ -7079,7 +7151,7 @@ export function GardenMapClient() {
                       const pt = (pf.geometry as Point).coordinates as [number, number];
                       const excl = getFeatureExclusionRadiusM(pf.properties?.speciesId, pf.properties?.elementTypeId);
                       if (excl) {
-                        obstacles2D.push({ center: pt, radiusM: excl.radiusM, label: excl.label });
+                        obstacles2D.push({ center: pt, radiusM: excl.radiusM, trunkRadiusM: excl.trunkRadiusM, label: excl.label });
                       }
                     }
                     // Also check for any point features with elementTypeId (not just speciesId)
@@ -7093,7 +7165,7 @@ export function GardenMapClient() {
                         if (!pointInRing(pt, bedRingForCount)) continue;
                         const excl = getFeatureExclusionRadiusM(undefined, f.properties.elementTypeId);
                         if (excl) {
-                          obstacles2D.push({ center: pt, radiusM: excl.radiusM, label: excl.label });
+                          obstacles2D.push({ center: pt, radiusM: excl.radiusM, trunkRadiusM: excl.trunkRadiusM, label: excl.label });
                         }
                       }
                     }
@@ -7604,7 +7676,7 @@ export function GardenMapClient() {
                       const pt = (pf.geometry as Point).coordinates as [number, number];
                       const excl = getFeatureExclusionRadiusM(pf.properties?.speciesId, pf.properties?.elementTypeId);
                       const obsSpecies = pf.properties?.speciesId ? getPlantById(pf.properties.speciesId) : null;
-                      return { center: pt, radiusM: excl.radiusM, label: excl.label, layer: obsSpecies?.forestGardenLayer };
+                      return { center: pt, radiusM: excl.radiusM, trunkRadiusM: excl.trunkRadiusM, label: excl.label, layer: obsSpecies?.forestGardenLayer };
                     });
 
                     const rowObs: RowObstacle2D[] = bedRowFeatures.map((rf) => {
@@ -7628,6 +7700,7 @@ export function GardenMapClient() {
                         Vælg en plante og placér automatisk i bedet. Planter holdes mindst {interElementSpacingCm} cm fra hinanden
                         {bedRowFeatures.length > 0 ? ` og respekterer ${bedRowFeatures.length} eksisterende rækker` : ""}.
                         {nearbyPointFeatures.length > 0 ? ` ${nearbyPointFeatures.length} eksist. element(er) i nærheden respekteres (også fra nabobede).` : ""}
+                        {" "}Skovhave-lag der kan sameksistere deler plads (f.eks. bunddække under træer).
                       </p>
 
                       {/* ── 💡 Anbefalinger (auto-element) ── */}
@@ -7696,8 +7769,8 @@ export function GardenMapClient() {
                                           setAutoElementSpeciesId(rec.species.id);
                                           setAutoElementSearch("");
                                           setAutoElementVarietyId(null);
-                                          const halfSpreadCm = Math.ceil((rec.species.spreadDiameterCm ?? rec.species.spacingCm ?? 30) / 2);
-                                          if (halfSpreadCm > autoElementEdgeMarginCm) setAutoElementEdgeMarginCm(halfSpreadCm);
+                                          const smartMargin = computeSmartEdgeMarginCm(rec.species);
+                                          setAutoElementEdgeMarginCm(smartMargin);
                                           setRecElemOpen(false);
                                         }}
                                         title={rec.reasons.map((r) => `${r.emoji} ${r.text}`).join("\n")}
@@ -7748,10 +7821,9 @@ export function GardenMapClient() {
                                   setAutoElementSpeciesId(p.id);
                                   setAutoElementSearch("");
                                   setAutoElementVarietyId(null);
-                                  // Auto-set edge margin to at least half the spread so plants don't extend beyond bed
+                                  // Smart edge margin: trees/shrubs use trunk zone, not full canopy
                                   const sp = getPlantById(p.id);
-                                  const halfSpreadCm = Math.ceil((sp?.spreadDiameterCm ?? sp?.spacingCm ?? 30) / 2);
-                                  if (halfSpreadCm > autoElementEdgeMarginCm) setAutoElementEdgeMarginCm(halfSpreadCm);
+                                  if (sp) setAutoElementEdgeMarginCm(computeSmartEdgeMarginCm(sp));
                                 }}
                               >
                                 <span className="text-sm leading-none">{p.icon ?? "🌱"}</span>
@@ -7907,7 +7979,7 @@ export function GardenMapClient() {
                             </div>
                             <div>
                               <label className="block text-[10px] font-semibold text-foreground/50 uppercase tracking-wide mb-0.5">
-                                Kantmargin
+                                Kantmargin (rod/stamme)
                               </label>
                               <div className="flex items-center gap-1">
                                 <input
@@ -7920,6 +7992,13 @@ export function GardenMapClient() {
                                 />
                                 <span className="text-[10px] text-foreground/40">cm</span>
                               </div>
+                              <p className="text-[8px] text-foreground/30 mt-0.5">
+                                {selectedSpecies?.forestGardenLayer === "canopy" || selectedSpecies?.forestGardenLayer === "sub-canopy" || selectedSpecies?.category === "tree"
+                                  ? "Træer: kronens skygge rækker ud over bedet — kun stammen skal være inde"
+                                  : selectedSpecies?.forestGardenLayer === "shrub" || selectedSpecies?.category === "bush"
+                                    ? "Buske: grene kan rage lidt ud over bedkanten"
+                                    : "Afstand fra plantens midte til bedkanten"}
+                              </p>
                             </div>
                           </div>
 
@@ -7970,11 +8049,17 @@ export function GardenMapClient() {
                             <div className="rounded-lg border-2 border-red-400 bg-red-50 px-3 py-3 text-center space-y-1">
                               <p className="text-sm font-bold text-red-700">🚫 Ingen plads</p>
                               <p className="text-[10px] text-red-600/80">
-                                Der er ikke plads til {selectedSpecies.name} med {interElementSpacingCm} cm afstand.
+                                Der er ikke plads til {selectedSpecies.name} med {interElementSpacingCm} cm afstand
+                                og {autoElementEdgeMarginCm} cm kantmargin.
                               </p>
                               <p className="text-[10px] text-red-600/60">
-                                Fjern eksisterende elementer/rækker, eller udvid bedet.
+                                Prøv at sænke kantmargin, fjern eksisterende elementer, eller udvid bedet.
                               </p>
+                              {selectedSpecies.forestGardenLayer ? (
+                                <p className="text-[10px] text-blue-600/70 mt-1">
+                                  💡 Planter i kompatible skovhave-lag kan plantes under kronedækket.
+                                </p>
+                              ) : null}
                             </div>
                           ) : null}
 
