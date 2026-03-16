@@ -1,7 +1,7 @@
 // ---------------------------------------------------------------------------
 // GardenOS – Service Worker (minimal offline-capable PWA shell)
 // ---------------------------------------------------------------------------
-const CACHE_NAME = "gardenos-v7";
+const CACHE_NAME = "gardenos-v8";
 const PRECACHE_URLS = [
   "/",
   "/login",
@@ -16,12 +16,21 @@ self.addEventListener("install", (event) => {
   self.skipWaiting();
 });
 
-// Activate: delete ALL old caches, then claim all clients immediately
+// Activate: delete ALL old caches, claim clients, then force-reload every open tab
 self.addEventListener("activate", (event) => {
   event.waitUntil(
     caches.keys().then((keys) =>
       Promise.all(keys.filter((k) => k !== CACHE_NAME).map((k) => caches.delete(k)))
-    ).then(() => self.clients.claim())
+    )
+    .then(() => self.clients.claim())
+    .then(() =>
+      // Tell every open tab to hard-reload so they get fresh code
+      self.clients.matchAll({ type: "window" }).then((clients) => {
+        for (const client of clients) {
+          client.postMessage({ type: "SW_UPDATED", version: CACHE_NAME });
+        }
+      })
+    )
   );
 });
 

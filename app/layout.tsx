@@ -55,41 +55,38 @@ export default function RootLayout({
           dangerouslySetInnerHTML={{
             __html: `
               if ('serviceWorker' in navigator) {
+                // Listen for SW_UPDATED from the service worker (works even with OLD layout code)
+                navigator.serviceWorker.addEventListener('message', function(evt) {
+                  if (evt.data && evt.data.type === 'SW_UPDATED') {
+                    console.log('[GardenOS] SW updated to', evt.data.version, '- reloading…');
+                    window.location.reload();
+                  }
+                });
+
                 window.addEventListener('load', async () => {
                   try {
-                    // Register / get existing registration
-                    const reg = await navigator.serviceWorker.register('/sw.js');
-
-                    // Force check for a new SW every page-load
+                    var reg = await navigator.serviceWorker.register('/sw.js');
                     reg.update();
 
-                    // If a new SW is waiting right now, tell it to activate
                     if (reg.waiting) {
                       reg.waiting.postMessage({ type: 'SKIP_WAITING' });
                     }
 
-                    // When a new SW moves to waiting, activate it immediately
-                    reg.addEventListener('updatefound', () => {
-                      const newSW = reg.installing;
+                    reg.addEventListener('updatefound', function() {
+                      var newSW = reg.installing;
                       if (!newSW) return;
-                      newSW.addEventListener('statechange', () => {
+                      newSW.addEventListener('statechange', function() {
                         if (newSW.state === 'installed' && navigator.serviceWorker.controller) {
                           newSW.postMessage({ type: 'SKIP_WAITING' });
                         }
                       });
                     });
 
-                    // When the new SW takes control, reload to get fresh assets
-                    let refreshing = false;
-                    navigator.serviceWorker.addEventListener('controllerchange', () => {
-                      if (!refreshing) {
-                        refreshing = true;
-                        window.location.reload();
-                      }
+                    var refreshing = false;
+                    navigator.serviceWorker.addEventListener('controllerchange', function() {
+                      if (!refreshing) { refreshing = true; window.location.reload(); }
                     });
-                  } catch (e) {
-                    // SW registration failed – app still works without it
-                  }
+                  } catch (e) {}
                 });
               }
             `,

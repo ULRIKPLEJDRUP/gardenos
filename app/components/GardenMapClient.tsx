@@ -3908,6 +3908,8 @@ export function GardenMapClient() {
     if (!map) return;
 
     const conflicts = detectPlantConflicts(layoutForContainment.features);
+    // eslint-disable-next-line no-console
+    console.log("[GardenOS] Conflict scan:", layoutForContainment.features.filter((f) => f.geometry?.type === "Point" && f.properties?.speciesId).length, "plants,", conflicts.length, "conflicts");
     if (conflicts.length === 0) return;
 
     const overlayGroup = L.layerGroup();
