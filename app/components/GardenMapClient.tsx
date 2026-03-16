@@ -9,7 +9,6 @@ import { MapContainer, Marker, Popup, TileLayer, WMSTileLayer, useMap, useMapEve
 import {
   getAllPlants,
   getPlantById,
-  getVariety,
   getVarietiesForSpecies,
   getInstancesForFeature,
   loadPlantInstances,
@@ -48,13 +47,10 @@ import YearWheel from "./YearWheel";
 import TaskList from "./TaskList";
 import { createTask, parseAiResponse } from "../lib/taskStore";
 import {
-  ALL_INFRA_ELEMENTS,
   getInfraElementById,
   getInfraElementsForMode,
   ELEMENT_MODE_LABELS,
   ELEMENT_MODE_ICONS,
-  INFRA_CATEGORY_LABELS,
-  type InfraElement,
   type ElementModeKey,
 } from "../lib/elementData";
 import {
@@ -1470,10 +1466,10 @@ function computeAutoRows(
       if (segments.length === 0 || segments.length > 1 || (clipped && segments.length < 1)) {
         // Row was split or removed — figure out which obstacles
         for (const ob of mObstacles) {
-          const dx1 = clipped[0][0] - ob.center[0];
-          const dy1 = clipped[0][1] - ob.center[1];
-          const dx2 = clipped[1][0] - ob.center[0];
-          const dy2 = clipped[1][1] - ob.center[1];
+          const _dx1 = clipped[0][0] - ob.center[0];
+          const _dy1 = clipped[0][1] - ob.center[1];
+          const _dx2 = clipped[1][0] - ob.center[0];
+          const _dy2 = clipped[1][1] - ob.center[1];
           // Check if the line segment passes near the obstacle
           const segDx = clipped[1][0] - clipped[0][0];
           const segDy = clipped[1][1] - clipped[0][1];
@@ -1936,7 +1932,6 @@ function MapDrawControls({
     pushUndoSnapshot,
     bumpPlantInstances,
   });
-  // eslint-disable-next-line react-hooks/refs -- cbRef mirrors callback props intentionally
   cbRef.current = {
     persistView,
     loadSavedLayers,
@@ -2077,6 +2072,7 @@ function MapDrawControls({
     };
     // Only re-run when the map instance changes (effectively once).
     // Callbacks are accessed via cbRef so their identity changes don't matter.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [map, featureGroupRef, mapRef, createKindRef]);
 
   return null;
@@ -2682,7 +2678,7 @@ export function GardenMapClient() {
   const [autoRowCount, setAutoRowCount] = useState(0); // 0 = auto-max
   const [autoRowEdgeMarginCm, setAutoRowEdgeMarginCm] = useState(10);
   const [autoRowDirection, setAutoRowDirection] = useState<"length" | "width">("length");
-  const [autoRowOverflow, setAutoRowOverflow] = useState(false); // true when requested > max
+  const [_autoRowOverflow, setAutoRowOverflow] = useState(false); // true when requested > max
 
   // ── Auto-element placement state ──
   const [autoElementOpen, setAutoElementOpen] = useState(false);
@@ -3008,6 +3004,7 @@ export function GardenMapClient() {
         }
       }
     },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     [selected?.gardenosId]
   );
 
@@ -3609,6 +3606,7 @@ export function GardenMapClient() {
   useEffect(() => {
     setDraftName(selected?.feature.properties?.name ?? "");
     setDraftNotes(selected?.feature.properties?.notes ?? "");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selected?.gardenosId]); // only when selection identity changes, not every render
 
   const attachClickHandler = useCallback(
@@ -5442,7 +5440,7 @@ export function GardenMapClient() {
 
   const selectedFeatureInstances = useMemo(() => {
     if (!selected) return [] as (PlantInstance & { species?: PlantSpecies })[];
-    const _v = plantInstancesVersion; // reactivity trigger
+    void plantInstancesVersion; // reactivity trigger
     return getInstancesForFeature(selectedFeatureId).map((inst) => ({
       ...inst,
       species: getPlantById(inst.speciesId),
@@ -5451,13 +5449,13 @@ export function GardenMapClient() {
 
   const selectedCompanionChecks = useMemo(() => {
     if (!selected) return [] as CompanionCheck[];
-    const _v = plantInstancesVersion;
+    void plantInstancesVersion;
     return checkCompanions(selectedFeatureId);
   }, [selected, selectedFeatureId, plantInstancesVersion]);
 
   const selectedRotationWarnings = useMemo(() => {
     if (!selected) return [] as { plant: PlantSpecies; lastSeason: number; minYears: number }[];
-    const _v = plantInstancesVersion;
+    void plantInstancesVersion;
     return checkRotation(selectedFeatureId, new Date().getFullYear());
   }, [selected, selectedFeatureId, plantInstancesVersion]);
 
@@ -5482,6 +5480,7 @@ export function GardenMapClient() {
   // ── Create-flow plant picker: driven by elementMode ──
 
   /** Map plant species category → map feature kind */
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const kindForPlantCategory = useCallback((cat: PlantCategory): GardenFeatureKind => {
     switch (cat) {
       case "tree": return "tree";
@@ -7123,7 +7122,7 @@ export function GardenMapClient() {
                         </label>
                         {directionLocked ? (
                           <p className="mt-0.5 text-[9px] text-amber-600">
-                            ⚠️ Retningen er låst til "{detectedDirection === "length" ? "langs længden" : "på tværs"}" — der er allerede {existingRowCount} rækker i denne retning.
+                            ⚠️ Retningen er låst til &ldquo;{detectedDirection === "length" ? "langs længden" : "på tværs"}&rdquo; — der er allerede {existingRowCount} rækker i denne retning.
                           </p>
                         ) : null}
                         <div className="mt-0.5 flex rounded-md border border-border overflow-hidden">
@@ -7375,7 +7374,7 @@ export function GardenMapClient() {
                                   <span className="text-sm">📐</span>
                                   <div className="flex-1">
                                     <p className="font-semibold text-blue-800">Udvid bedet manuelt</p>
-                                    <p className="text-[9px] text-blue-700/70">Luk dette panel, tryk "Redigér geometri" og træk bedets kanter bredere. Bedet skal være mindst {((autoRowCount - 1) * recommendedRowSpacing / 100 + 2 * autoRowEdgeMarginCm / 100).toFixed(0)} cm bredt.</p>
+                                    <p className="text-[9px] text-blue-700/70">Luk dette panel, tryk &ldquo;Redigér geometri&rdquo; og træk bedets kanter bredere. Bedet skal være mindst {((autoRowCount - 1) * recommendedRowSpacing / 100 + 2 * autoRowEdgeMarginCm / 100).toFixed(0)} cm bredt.</p>
                                   </div>
                                 </div>
 
@@ -7457,7 +7456,6 @@ export function GardenMapClient() {
                     : relevantPlants.slice(0, 20);
                   const selectedSpecies = autoElementSpeciesId ? getPlantById(autoElementSpeciesId) : null;
                   const varieties = autoElementSpeciesId ? getVarietiesForSpecies(autoElementSpeciesId) : [];
-                  const selectedVariety = autoElementVarietyId ? varieties.find((v) => v.id === autoElementVarietyId) : undefined;
 
                   // Compute preview
                   const bedRingForPreview = selected.feature.geometry.type === "Polygon"
@@ -10146,7 +10144,7 @@ export function GardenMapClient() {
         {sidebarTab === "tasks" ? (
           <TaskList
             taskVersion={taskVersion}
-            goToYearWheel={(_month) => {
+            goToYearWheel={(_month: number) => {
               setSidebarTab("calendar");
             }}
           />

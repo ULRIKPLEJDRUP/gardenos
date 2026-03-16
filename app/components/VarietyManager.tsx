@@ -11,7 +11,7 @@
 "use client";
 
 import { useState, useMemo, useCallback, useRef } from "react";
-import type { PlantSpecies, PlantVariety, PlantCategory } from "../lib/plantTypes";
+import type { PlantVariety, PlantCategory } from "../lib/plantTypes";
 import { PLANT_CATEGORY_LABELS } from "../lib/plantTypes";
 import {
   getAllPlants,

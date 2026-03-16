@@ -83,6 +83,7 @@ export default function YearWheel({ plantDataVersion, plantInstancesVersion, fla
       }
     } catch {}
     return map;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [plantInstancesVersion]);
 
   // ── Inventory: plants grouped by category with instance details ──
@@ -136,6 +137,7 @@ export default function YearWheel({ plantDataVersion, plantInstancesVersion, fla
       if (entries?.length) sorted.push([cat, entries]);
     }
     return sorted;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [gardenPlants, featureNameMap]);
 
   const inventoryTotalSpecies = useMemo(() => inventory.reduce((s, [, e]) => s + e.length, 0), [inventory]);
@@ -230,7 +232,7 @@ export default function YearWheel({ plantDataVersion, plantInstancesVersion, fla
 
   const handleAddTask = useCallback(() => {
     if (!newTitle.trim()) return;
-    const task = addCustomTask({
+    addCustomTask({
       month: selectedMonth,
       title: newTitle.trim(),
       category: newCategory,

@@ -122,6 +122,7 @@ export default function PlantEditor({ isOpen, onClose, editSpeciesId, onDataChan
   }
 
   // All plants for companion picker
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   const allPlants = useMemo(() => getAllPlants(), [initialized]);
 
   // Smart placements preview
@@ -130,6 +131,7 @@ export default function PlantEditor({ isOpen, onClose, editSpeciesId, onDataChan
       return form.allowedPlacements;
     }
     return getDefaultPlacements(form as PlantSpecies);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [form.category, form.subCategory, form.lifecycle, form.allowedPlacements]);
 
   // Companion search results
