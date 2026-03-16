@@ -913,26 +913,43 @@ function getExistingRowOffsetsInBed(
     (lat - midLat) * M_PER_DEG_LAT,
   ]);
 
-  // Find longest and shortest edges — same logic as computeAutoRows
-  let longestDist = 0, longestIdx = 0, shortestDist = Infinity, shortestIdx = 0;
+  // Find principal axes — same logic as computeAutoRows (max-span projection)
+  let bestLongSpan = 0;
+  let bestLongUx = 1, bestLongUy = 0;
+  let bestShortSpan = Infinity;
+  let bestShortUx = 0, bestShortUy = 1;
+
+  const testedDirs = new Set<string>();
   for (let i = 0; i < mRing.length; i++) {
     const j = (i + 1) % mRing.length;
     const dx = mRing[j][0] - mRing[i][0];
     const dy = mRing[j][1] - mRing[i][1];
     const d = Math.sqrt(dx * dx + dy * dy);
-    if (d > longestDist) { longestDist = d; longestIdx = i; }
-    if (d > 0.01 && d < shortestDist) { shortestDist = d; shortestIdx = i; }
+    if (d < 0.01) continue;
+    const ux = dx / d, uy = dy / d;
+    const dirKey = `${(ux >= 0 ? ux : -ux).toFixed(6)},${(ux >= 0 ? uy : -uy).toFixed(6)}`;
+    if (testedDirs.has(dirKey)) continue;
+    testedDirs.add(dirKey);
+    let minProj = Infinity, maxProj = -Infinity;
+    let minPerp = Infinity, maxPerp = -Infinity;
+    for (const pt of mRing) {
+      const proj = pt[0] * ux + pt[1] * uy;
+      const perp = -pt[0] * uy + pt[1] * ux;
+      if (proj < minProj) minProj = proj;
+      if (proj > maxProj) maxProj = proj;
+      if (perp < minPerp) minPerp = perp;
+      if (perp > maxPerp) maxPerp = perp;
+    }
+    const span = maxProj - minProj;
+    const perpSpan = maxPerp - minPerp;
+    if (span > bestLongSpan) { bestLongSpan = span; bestLongUx = ux; bestLongUy = uy; }
+    if (perpSpan < bestShortSpan) { bestShortSpan = perpSpan; bestShortUx = ux; bestShortUy = uy; }
   }
+  if (bestLongSpan < 1e-6) return [];
 
-  const refIdx = direction === "width" ? shortestIdx : longestIdx;
-  const mA = mRing[refIdx];
-  const mB = mRing[(refIdx + 1) % mRing.length];
-  const edx = mB[0] - mA[0];
-  const edy = mB[1] - mA[1];
-  const eLen = Math.sqrt(edx * edx + edy * edy);
-  if (eLen < 1e-6) return [];
-
-  const longDir: [number, number] = [edx / eLen, edy / eLen];
+  const chosenUx = direction === "width" ? bestShortUx : bestLongUx;
+  const chosenUy = direction === "width" ? bestShortUy : bestLongUy;
+  const longDir: [number, number] = [chosenUx, chosenUy];
   const shortDir: [number, number] = [-longDir[1], longDir[0]];
 
   const slots: OccupiedSlot[] = [];
@@ -1611,28 +1628,59 @@ function computeAutoRows(
       label: o.label,
     }));
 
-  // ── 2. Find reference edge — rows run parallel to it ──
-  // "length" = longest edge (default), "width" = shortest edge
-  let longestDist = 0, longestIdx = 0, shortestDist = Infinity, shortestIdx = 0;
+  // ── 2. Find principal axes — rows run along the longest or shortest span ──
+  // For each unique edge direction, project ALL vertices onto that direction
+  // and its perpendicular. The direction with the biggest span is "length".
+  // This correctly handles polygons with extra intermediate vertices from Leaflet editing.
+  let bestLongSpan = 0;
+  let bestLongUx = 1, bestLongUy = 0;  // default: horizontal
+  let bestShortSpan = Infinity;
+  let bestShortUx = 0, bestShortUy = 1; // default: vertical
+
+  const testedDirs = new Set<string>();
   for (let i = 0; i < mRing.length; i++) {
     const j = (i + 1) % mRing.length;
     const dx = mRing[j][0] - mRing[i][0];
     const dy = mRing[j][1] - mRing[i][1];
     const d = Math.sqrt(dx * dx + dy * dy);
-    if (d > longestDist) { longestDist = d; longestIdx = i; }
-    if (d > 0.01 && d < shortestDist) { shortestDist = d; shortestIdx = i; }
-  }
+    if (d < 0.01) continue;
+    const ux = dx / d, uy = dy / d;
+    // Normalize direction so we don't test the same axis twice (opposite direction)
+    const dirKey = `${(ux >= 0 ? ux : -ux).toFixed(6)},${(ux >= 0 ? uy : -uy).toFixed(6)}`;
+    if (testedDirs.has(dirKey)) continue;
+    testedDirs.add(dirKey);
 
-  const refIdx = direction === "width" ? shortestIdx : longestIdx;
-  const mA = mRing[refIdx];
-  const mB = mRing[(refIdx + 1) % mRing.length];
-  const edx = mB[0] - mA[0];
-  const edy = mB[1] - mA[1];
-  const eLen = Math.sqrt(edx * edx + edy * edy);
-  if (eLen < 1e-6) return null;
+    // Project all vertices onto this direction
+    let minProj = Infinity, maxProj = -Infinity;
+    let minPerp = Infinity, maxPerp = -Infinity;
+    for (const pt of mRing) {
+      const proj = pt[0] * ux + pt[1] * uy;
+      const perp = -pt[0] * uy + pt[1] * ux;
+      if (proj < minProj) minProj = proj;
+      if (proj > maxProj) maxProj = proj;
+      if (perp < minPerp) minPerp = perp;
+      if (perp > maxPerp) maxPerp = perp;
+    }
+    const span = maxProj - minProj;
+    const perpSpan = maxPerp - minPerp;
+
+    if (span > bestLongSpan) {
+      bestLongSpan = span;
+      bestLongUx = ux; bestLongUy = uy;
+    }
+    if (perpSpan < bestShortSpan) {
+      bestShortSpan = perpSpan;
+      bestShortUx = ux; bestShortUy = uy;
+    }
+  }
+  if (bestLongSpan < 1e-6) return null;
+
+  // Pick direction: "length" uses the max-span axis, "width" uses the min-perpendicular axis
+  const chosenUx = direction === "width" ? bestShortUx : bestLongUx;
+  const chosenUy = direction === "width" ? bestShortUy : bestLongUy;
 
   // Unit vectors in metric space
-  const longDir: [number, number] = [edx / eLen, edy / eLen]; // parallel to rows
+  const longDir: [number, number] = [chosenUx, chosenUy]; // parallel to rows
   const shortDir: [number, number] = [-longDir[1], longDir[0]]; // perpendicular (across rows)
 
   // ── 3. Project metric ring onto both axes ──
