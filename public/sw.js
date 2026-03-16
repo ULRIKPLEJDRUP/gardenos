@@ -1,7 +1,7 @@
 // ---------------------------------------------------------------------------
 // GardenOS – Service Worker (minimal offline-capable PWA shell)
 // ---------------------------------------------------------------------------
-const CACHE_NAME = "gardenos-v1";
+const CACHE_NAME = "gardenos-v2";
 const PRECACHE_URLS = [
   "/",
   "/login",
@@ -48,10 +48,25 @@ self.addEventListener("fetch", (event) => {
     return;
   }
 
-  // For static assets – cache first, fall back to network
+  // For _next/ assets – network first, cache fallback
+  // This ensures code updates (new features, bug fixes) are always loaded
+  // when online, while still working offline from cache.
+  if (request.url.includes("/_next/")) {
+    event.respondWith(
+      fetch(request)
+        .then((response) => {
+          const clone = response.clone();
+          caches.open(CACHE_NAME).then((cache) => cache.put(request, clone));
+          return response;
+        })
+        .catch(() => caches.match(request))
+    );
+    return;
+  }
+
+  // For other static assets (images, fonts) – cache first, network fallback
   if (
-    request.url.match(/\.(js|css|png|jpg|jpeg|svg|ico|woff2?)(\?.*)?$/) ||
-    request.url.includes("/_next/")
+    request.url.match(/\.(png|jpg|jpeg|svg|ico|woff2?)(\?.*)?$/)
   ) {
     event.respondWith(
       caches.match(request).then(

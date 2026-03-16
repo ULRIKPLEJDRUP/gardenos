@@ -7432,13 +7432,13 @@ export function GardenMapClient() {
 
             {/* ── Auto-element placement panel ── */}
             {selectedIsPolygon && (selectedCategory === "seedbed" || selectedCategory === "area" || selectedCategory === "container") ? (
-              <div className="rounded-lg border border-green-400/30 bg-green-50/10 p-2.5 space-y-2">
+              <div className="rounded-lg border border-green-600/30 bg-green-50/20 dark:bg-green-900/15 dark:border-green-500/25 p-2.5 space-y-2">
                 <button
                   type="button"
                   className="flex w-full items-center gap-1.5 text-left"
                   onClick={() => { setAutoElementOpen(!autoElementOpen); setAutoElementSearch(""); }}
                 >
-                  <span className="text-[10px] font-semibold text-foreground/50 uppercase tracking-wide">🌿 Auto-elementer</span>
+                  <span className="text-[10px] font-semibold text-green-800 dark:text-green-300 uppercase tracking-wide">🌿 Auto-elementer</span>
                   <span className="ml-auto text-[10px] text-foreground/30">{autoElementOpen ? "▲" : "▼"}</span>
                 </button>
 
