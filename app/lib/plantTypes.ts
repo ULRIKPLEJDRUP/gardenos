@@ -33,6 +33,95 @@ export const PLANT_CATEGORY_LABELS: Record<PlantCategory, string> = {
   "soil-amendment": "Jordforbedrere",
 };
 
+// ---------------------------------------------------------------------------
+// Forest Garden Layers (Skovhavens 7 lag)
+// ---------------------------------------------------------------------------
+/** The 7 classic forest garden layers + "row" for row-planted annuals */
+export type ForestGardenLayer =
+  | "canopy"       // 1. Kronelag – store træer (valnød, kastanje, store æbler)
+  | "sub-canopy"   // 2. Lavt trælag – mindre frugttræer (blomme, kvæde, små pærer)
+  | "shrub"        // 3. Busklag – bærbuske (solbær, ribs, hindbær)
+  | "herbaceous"   // 4. Urte-/staudelag – flerårige urter og grøntsager (rabarber, purløg)
+  | "ground-cover" // 5. Bunddække – lave planter (jordbær, kløver, timian)
+  | "root"         // 6. Rodlag – planter med spiselige rødder (jordskokker, løg)
+  | "climber";     // 7. Klatrelag – vokser op ad strukturer (vin, humle, kiwi)
+
+export const FOREST_GARDEN_LAYER_LABELS: Record<ForestGardenLayer, string> = {
+  canopy: "🌳 Kronelag",
+  "sub-canopy": "🌲 Lavt trælag",
+  shrub: "🫐 Busklag",
+  herbaceous: "🌿 Urte-/staudelag",
+  "ground-cover": "☘️ Bunddække",
+  root: "🥕 Rodlag",
+  climber: "🌱 Klatrelag",
+};
+
+/** Short descriptions for each forest garden layer */
+export const FOREST_GARDEN_LAYER_DESC: Record<ForestGardenLayer, string> = {
+  canopy: "Store træer der danner havens struktur og mikro-klima (valnød, kastanje, store æbler)",
+  "sub-canopy": "Mindre frugttræer der udnytter filtreret lys (blomme, kvæde, kirsebær)",
+  shrub: "Bærbuske der fylder mellem træerne (solbær, ribs, hindbær, aronia)",
+  herbaceous: "Flerårige urter og stauder under buskene (rabarber, purløg, mynte, skovsyre)",
+  "ground-cover": "Lave planter der dækker jorden og reducerer ukrudt (jordbær, kløver, timian)",
+  root: "Planter med spiselige rødder der udnytter jordens dybde (løg, hvidløg, jordskokker)",
+  climber: "Klatreplanter der udnytter vertikal plads (vin, humle, kiwi, bønner)",
+};
+
+/**
+ * Vertical layer order (0 = highest, 6 = lowest).
+ * Used to determine if two layers can coexist in the same horizontal space.
+ */
+export const FOREST_GARDEN_LAYER_ORDER: Record<ForestGardenLayer, number> = {
+  canopy: 0,
+  "sub-canopy": 1,
+  shrub: 2,
+  herbaceous: 3,
+  "ground-cover": 4,
+  root: 5,
+  climber: 6, // climbers use vertical space, special rules
+};
+
+/**
+ * Can two forest garden layers coexist at the same horizontal location?
+ * Returns true if they occupy DIFFERENT vertical spaces and can share ground.
+ *
+ * Rules:
+ * - Canopy + anything below = YES (tree crowns are high above)
+ * - Sub-canopy + shrub/herbaceous/ground-cover/root = YES
+ * - Shrub + ground-cover/root = YES (bush canopy is above ground layer)
+ * - Shrub + herbaceous = NO (compete at same height)
+ * - Herbaceous + ground-cover = borderline YES (herbs grow above ground-cover)
+ * - Herbaceous + root = YES (different parts of soil column)
+ * - Climber + anything = YES (uses vertical structures, not horizontal ground)
+ * - Same layer + same layer = NO (compete directly)
+ */
+export function canLayersCoexist(a: ForestGardenLayer, b: ForestGardenLayer): boolean {
+  if (a === b) return false; // same layer always competes
+
+  // Climbers can always coexist (they grow upward)
+  if (a === "climber" || b === "climber") return true;
+
+  // Sort so 'upper' is higher (lower order number)
+  const [upper, lower] = FOREST_GARDEN_LAYER_ORDER[a] < FOREST_GARDEN_LAYER_ORDER[b] ? [a, b] : [b, a];
+
+  // Canopy above everything
+  if (upper === "canopy") return true;
+
+  // Sub-canopy above shrub, herbaceous, ground-cover, root
+  if (upper === "sub-canopy") return true;
+
+  // Shrub above ground-cover and root (not herbaceous — they compete)
+  if (upper === "shrub" && (lower === "ground-cover" || lower === "root")) return true;
+
+  // Herbaceous above ground-cover or root
+  if (upper === "herbaceous" && (lower === "ground-cover" || lower === "root")) return true;
+
+  // Ground-cover above root
+  if (upper === "ground-cover" && lower === "root") return true;
+
+  return false;
+}
+
 /** Vegetable sub-categories */
 export type VegetableSubCategory =
   | "root"
@@ -294,6 +383,13 @@ export type PlantSpecies = {
    * If not set, falls back to spacingCm.
    */
   spreadDiameterCm?: number;
+
+  /**
+   * Forest garden layer (skovhave-lag).
+   * Determines vertical placement and which layers can coexist.
+   * See canLayersCoexist() for interaction rules.
+   */
+  forestGardenLayer?: ForestGardenLayer;
 
   // ── Environmental needs ──
   light?: LightNeed;

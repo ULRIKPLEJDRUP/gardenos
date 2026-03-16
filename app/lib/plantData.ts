@@ -49,6 +49,7 @@ export const BUILTIN_PLANTS: PlantSpecies[] = [
       { id: "purple-haze", name: "Purple Haze", description: "Lilla udenpå, orange indeni. Dekorativ og lækker.", daysToHarvest: 110, taste: "Sød med krydret dybde", color: "lilla/orange", storageQuality: "fair" },
       { id: "flyaway", name: "Flyaway", description: "Resistent mod gulerodsflue — perfekt til økologisk dyrkning.", daysToHarvest: 100, taste: "Sød, sprød", color: "orange", resistances: ["gulerodsflue"], storageQuality: "good" },
     ],
+    forestGardenLayer: "root",
     source: "builtin",
   },
   {
@@ -72,6 +73,7 @@ export const BUILTIN_PLANTS: PlantSpecies[] = [
     rotationYears: 3,
     icon: "🥕",
     nutrition: { kcal: 75, proteinG: 1.2, fatG: 0.3, carbG: 18, fiberG: 4.9, highlights: "Rig på kostfibre, kalium, C-vitamin og folat." },
+    forestGardenLayer: "root",
     source: "builtin",
   },
   {
@@ -95,6 +97,7 @@ export const BUILTIN_PLANTS: PlantSpecies[] = [
     rotationYears: 3,
     icon: "🟣",
     nutrition: { kcal: 43, proteinG: 1.6, fatG: 0.2, carbG: 10, fiberG: 2.8, highlights: "Nitrat (blodtryksænkende), folat, mangan og antioxidanter (betalainer)." },
+    forestGardenLayer: "root",
     source: "builtin",
   },
   {
@@ -118,6 +121,7 @@ export const BUILTIN_PLANTS: PlantSpecies[] = [
     rotationYears: 2,
     icon: "🔴",
     nutrition: { kcal: 16, proteinG: 0.7, fatG: 0.1, carbG: 3.4, fiberG: 1.6, highlights: "C-vitamin, folat og isothiocyanater (kræftforebyggende)." },
+    forestGardenLayer: "root",
     source: "builtin",
   },
   {
@@ -158,6 +162,7 @@ export const BUILTIN_PLANTS: PlantSpecies[] = [
       { id: "king-edward", name: "King Edward", description: "Engelsk klassiker, perfekt til bagt kartoffel og mos.", daysToHarvest: 130, taste: "Melet, blød", color: "hvid/lyserød", storageQuality: "excellent" },
       { id: "blaa-congo", name: "Blå Congo", description: "Lilla helt igennem! Dekorativ og smagfuld.", daysToHarvest: 120, taste: "Nøddet, fast", color: "mørk lilla", storageQuality: "good" },
     ],
+    forestGardenLayer: "root",
     source: "builtin",
   },
 
@@ -186,6 +191,7 @@ export const BUILTIN_PLANTS: PlantSpecies[] = [
     rotationYears: 3,
     icon: "🥦",
     nutrition: { kcal: 34, proteinG: 2.8, fatG: 0.4, carbG: 7, fiberG: 2.6, highlights: "Sulforaphan, C-vitamin, K-vitamin, folat og jern." },
+    forestGardenLayer: "herbaceous",
     source: "builtin",
   },
   {
@@ -209,6 +215,7 @@ export const BUILTIN_PLANTS: PlantSpecies[] = [
     badCompanions: ["tomat", "jordbeer"],
     rotationYears: 3,
     icon: "🥬",
+    forestGardenLayer: "herbaceous",
     source: "builtin",
   },
   {
@@ -233,6 +240,7 @@ export const BUILTIN_PLANTS: PlantSpecies[] = [
     badCompanions: ["jordbeer", "tomat"],
     rotationYears: 3,
     icon: "🥬",
+    forestGardenLayer: "herbaceous",
     source: "builtin",
   },
   {
@@ -256,6 +264,7 @@ export const BUILTIN_PLANTS: PlantSpecies[] = [
     rotationYears: 3,
     icon: "🟢",
     nutrition: { kcal: 27, proteinG: 1.7, fatG: 0.1, carbG: 6, fiberG: 3.6, highlights: "C-vitamin, kalium og kostfibre. God både rå og kogt." },
+    forestGardenLayer: "herbaceous",
     source: "builtin",
   },
 
@@ -282,6 +291,7 @@ export const BUILTIN_PLANTS: PlantSpecies[] = [
     badCompanions: ["loeg", "hvidloeg", "purloeg"],
     rotationYears: 3,
     icon: "🫛",
+    forestGardenLayer: "herbaceous",
     source: "builtin",
   },
   {
@@ -306,6 +316,7 @@ export const BUILTIN_PLANTS: PlantSpecies[] = [
     rotationYears: 3,
     icon: "🫘",
     nutrition: { kcal: 31, proteinG: 1.8, fatG: 0.1, carbG: 7, fiberG: 3.4, highlights: "Protein, kostfibre, folat, C-vitamin og mangan." },
+    forestGardenLayer: "herbaceous",
     source: "builtin",
   },
   {
@@ -330,6 +341,7 @@ export const BUILTIN_PLANTS: PlantSpecies[] = [
     rotationYears: 3,
     icon: "🫘",
     nutrition: { kcal: 88, proteinG: 7.6, fatG: 0.7, carbG: 18, fiberG: 5.4, highlights: "Højt protein, folat, mangan, jern og fosfor." },
+    forestGardenLayer: "herbaceous",
     source: "builtin",
   },
 
@@ -371,6 +383,7 @@ export const BUILTIN_PLANTS: PlantSpecies[] = [
       { id: "romaine", name: "Romaine / Cos", description: "Høj, sprød salat — den rigtige til Caesar-salat.", daysToHarvest: 65, taste: "Sprød, mild, let sød", color: "mørkgrøn" },
       { id: "egebladssalat", name: "Egebladssalat", description: "Fliget blad som egeblade, nøddet smag.", daysToHarvest: 50, taste: "Nøddet, mild", color: "grøn/rød" },
     ],
+    forestGardenLayer: "herbaceous",
     source: "builtin",
   },
   {
@@ -394,6 +407,7 @@ export const BUILTIN_PLANTS: PlantSpecies[] = [
     rotationYears: 2,
     icon: "🍃",
     nutrition: { kcal: 23, proteinG: 2.9, fatG: 0.4, carbG: 3.6, fiberG: 2.2, highlights: "Jern, calcium, K-vitamin, folat, magnesium og lutein." },
+    forestGardenLayer: "herbaceous",
     source: "builtin",
   },
   {
@@ -416,6 +430,7 @@ export const BUILTIN_PLANTS: PlantSpecies[] = [
     badCompanions: [],
     rotationYears: 2,
     icon: "🥬",
+    forestGardenLayer: "herbaceous",
     source: "builtin",
   },
 
@@ -463,6 +478,7 @@ export const BUILTIN_PLANTS: PlantSpecies[] = [
       { id: "moneymaker", name: "Moneymaker", description: "Pålidelig mellem-tomat til dansk klima. God alsidighed.", daysToHarvest: 80, taste: "Mild, balanceret", color: "rød", storageQuality: "fair" },
       { id: "costoluto", name: "Costoluto Fiorentino", description: "Italiensk bøftomat med ribbede frugter. Fantastisk smag.", daysToHarvest: 90, taste: "Intens, syrlig-sød", color: "dyb rød", storageQuality: "fair" },
     ],
+    forestGardenLayer: "herbaceous",
     source: "builtin",
   },
   {
@@ -488,6 +504,7 @@ export const BUILTIN_PLANTS: PlantSpecies[] = [
     rotationYears: 3,
     icon: "🫑",
     nutrition: { kcal: 26, proteinG: 1.0, fatG: 0.3, carbG: 6, fiberG: 2.1, highlights: "Enorm C-vitamin (3× citron!), A-vitamin og antioxidanter." },
+    forestGardenLayer: "herbaceous",
     source: "builtin",
   },
   {
@@ -513,6 +530,7 @@ export const BUILTIN_PLANTS: PlantSpecies[] = [
     rotationYears: 3,
     icon: "🌶️",
     nutrition: { kcal: 40, proteinG: 1.9, fatG: 0.4, carbG: 9, fiberG: 1.5, highlights: "Capsaicin (stofskiftefremmer), C-vitamin og A-vitamin." },
+    forestGardenLayer: "herbaceous",
     source: "builtin",
   },
 
@@ -555,6 +573,7 @@ export const BUILTIN_PLANTS: PlantSpecies[] = [
       { id: "diva", name: "Diva", description: "Tynd skræl, ingen bitterhed, selvbestøvende.", daysToHarvest: 58, taste: "Mild, sød", color: "grøn" },
       { id: "vorgebirgstrauben", name: "Vorgebirgstrauben", description: "Gammel tysk drueagurk-sort, mange små frugter.", daysToHarvest: 60, taste: "Intens, sprød", color: "lysegrøn" },
     ],
+    forestGardenLayer: "herbaceous",
     source: "builtin",
   },
   {
@@ -580,6 +599,7 @@ export const BUILTIN_PLANTS: PlantSpecies[] = [
     rotationYears: 3,
     icon: "🟡",
     nutrition: { kcal: 17, proteinG: 1.2, fatG: 0.3, carbG: 3.1, fiberG: 1.0, highlights: "Lavt kalorieindhold, C-vitamin, kalium og mangan." },
+    forestGardenLayer: "herbaceous",
     source: "builtin",
   },
   {
@@ -605,6 +625,7 @@ export const BUILTIN_PLANTS: PlantSpecies[] = [
     rotationYears: 3,
     icon: "🎃",
     nutrition: { kcal: 26, proteinG: 1.0, fatG: 0.1, carbG: 7, fiberG: 0.5, highlights: "Beta-caroten (A-vitamin), C-vitamin og kalium. Kerner rige på zink." },
+    forestGardenLayer: "herbaceous",
     source: "builtin",
   },
 
@@ -632,6 +653,7 @@ export const BUILTIN_PLANTS: PlantSpecies[] = [
     rotationYears: 3,
     icon: "🧅",
     nutrition: { kcal: 40, proteinG: 1.1, fatG: 0.1, carbG: 9, fiberG: 1.7, highlights: "Quercetin (antioxidant), C-vitamin og præbiotiske fibre." },
+    forestGardenLayer: "root",
     source: "builtin",
   },
   {
@@ -655,6 +677,7 @@ export const BUILTIN_PLANTS: PlantSpecies[] = [
     rotationYears: 3,
     icon: "🧄",
     nutrition: { kcal: 149, proteinG: 6.4, fatG: 0.5, carbG: 33, fiberG: 2.1, highlights: "Allicin (antibakterielt), mangan, B6-vitamin og selen." },
+    forestGardenLayer: "root",
     source: "builtin",
   },
   {
@@ -676,6 +699,7 @@ export const BUILTIN_PLANTS: PlantSpecies[] = [
     badCompanions: ["aert", "boenner"],
     rotationYears: 0,
     icon: "🌿",
+    forestGardenLayer: "herbaceous",
     source: "builtin",
   },
   {
@@ -700,6 +724,7 @@ export const BUILTIN_PLANTS: PlantSpecies[] = [
     rotationYears: 3,
     icon: "🥬",
     nutrition: { kcal: 61, proteinG: 1.5, fatG: 0.3, carbG: 14, fiberG: 1.8, highlights: "K-vitamin, folat, mangan og præbiotiske fibre (inulin)." },
+    forestGardenLayer: "root",
     source: "builtin",
   },
 
@@ -727,6 +752,7 @@ export const BUILTIN_PLANTS: PlantSpecies[] = [
     badCompanions: ["gulerod", "pastinak"],
     rotationYears: 3,
     icon: "🥬",
+    forestGardenLayer: "root",
     source: "builtin",
   },
   {
@@ -751,6 +777,7 @@ export const BUILTIN_PLANTS: PlantSpecies[] = [
     icon: "🌿",
     nutrition: { kcal: 31, proteinG: 1.2, fatG: 0.2, carbG: 7, fiberG: 3.1, highlights: "C-vitamin, kalium og anetol (god for fordøjelsen)." },
     description: "Fennikel er en dårlig nabo til de fleste afgrøder – plant den i sin egen del af haven.",
+    forestGardenLayer: "root",
     source: "builtin",
   },
 
@@ -778,6 +805,7 @@ export const BUILTIN_PLANTS: PlantSpecies[] = [
     badCompanions: ["salvie"],
     rotationYears: 0,
     icon: "🌿",
+    forestGardenLayer: "herbaceous",
     source: "builtin",
   },
   {
@@ -799,6 +827,7 @@ export const BUILTIN_PLANTS: PlantSpecies[] = [
     badCompanions: ["salat"],
     rotationYears: 0,
     icon: "🌿",
+    forestGardenLayer: "herbaceous",
     source: "builtin",
   },
   {
@@ -820,6 +849,7 @@ export const BUILTIN_PLANTS: PlantSpecies[] = [
     badCompanions: ["gulerod", "tomat", "fennikel"],
     rotationYears: 0,
     icon: "🌿",
+    forestGardenLayer: "herbaceous",
     source: "builtin",
   },
   {
@@ -841,6 +871,7 @@ export const BUILTIN_PLANTS: PlantSpecies[] = [
     badCompanions: [],
     rotationYears: 0,
     icon: "🌿",
+    forestGardenLayer: "herbaceous",
     source: "builtin",
   },
   {
@@ -862,6 +893,7 @@ export const BUILTIN_PLANTS: PlantSpecies[] = [
     badCompanions: [],
     rotationYears: 0,
     icon: "🌿",
+    forestGardenLayer: "herbaceous",
     source: "builtin",
   },
   {
@@ -883,6 +915,7 @@ export const BUILTIN_PLANTS: PlantSpecies[] = [
     badCompanions: ["basilikum", "agurk"],
     rotationYears: 0,
     icon: "🌿",
+    forestGardenLayer: "herbaceous",
     source: "builtin",
   },
   {
@@ -905,6 +938,7 @@ export const BUILTIN_PLANTS: PlantSpecies[] = [
     rotationYears: 0,
     icon: "🌿",
     description: "Spreder sig kraftigt – plant helst i krukke eller afgrænset bed.",
+    forestGardenLayer: "herbaceous",
     source: "builtin",
   },
   {
@@ -926,6 +960,7 @@ export const BUILTIN_PLANTS: PlantSpecies[] = [
     badCompanions: [],
     rotationYears: 0,
     icon: "🌿",
+    forestGardenLayer: "herbaceous",
     source: "builtin",
   },
 
@@ -968,6 +1003,7 @@ export const BUILTIN_PLANTS: PlantSpecies[] = [
       { id: "malling-centenary", name: "Malling Centenary", description: "Nyere sort med store, faste bær og god sygdomsresistens.", daysToHarvest: 85, taste: "Sød, fyldig", color: "rød", resistances: ["meldug", "rødmarv"], storageQuality: "good" },
       { id: "ostara", name: "Ostara", description: "Remonterende (giver bær hele sommeren). Mindre men mange bær.", daysToHarvest: 90, taste: "Aromatisk, sød", color: "rød", storageQuality: "poor" },
     ],
+    forestGardenLayer: "ground-cover",
     source: "builtin",
   },
   {
@@ -991,6 +1027,7 @@ export const BUILTIN_PLANTS: PlantSpecies[] = [
     rotationYears: 0,
     icon: "🫐",
     nutrition: { kcal: 52, proteinG: 1.2, fatG: 0.7, carbG: 12, fiberG: 6.5, highlights: "Højt fiberindhold, C-vitamin, mangan og ellagsyre (antioxidant)." },
+    forestGardenLayer: "shrub",
     source: "builtin",
   },
   {
@@ -1014,6 +1051,7 @@ export const BUILTIN_PLANTS: PlantSpecies[] = [
     rotationYears: 0,
     icon: "🫐",
     nutrition: { kcal: 63, proteinG: 1.4, fatG: 0.4, carbG: 15, fiberG: 4.0, highlights: "Ekstremt C-vitaminrigt (3× appelsin), antocyaniner og jern." },
+    forestGardenLayer: "shrub",
     source: "builtin",
   },
   {
@@ -1037,6 +1075,7 @@ export const BUILTIN_PLANTS: PlantSpecies[] = [
     rotationYears: 0,
     icon: "🔴",
     nutrition: { kcal: 56, proteinG: 1.4, fatG: 0.2, carbG: 14, fiberG: 4.3, highlights: "C-vitamin, K-vitamin, mangan og antioxidanter." },
+    forestGardenLayer: "shrub",
     source: "builtin",
   },
   {
@@ -1060,6 +1099,7 @@ export const BUILTIN_PLANTS: PlantSpecies[] = [
     rotationYears: 0,
     icon: "🟢",
     nutrition: { kcal: 44, proteinG: 0.9, fatG: 0.6, carbG: 10, fiberG: 4.3, highlights: "C-vitamin, kostfibre, mangan og antioxidanter." },
+    forestGardenLayer: "shrub",
     source: "builtin",
   },
   {
@@ -1085,6 +1125,7 @@ export const BUILTIN_PLANTS: PlantSpecies[] = [
     icon: "🫐",
     nutrition: { kcal: 57, proteinG: 0.7, fatG: 0.3, carbG: 14, fiberG: 2.4, highlights: "Antocyaniner (hjernesundhed), C-vitamin, K-vitamin og mangan." },
     description: "Kræver sur jord (pH 4–5.5). Plant i rhododendronjord eller tilsæt svovl.",
+    forestGardenLayer: "shrub",
     source: "builtin",
   },
 
@@ -1111,6 +1152,7 @@ export const BUILTIN_PLANTS: PlantSpecies[] = [
     rotationYears: 0,
     icon: "🌼",
     description: "Tiltrækker bestøvere og afskrækker bladlus. Fantastisk fællesplante i grøntsagsbedet.",
+    forestGardenLayer: "herbaceous",
     source: "builtin",
   },
   {
@@ -1132,6 +1174,7 @@ export const BUILTIN_PLANTS: PlantSpecies[] = [
     badCompanions: ["kartoffel"],
     rotationYears: 0,
     icon: "🌻",
+    forestGardenLayer: "herbaceous",
     source: "builtin",
   },
   {
@@ -1155,6 +1198,7 @@ export const BUILTIN_PLANTS: PlantSpecies[] = [
     rotationYears: 0,
     icon: "🌺",
     description: "Afskrækker nematoder i jorden og mange skadedyr. Plant langs bedkanter.",
+    forestGardenLayer: "herbaceous",
     source: "builtin",
   },
   {
@@ -1176,6 +1220,7 @@ export const BUILTIN_PLANTS: PlantSpecies[] = [
     badCompanions: [],
     rotationYears: 0,
     icon: "💜",
+    forestGardenLayer: "shrub",
     source: "builtin",
   },
 
@@ -1219,6 +1264,7 @@ export const BUILTIN_PLANTS: PlantSpecies[] = [
       { id: "elstar", name: "Elstar", description: "Populær alsidigt æble med god balance.", taste: "Sød-syrlig, saftig", color: "rød/gul", storageQuality: "good" },
       { id: "graesten", name: "Gråsten", description: "Den mest danske af alle æbler. Så stor at 2-3 giver en kage.", taste: "Syrlig, blød", color: "grøn", storageQuality: "poor" },
     ],
+    forestGardenLayer: "sub-canopy",
     source: "builtin",
   },
   {
@@ -1241,6 +1287,7 @@ export const BUILTIN_PLANTS: PlantSpecies[] = [
     rotationYears: 0,
     icon: "🍐",
     nutrition: { kcal: 57, proteinG: 0.4, fatG: 0.1, carbG: 15, fiberG: 3.1, highlights: "Kostfibre (pektin), C-vitamin, K-vitamin og kobber." },
+    forestGardenLayer: "sub-canopy",
     source: "builtin",
   },
   {
@@ -1263,6 +1310,7 @@ export const BUILTIN_PLANTS: PlantSpecies[] = [
     rotationYears: 0,
     icon: "🍒",
     nutrition: { kcal: 63, proteinG: 1.1, fatG: 0.2, carbG: 16, fiberG: 2.1, highlights: "Antocyaniner, C-vitamin, kalium og melatonin (søvnfremmer)." },
+    forestGardenLayer: "sub-canopy",
     source: "builtin",
   },
   {
@@ -1285,6 +1333,7 @@ export const BUILTIN_PLANTS: PlantSpecies[] = [
     rotationYears: 0,
     icon: "🟣",
     nutrition: { kcal: 46, proteinG: 0.7, fatG: 0.3, carbG: 11, fiberG: 1.4, highlights: "C-vitamin, K-vitamin, kalium og antioxidanter. Tørrede (svesker) rige på fibre." },
+    forestGardenLayer: "sub-canopy",
     source: "builtin",
   },
 
@@ -1321,6 +1370,7 @@ export const BUILTIN_PLANTS: PlantSpecies[] = [
       { id: "concordia", name: "Concordia", description: "Gul-løvet eg. Lysegrønt til gyldengrønt løv hele sæsonen.", heightCm: 1000 },
       { id: "quercus-rubra", name: "Rødeg", description: "Nordamerikansk art med fantastisk rød efterårsfarve.", heightCm: 2500 },
     ],
+    forestGardenLayer: "canopy",
     source: "builtin",
   },
   {
@@ -1354,6 +1404,7 @@ export const BUILTIN_PLANTS: PlantSpecies[] = [
       { id: "dawyck", name: "Dawyck", description: "Søjleformet bøg, smal og elegant. God til mindre haver.", heightCm: 1500 },
       { id: "tricolor", name: "Tricolor", description: "Lilla-rosa-hvid-broget løv. Exceptionelt smukt prydtræ.", heightCm: 800, color: "lilla/rosa/hvid" },
     ],
+    forestGardenLayer: "canopy",
     source: "builtin",
   },
   {
@@ -1386,6 +1437,7 @@ export const BUILTIN_PLANTS: PlantSpecies[] = [
       { id: "jacquemontii", name: "Jacquemontii (Himalayabirk)", description: "Kridhvid bark — det hvideste af alle birketræer. Fantastisk vinterdekoration.", heightCm: 1200, color: "kridhvid bark" },
       { id: "dalecarlica", name: "Dalecarlica (Ornäsbirk)", description: "Svensk birk med dybt fligede blade. Elegant og sjælden.", heightCm: 1500 },
     ],
+    forestGardenLayer: "canopy",
     source: "builtin",
   },
   {
@@ -1418,6 +1470,7 @@ export const BUILTIN_PLANTS: PlantSpecies[] = [
       { id: "babylonica-tortuosa", name: "Snoet Pil", description: "Salix babylonica 'Tortuosa'. Snoede grene giver skulpturel vintereffekt.", heightCm: 800 },
       { id: "viminalis", name: "Båndpil", description: "Salix viminalis. Traditionel fletpil. Hurtig genvækst efter stævning.", heightCm: 600 },
     ],
+    forestGardenLayer: "canopy",
     source: "builtin",
   },
   {
@@ -1450,6 +1503,7 @@ export const BUILTIN_PLANTS: PlantSpecies[] = [
       { id: "drummondii", name: "Drummondii", description: "Hvidbrogede blade — lyser markant op. Elegant og anderledes.", heightCm: 1000, color: "grøn/hvid" },
       { id: "acer-ginnala", name: "Ildløn", description: "Acer tataricum subsp. ginnala. Lille træ/stor busk med knaldrød efterårsfarve.", heightCm: 600, color: "knaldrød (efterår)" },
     ],
+    forestGardenLayer: "canopy",
     source: "builtin",
   },
   {
@@ -1480,6 +1534,7 @@ export const BUILTIN_PLANTS: PlantSpecies[] = [
       { id: "pendula", name: "Hængeask", description: "Fraxinus excelsior 'Pendula'. Kompakt hængende form. Populært havetræ.", heightCm: 600 },
       { id: "jaspidea", name: "Guldask", description: "Gule skud om vinteren og gulligt løv. Lyser haven op.", heightCm: 1500, color: "gul" },
     ],
+    forestGardenLayer: "canopy",
     source: "builtin",
   },
   {
@@ -1511,6 +1566,7 @@ export const BUILTIN_PLANTS: PlantSpecies[] = [
       { id: "greenspire", name: "Greenspire", description: "Tilia cordata 'Greenspire'. Klassisk symmetrisk form. Den mest plantede lind i Danmark.", heightCm: 1500 },
       { id: "rancho", name: "Rancho", description: "Kompakt pyramideform. God til mindre haver og gader.", heightCm: 1000 },
     ],
+    forestGardenLayer: "canopy",
     source: "builtin",
   },
   {
@@ -1543,6 +1599,7 @@ export const BUILTIN_PLANTS: PlantSpecies[] = [
       { id: "edulis", name: "Mährische (Spiselig røn)", description: "Store, søde bær uden bitterhed. Bruges til saft, vin og gelé.", heightCm: 1000, taste: "Sød-syrlig" },
       { id: "dodong", name: "Dodong", description: "Koreansk art med fantastisk orange-rød efterårsfarve og store bladfjer.", heightCm: 800, color: "rød efterårsfarve" },
     ],
+    forestGardenLayer: "sub-canopy",
     source: "builtin",
   },
   {
@@ -1573,6 +1630,7 @@ export const BUILTIN_PLANTS: PlantSpecies[] = [
       { id: "camperdownii", name: "Camperdownii (Parasolel)", description: "Hængende form der danner naturlig parasol. Dramatisk og flot.", heightCm: 600 },
       { id: "new-horizon", name: "New Horizon", description: "Resistent mod elmesyge. Sund og hurtigvoksende.", heightCm: 1500, resistances: ["elmesyge"] },
     ],
+    forestGardenLayer: "canopy",
     source: "builtin",
   },
   {
@@ -1607,6 +1665,7 @@ export const BUILTIN_PLANTS: PlantSpecies[] = [
       { id: "broadview", name: "Broadview", description: "Canadisk sort. Selvbefrugtende, begynder at bære tidligt. God til dansk klima.", taste: "Mild, cremet" },
       { id: "buccaneer", name: "Buccaneer", description: "Hollandsk sort, robust og tidligt bærende. Bestøver for andre sorter.", taste: "Rig, nøddeagtig" },
     ],
+    forestGardenLayer: "canopy",
     source: "builtin",
   },
   {
@@ -1641,6 +1700,7 @@ export const BUILTIN_PLANTS: PlantSpecies[] = [
       { id: "purpurea", name: "Blodhassel", description: "Mørkerødt løv hele sæsonen. Smukt som solitær.", heightCm: 500, color: "mørkerød" },
       { id: "webb-prize-cob", name: "Webb's Prize Cob", description: "Storfrugtet, produktiv sort. Gode nødder til spisning.", taste: "Sød, cremet" },
     ],
+    forestGardenLayer: "sub-canopy",
     source: "builtin",
   },
 
@@ -1675,6 +1735,7 @@ export const BUILTIN_PLANTS: PlantSpecies[] = [
       { id: "watereri", name: "Watereri", description: "Kompakt, kegleformet form. Maks 4-5 m. God til mindre haver.", heightCm: 500 },
       { id: "fastigiata", name: "Fastigiata", description: "Smal søjleform. Unik blandt fyrtræer.", heightCm: 800 },
     ],
+    forestGardenLayer: "canopy",
     source: "builtin",
   },
   {
@@ -1705,6 +1766,7 @@ export const BUILTIN_PLANTS: PlantSpecies[] = [
       { id: "nidiformis", name: "Nidiformis (Redemgran)", description: "Flad, redeformet dværgform. Maks 1 m. Perfekt til stenhaver.", heightCm: 100 },
       { id: "inversa", name: "Inversa", description: "Hængende søjleform. Skulpturel og unik.", heightCm: 600 },
     ],
+    forestGardenLayer: "canopy",
     source: "builtin",
   },
   {
@@ -1736,6 +1798,7 @@ export const BUILTIN_PLANTS: PlantSpecies[] = [
       { id: "repandens", name: "Repandens", description: "Fladtvoksende bunddækkende taks. Maks 50 cm. God under store træer.", heightCm: 50 },
       { id: "fastigiata-aurea", name: "Fastigiata Aurea", description: "Gulrandet søjletaks. Lyser flot op i skygge.", heightCm: 400, color: "gulrandet" },
     ],
+    forestGardenLayer: "canopy",
     source: "builtin",
   },
   {
@@ -1767,6 +1830,7 @@ export const BUILTIN_PLANTS: PlantSpecies[] = [
       { id: "brabant", name: "Brabant", description: "Hurtigvoksende (40-60 cm/år). Den mest brugte hækthua i DK.", heightCm: 1500 },
       { id: "danica", name: "Danica", description: "Kugleformet dværg. Maks 80 cm. God til bede og krukker.", heightCm: 80 },
     ],
+    forestGardenLayer: "canopy",
     source: "builtin",
   },
   {
@@ -1797,6 +1861,7 @@ export const BUILTIN_PLANTS: PlantSpecies[] = [
       { id: "pendula", name: "Pendula", description: "Hængende form. Dramatisk vintertræ med nøgne, buede grene.", heightCm: 800 },
       { id: "japonica", name: "Japansk Lærk", description: "Larix kaempferi. Lidt bredere nåle og mere blågrøn. Robust.", heightCm: 2000 },
     ],
+    forestGardenLayer: "canopy",
     source: "builtin",
   },
 
@@ -1822,6 +1887,7 @@ export const BUILTIN_PLANTS: PlantSpecies[] = [
     badCompanions: [],
     rotationYears: 0,
     icon: "🌹",
+    forestGardenLayer: "shrub",
     source: "builtin",
   },
 
@@ -1845,6 +1911,7 @@ export const BUILTIN_PLANTS: PlantSpecies[] = [
     rotationYears: 0,
     icon: "☘️",
     description: "Kvælstoffikserende bunddække. God som grøngødning mellem rækker.",
+    forestGardenLayer: "ground-cover",
     source: "builtin",
   },
   {
@@ -1865,6 +1932,7 @@ export const BUILTIN_PLANTS: PlantSpecies[] = [
     rotationYears: 0,
     icon: "💮",
     description: "Fantastisk bi-venlig dækafgrøde. Forbedrer jordstruktur og tiltrækker nyttedyr.",
+    forestGardenLayer: "ground-cover",
     source: "builtin",
   },
 
@@ -1887,6 +1955,7 @@ export const BUILTIN_PLANTS: PlantSpecies[] = [
     badCompanions: [],
     icon: "💜",
     description: "Duftende, tørketolerant staude. Tiltrækker bier og sommerfugle. Klip tilbage om foråret.",
+    forestGardenLayer: "shrub",
     source: "builtin",
   },
   {
@@ -1905,6 +1974,7 @@ export const BUILTIN_PLANTS: PlantSpecies[] = [
     badCompanions: [],
     icon: "🌸",
     description: "Robust, tørketolerant staude med store blomsterhoveder. Vigtig for bier og insekter. Bruges også som lægeplante.",
+    forestGardenLayer: "shrub",
     source: "builtin",
   },
   {
@@ -1923,6 +1993,7 @@ export const BUILTIN_PLANTS: PlantSpecies[] = [
     badCompanions: [],
     icon: "🌻",
     description: "Gule stråleblomster fra sensommer til efterår. Meget hårdfør og nem at dyrke.",
+    forestGardenLayer: "shrub",
     source: "builtin",
   },
   {
@@ -1941,6 +2012,7 @@ export const BUILTIN_PLANTS: PlantSpecies[] = [
     badCompanions: [],
     icon: "🌿",
     description: "Klassisk skyggestaude med dekorative blade i mange farver og størrelser. Snegle elsker dem – beskyt evt.",
+    forestGardenLayer: "herbaceous",
     source: "builtin",
   },
   {
@@ -1959,6 +2031,7 @@ export const BUILTIN_PLANTS: PlantSpecies[] = [
     badCompanions: [],
     icon: "🪻",
     description: "Elegant staude med fjerlette blomsterstande i hvid, rosa og rød. Trives i fugtig halvskygge.",
+    forestGardenLayer: "herbaceous",
     source: "builtin",
   },
   {
@@ -1977,6 +2050,7 @@ export const BUILTIN_PLANTS: PlantSpecies[] = [
     badCompanions: [],
     icon: "🌺",
     description: "Storblomstret, langlivet staude med fantastisk duft. Blomstrer i maj-juni. Kan leve i årtier på samme sted.",
+    forestGardenLayer: "shrub",
     source: "builtin",
   },
   {
@@ -1995,6 +2069,7 @@ export const BUILTIN_PLANTS: PlantSpecies[] = [
     badCompanions: [],
     icon: "💙",
     description: "Elegant staude med sværdformede blade og iøjnefaldende blomster i mange farver. Tørketolerant.",
+    forestGardenLayer: "herbaceous",
     source: "builtin",
   },
   {
@@ -2013,6 +2088,7 @@ export const BUILTIN_PLANTS: PlantSpecies[] = [
     badCompanions: [],
     icon: "🌸",
     description: "Alsidigt bunddække med masser af blomster fra maj til frost. Meget hårdfør og sygdomsfri.",
+    forestGardenLayer: "herbaceous",
     source: "builtin",
   },
   {
@@ -2031,6 +2107,7 @@ export const BUILTIN_PLANTS: PlantSpecies[] = [
     badCompanions: [],
     icon: "🌿",
     description: "Mangebregne – klassisk skyggeplante med elegant bladvækst. Hårdfør, nem og næsten vedligeholdelsesfri.",
+    forestGardenLayer: "herbaceous",
     source: "builtin",
   },
   {
@@ -2049,6 +2126,7 @@ export const BUILTIN_PLANTS: PlantSpecies[] = [
     badCompanions: [],
     icon: "🧡",
     description: "Uimodståelig blomsterpragt hele sommeren. Hver blomst lever kun én dag, men nye springer ud dagligt. Totalt hårdfør.",
+    forestGardenLayer: "herbaceous",
     source: "builtin",
   },
 
@@ -2071,6 +2149,7 @@ export const BUILTIN_PLANTS: PlantSpecies[] = [
     badCompanions: [],
     icon: "🌾",
     description: "Ikonisk prydgræs med store, silkeagtige blomstertoppe op til 2-3 m. Beskyt mod frost de første år. Klip ned i marts.",
+    forestGardenLayer: "herbaceous",
     source: "builtin",
   },
   {
@@ -2089,6 +2168,7 @@ export const BUILTIN_PLANTS: PlantSpecies[] = [
     badCompanions: [],
     icon: "🔵",
     description: "Kompakt, blågrønt tuegræs (ca. 30 cm). Fantastisk i stenbede og som kantplante. Tørketolerant.",
+    forestGardenLayer: "herbaceous",
     source: "builtin",
   },
   {
@@ -2107,6 +2187,7 @@ export const BUILTIN_PLANTS: PlantSpecies[] = [
     badCompanions: [],
     icon: "🔴",
     description: "Oprette, smalle blade der farves blodrøde fra spidsen i løbet af sommeren. 40-50 cm høj. Effektfuld i grupper.",
+    forestGardenLayer: "herbaceous",
     source: "builtin",
   },
   {
@@ -2125,6 +2206,7 @@ export const BUILTIN_PLANTS: PlantSpecies[] = [
     badCompanions: [],
     icon: "🌾",
     description: "Stort, elegant prydgræs (1,5–2,5 m) med sølvhvide blomstertoppe. Perfekt som hæk eller solitær. Klip ned i marts.",
+    forestGardenLayer: "herbaceous",
     source: "builtin",
   },
   {
@@ -2143,6 +2225,7 @@ export const BUILTIN_PLANTS: PlantSpecies[] = [
     badCompanions: [],
     icon: "🌬️",
     description: "Blødt, bølgende græs med silkeagtige aks. Bevæger sig smukt i vinden. 40-60 cm. Tørketolerant og selvssående.",
+    forestGardenLayer: "herbaceous",
     source: "builtin",
   },
   {
@@ -2161,6 +2244,7 @@ export const BUILTIN_PLANTS: PlantSpecies[] = [
     badCompanions: [],
     icon: "🌾",
     description: "Elegant dansk prydgræs med lette, luftige blomsterstande. Flot gylden høstfarve. Op til 1,5 m.",
+    forestGardenLayer: "herbaceous",
     source: "builtin",
   },
   {
@@ -2179,6 +2263,7 @@ export const BUILTIN_PLANTS: PlantSpecies[] = [
     badCompanions: [],
     icon: "🌿",
     description: "Stedsegrønt skyggetolerant græs. Perfekt som bunddække eller kantplante. 30-40 cm. Meget hårdfør.",
+    forestGardenLayer: "herbaceous",
     source: "builtin",
   },
 
@@ -2201,6 +2286,7 @@ export const BUILTIN_PLANTS: PlantSpecies[] = [
     badCompanions: [],
     icon: "🌸",
     description: "Havens dronning blandt klatreplanter. Hundredvis af sorter i alle farver. Husk: 'Foden i skygge, hovedet i sol.'",
+    forestGardenLayer: "climber",
     source: "builtin",
   },
   {
@@ -2219,6 +2305,7 @@ export const BUILTIN_PLANTS: PlantSpecies[] = [
     badCompanions: [],
     icon: "🌹",
     description: "Romantisk klatreplante med duftende blomster. Kræver espalier eller pergola. Beskær i marts.",
+    forestGardenLayer: "climber",
     source: "builtin",
   },
   {
@@ -2237,6 +2324,7 @@ export const BUILTIN_PLANTS: PlantSpecies[] = [
     badCompanions: [],
     icon: "🌿",
     description: "Stedsegrøn, selvhæftende klatreplante. Klatrer op ad mure og hegn. Kan være invasiv – hold den i kontrol.",
+    forestGardenLayer: "climber",
     source: "builtin",
   },
   {
@@ -2255,6 +2343,7 @@ export const BUILTIN_PLANTS: PlantSpecies[] = [
     badCompanions: [],
     icon: "🌼",
     description: "Vidunderlig duftende klatreplante, især om aftenen. Blomstrer i juni-juli. Tiltrækker natsværmere.",
+    forestGardenLayer: "climber",
     source: "builtin",
   },
   {
@@ -2273,6 +2362,7 @@ export const BUILTIN_PLANTS: PlantSpecies[] = [
     badCompanions: [],
     icon: "💜",
     description: "Spektakulære, hængende blå-lilla blomsterklaser i maj. Meget kraftig vækst – kræver solidt espalier. Kan tage 3-5 år inden første blomstring.",
+    forestGardenLayer: "climber",
     source: "builtin",
   },
   {
@@ -2291,6 +2381,7 @@ export const BUILTIN_PLANTS: PlantSpecies[] = [
     badCompanions: [],
     icon: "🍺",
     description: "Hurtigvoksende dansk klatreplante (op til 6-8 m/år). Humlekopper bruges til ølbrygning. Dør ned om vinteren og skyder igen om foråret.",
+    forestGardenLayer: "climber",
     source: "builtin",
   },
   {
@@ -2309,6 +2400,7 @@ export const BUILTIN_PLANTS: PlantSpecies[] = [
     badCompanions: [],
     icon: "🍃",
     description: "Kraftig klatreplante med store, hjerteformede blade (op til 30 cm). Perfekt til at dække vægge og hegn. Helt hårdfør i Danmark.",
+    forestGardenLayer: "climber",
     source: "builtin",
   },
   {
@@ -2327,6 +2419,7 @@ export const BUILTIN_PLANTS: PlantSpecies[] = [
     badCompanions: [],
     icon: "🍁",
     description: "Selvhæftende klatreplante med fantastisk rød høstfarve. Dækker hurtigt store vægflader. Helt hårdfør.",
+    forestGardenLayer: "climber",
     source: "builtin",
   },
 
@@ -2349,6 +2442,7 @@ export const BUILTIN_PLANTS: PlantSpecies[] = [
     badCompanions: [],
     icon: "🌱",
     description: "Dynamisk akkumulator – trækker næring op fra dyb jord. Blade bruges som mulch, kompost-aktivator eller flydende gødning.",
+    forestGardenLayer: "herbaceous",
     source: "builtin",
   },
   {
@@ -2367,6 +2461,7 @@ export const BUILTIN_PLANTS: PlantSpecies[] = [
     badCompanions: [],
     icon: "🌿",
     description: "Dybtrodende bælgplante der fikserer kvælstof og løsner underjord. Fremragende grøngødning. Kan slås flere gange.",
+    forestGardenLayer: "ground-cover",
     source: "builtin",
   },
   {
@@ -2385,6 +2480,7 @@ export const BUILTIN_PLANTS: PlantSpecies[] = [
     badCompanions: [],
     icon: "🌼",
     description: "Hurtigvoksende grøngødning. Undertrykker ukrudt, løsner jord og biofumigerer mod jordsvampe. Undgå før kål!",
+    forestGardenLayer: "ground-cover",
     source: "builtin",
   },
   {
@@ -2403,6 +2499,7 @@ export const BUILTIN_PLANTS: PlantSpecies[] = [
     badCompanions: [],
     icon: "🌾",
     description: "Perfekt vinterdækafgrøde. Holder jorden levende og forhindrer næringsstofudvaskning. Fræses ned om foråret.",
+    forestGardenLayer: "ground-cover",
     source: "builtin",
   },
   {
@@ -2421,6 +2518,7 @@ export const BUILTIN_PLANTS: PlantSpecies[] = [
     badCompanions: [],
     icon: "🌱",
     description: "Kraftig pælerod der bryder tætte jordlag (op til 1,5 m dyb). Fryser ned om vinteren og efterlader luftige kanaler.",
+    forestGardenLayer: "ground-cover",
     source: "builtin",
   },
 ];

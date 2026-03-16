@@ -25,7 +25,7 @@ import {
   addVarietyToSpecies,
   type CompanionCheck,
 } from "../lib/plantStore";
-import type { PlantSpecies, PlantInstance, PlantCategory, PlantVariety, PlacementType } from "../lib/plantTypes";
+import type { PlantSpecies, PlantInstance, PlantCategory, PlantVariety, PlacementType, ForestGardenLayer } from "../lib/plantTypes";
 import {
   PLANT_CATEGORY_LABELS,
   LIGHT_LABELS,
@@ -37,6 +37,9 @@ import {
   PLACEMENT_ICONS,
   getDefaultPlacements,
   canPlaceInCategory,
+  canLayersCoexist,
+  FOREST_GARDEN_LAYER_LABELS,
+  FOREST_GARDEN_LAYER_DESC,
 } from "../lib/plantTypes";
 import VarietyManager from "./VarietyManager";
 import PlantEditor from "./PlantEditor";
@@ -965,6 +968,7 @@ type Obstacle2D = {
   center: [number, number];   // [lng, lat]
   radiusM: number;            // exclusion radius in meters
   label: string;              // display name for warnings
+  layer?: ForestGardenLayer;  // forest garden layer (for coexistence check)
 };
 
 /**
@@ -1127,6 +1131,7 @@ function computeAutoElements(
   requestedCount: number,              // 0 = auto-max
   circleObstacles: Obstacle2D[],       // existing point features in bed
   rowObstacles: RowObstacle2D[],       // existing row features in bed
+  newElementLayer?: ForestGardenLayer, // forest garden layer of new element (for coexistence)
 ): AutoElementResult | null {
   if (ring.length < 3) return null;
 
@@ -1149,6 +1154,7 @@ function computeAutoElements(
     ] as [number, number],
     radiusM: o.radiusM,
     label: o.label,
+    layer: o.layer,
   }));
 
   // Convert row obstacles to metric
@@ -1202,6 +1208,8 @@ function computeAutoElements(
     // c) Check distance to circle obstacles
     let blocked = false;
     for (const obs of mCircles) {
+      // Forest garden layer coexistence: skip obstacle if layers can share space
+      if (newElementLayer && obs.layer && canLayersCoexist(newElementLayer, obs.layer)) continue;
       const dx = pt[0] - obs.center[0];
       const dy = pt[1] - obs.center[1];
       const dist = Math.sqrt(dx * dx + dy * dy);
@@ -4825,7 +4833,8 @@ export function GardenMapClient() {
     const interElementSpacingCm = species.spreadDiameterCm ?? species.spacingCm ?? 30;
     const varietyObj = varietyId ? getVarietiesForSpecies(speciesId).find((v) => v.id === varietyId) : undefined;
 
-    // ── Collect existing circle obstacles (point features) inside this bed ──
+    // ── Collect existing circle obstacles (ALL point features, not just in-bed) ──
+    // Include nearby features from adjacent beds so exclusion zones are respected.
     const circleObstacles: Obstacle2D[] = [];
     group.eachLayer((layer) => {
       const lf = (layer as L.Layer & { feature?: GardenFeature }).feature;
@@ -4839,10 +4848,13 @@ export function GardenMapClient() {
       } else {
         pt = lf.geometry.coordinates as [number, number];
       }
-      if (!pointInRing(pt, ring)) return;
+      // No pointInRing filter — include obstacles from adjacent beds too.
+      // The algorithm naturally ignores obstacles too far from the bed.
       const excl = getFeatureExclusionRadiusM(lf.properties?.speciesId, lf.properties?.elementTypeId);
       if (excl) {
-        circleObstacles.push({ center: pt, radiusM: excl.radiusM, label: excl.label });
+        // Include the obstacle's forest garden layer for coexistence check
+        const obstacleSpecies = lf.properties?.speciesId ? getPlantById(lf.properties.speciesId) : null;
+        circleObstacles.push({ center: pt, radiusM: excl.radiusM, label: excl.label, layer: obstacleSpecies?.forestGardenLayer });
       }
     });
 
@@ -4873,7 +4885,7 @@ export function GardenMapClient() {
       rowObstacles.push({ coords, halfWidthM, label });
     });
 
-    const result = computeAutoElements(ring, interElementSpacingCm, edgeMarginCm, elementCount, circleObstacles, rowObstacles);
+    const result = computeAutoElements(ring, interElementSpacingCm, edgeMarginCm, elementCount, circleObstacles, rowObstacles, species.forestGardenLayer);
     if (!result || result.positions.length === 0) {
       const fullMsg = circleObstacles.length > 0 || rowObstacles.length > 0
         ? `🚫 Ingen plads!\n\nDer er ikke plads til ${species.name} i dette bed med ${interElementSpacingCm} cm afstand.\n\n${circleObstacles.length > 0 ? `${circleObstacles.length} eksisterende element(er)` : ""}${rowObstacles.length > 0 ? ` og ${rowObstacles.length} rækker` : ""} blokerer pladsen.`
@@ -7453,7 +7465,9 @@ export function GardenMapClient() {
                     : null;
 
                   // Gather existing obstacles for preview
-                  const bedPointFeatures: GardenFeature[] = [];
+                  // Point features: collect ALL (not just in-bed) so cross-bed exclusion is respected
+                  // Row features: collect those inside this bed
+                  const nearbyPointFeatures: GardenFeature[] = [];
                   const bedRowFeatures: GardenFeature[] = [];
                   if (bedRingForPreview && bedRingForPreview.length >= 3) {
                     for (const f of layoutForContainment.features) {
@@ -7469,9 +7483,9 @@ export function GardenMapClient() {
                         if (pointInRing(mid, bedRingForPreview)) bedRowFeatures.push(f);
                         continue;
                       }
+                      // Include ALL point features — cross-bed obstacles are handled by distance check in algorithm
                       if (f.geometry?.type === "Point" && (f.properties?.speciesId || f.properties?.elementTypeId)) {
-                        const pt = (f.geometry as Point).coordinates as [number, number];
-                        if (pointInRing(pt, bedRingForPreview)) bedPointFeatures.push(f);
+                        nearbyPointFeatures.push(f);
                       }
                     }
                   }
@@ -7480,10 +7494,11 @@ export function GardenMapClient() {
                   if (selectedSpecies && bedRingForPreview && bedRingForPreview.length >= 3) {
                     const spacingCm = selectedSpecies.spreadDiameterCm ?? selectedSpecies.spacingCm ?? 30;
 
-                    const circleObs: Obstacle2D[] = bedPointFeatures.map((pf) => {
+                    const circleObs: Obstacle2D[] = nearbyPointFeatures.map((pf) => {
                       const pt = (pf.geometry as Point).coordinates as [number, number];
                       const excl = getFeatureExclusionRadiusM(pf.properties?.speciesId, pf.properties?.elementTypeId);
-                      return { center: pt, radiusM: excl.radiusM, label: excl.label };
+                      const obsSpecies = pf.properties?.speciesId ? getPlantById(pf.properties.speciesId) : null;
+                      return { center: pt, radiusM: excl.radiusM, label: excl.label, layer: obsSpecies?.forestGardenLayer };
                     });
 
                     const rowObs: RowObstacle2D[] = bedRowFeatures.map((rf) => {
@@ -7494,7 +7509,7 @@ export function GardenMapClient() {
                       return { coords, halfWidthM, label };
                     });
 
-                    elementPreview = computeAutoElements(bedRingForPreview, spacingCm, autoElementEdgeMarginCm, autoElementCount, circleObs, rowObs);
+                    elementPreview = computeAutoElements(bedRingForPreview, spacingCm, autoElementEdgeMarginCm, autoElementCount, circleObs, rowObs, selectedSpecies.forestGardenLayer);
                   }
 
                   const interElementSpacingCm = selectedSpecies
@@ -7506,7 +7521,7 @@ export function GardenMapClient() {
                       <p className="text-[9px] text-foreground/40 leading-snug">
                         Vælg en plante og placér automatisk i bedet. Planter holdes mindst {interElementSpacingCm} cm fra hinanden
                         {bedRowFeatures.length > 0 ? ` og respekterer ${bedRowFeatures.length} eksisterende rækker` : ""}.
-                        {bedPointFeatures.length > 0 ? ` ${bedPointFeatures.length} eksist. element(er) respekteres.` : ""}
+                        {nearbyPointFeatures.length > 0 ? ` ${nearbyPointFeatures.length} eksist. element(er) i nærheden respekteres (også fra nabobede).` : ""}
                       </p>
 
                       {/* Species picker */}
@@ -7529,10 +7544,15 @@ export function GardenMapClient() {
                                   setAutoElementSpeciesId(p.id);
                                   setAutoElementSearch("");
                                   setAutoElementVarietyId(null);
+                                  // Auto-set edge margin to at least half the spread so plants don't extend beyond bed
+                                  const sp = getPlantById(p.id);
+                                  const halfSpreadCm = Math.ceil((sp?.spreadDiameterCm ?? sp?.spacingCm ?? 30) / 2);
+                                  if (halfSpreadCm > autoElementEdgeMarginCm) setAutoElementEdgeMarginCm(halfSpreadCm);
                                 }}
                               >
                                 <span className="text-sm leading-none">{p.icon ?? "🌱"}</span>
                                 <span className="truncate">{p.name}</span>
+                                {p.forestGardenLayer ? <span className="text-[8px] text-foreground/25 shrink-0">{FOREST_GARDEN_LAYER_LABELS[p.forestGardenLayer]}</span> : null}
                                 {p.latinName ? <span className="ml-auto text-[9px] text-foreground/30 italic truncate">{p.latinName}</span> : null}
                               </button>
                             ))}
@@ -7555,6 +7575,98 @@ export function GardenMapClient() {
                               ✕
                             </button>
                           </div>
+
+                          {/* Forest garden layer + companion info */}
+                          {(() => {
+                            const layer = selectedSpecies.forestGardenLayer;
+                            // Gather nearby species from features in/around the bed
+                            const nearbySpeciesIds = new Set<string>();
+                            for (const pf of nearbyPointFeatures) {
+                              if (pf.properties?.speciesId && pf.properties.speciesId !== selectedSpecies.id) {
+                                nearbySpeciesIds.add(pf.properties.speciesId);
+                              }
+                            }
+                            for (const rf of bedRowFeatures) {
+                              if (rf.properties?.speciesId && rf.properties.speciesId !== selectedSpecies.id) {
+                                nearbySpeciesIds.add(rf.properties.speciesId);
+                              }
+                            }
+                            const goodNearby: PlantSpecies[] = [];
+                            const badNearby: PlantSpecies[] = [];
+                            const coexistNearby: PlantSpecies[] = [];
+                            const conflictNearby: PlantSpecies[] = [];
+                            for (const nid of nearbySpeciesIds) {
+                              const nsp = getPlantById(nid);
+                              if (!nsp) continue;
+                              if (selectedSpecies.goodCompanions?.includes(nid)) goodNearby.push(nsp);
+                              if (selectedSpecies.badCompanions?.includes(nid)) badNearby.push(nsp);
+                              if (layer && nsp.forestGardenLayer) {
+                                if (canLayersCoexist(layer, nsp.forestGardenLayer)) coexistNearby.push(nsp);
+                                else if (layer === nsp.forestGardenLayer) conflictNearby.push(nsp);
+                              }
+                            }
+                            return (
+                              <div className="rounded-md bg-foreground/[0.03] border border-foreground/10 p-2 space-y-1.5">
+                                {layer ? (
+                                  <div className="flex items-center gap-1.5">
+                                    <span className="text-[10px] font-semibold text-foreground/50 uppercase tracking-wide">Skovhave-lag:</span>
+                                    <span className="inline-flex items-center rounded-full bg-green-100 px-2 py-0.5 text-[10px] font-medium text-green-800">
+                                      {FOREST_GARDEN_LAYER_LABELS[layer]}
+                                    </span>
+                                  </div>
+                                ) : null}
+                                {layer ? (
+                                  <p className="text-[9px] text-foreground/35 leading-snug">{FOREST_GARDEN_LAYER_DESC[layer]}</p>
+                                ) : null}
+                                {goodNearby.length > 0 ? (
+                                  <div className="flex flex-wrap items-center gap-1">
+                                    <span className="text-[9px] text-green-700 font-medium">✅ Gode naboer:</span>
+                                    {goodNearby.map((g) => (
+                                      <span key={g.id} className="inline-flex items-center gap-0.5 rounded bg-green-50 px-1 py-0.5 text-[9px] text-green-700">
+                                        {g.icon ?? "🌱"} {g.name}
+                                      </span>
+                                    ))}
+                                  </div>
+                                ) : null}
+                                {badNearby.length > 0 ? (
+                                  <div className="flex flex-wrap items-center gap-1">
+                                    <span className="text-[9px] text-red-600 font-medium">⛔ Dårlige naboer:</span>
+                                    {badNearby.map((b) => (
+                                      <span key={b.id} className="inline-flex items-center gap-0.5 rounded bg-red-50 px-1 py-0.5 text-[9px] text-red-600">
+                                        {b.icon ?? "🌱"} {b.name}
+                                      </span>
+                                    ))}
+                                  </div>
+                                ) : null}
+                                {coexistNearby.length > 0 ? (
+                                  <div className="flex flex-wrap items-center gap-1">
+                                    <span className="text-[9px] text-blue-600 font-medium">🏔️ Sameksisterer (lag):</span>
+                                    {coexistNearby.map((c) => (
+                                      <span key={c.id} className="inline-flex items-center gap-0.5 rounded bg-blue-50 px-1 py-0.5 text-[9px] text-blue-600">
+                                        {c.icon ?? "🌱"} {c.name} <span className="text-[8px] opacity-60">({c.forestGardenLayer ? FOREST_GARDEN_LAYER_LABELS[c.forestGardenLayer] : ""})</span>
+                                      </span>
+                                    ))}
+                                  </div>
+                                ) : null}
+                                {conflictNearby.length > 0 ? (
+                                  <div className="flex flex-wrap items-center gap-1">
+                                    <span className="text-[9px] text-amber-600 font-medium">⚠️ Samme lag (konkurrerer):</span>
+                                    {conflictNearby.map((c) => (
+                                      <span key={c.id} className="inline-flex items-center gap-0.5 rounded bg-amber-50 px-1 py-0.5 text-[9px] text-amber-600">
+                                        {c.icon ?? "🌱"} {c.name}
+                                      </span>
+                                    ))}
+                                  </div>
+                                ) : null}
+                                {goodNearby.length === 0 && badNearby.length === 0 && coexistNearby.length === 0 && conflictNearby.length === 0 && nearbySpeciesIds.size > 0 ? (
+                                  <p className="text-[9px] text-foreground/30">Ingen kendte interaktioner med nærliggende planter.</p>
+                                ) : null}
+                                {nearbySpeciesIds.size === 0 ? (
+                                  <p className="text-[9px] text-foreground/30">Ingen eksisterende planter i nærheden.</p>
+                                ) : null}
+                              </div>
+                            );
+                          })()}
 
                           {/* Variety picker */}
                           {varieties.length > 0 ? (
@@ -7632,10 +7744,10 @@ export function GardenMapClient() {
                                   <span className="font-medium">{bedRowFeatures.length} stk</span>
                                 </div>
                               ) : null}
-                              {bedPointFeatures.length > 0 ? (
+                              {nearbyPointFeatures.length > 0 ? (
                                 <div className="flex justify-between text-[10px]">
-                                  <span className="text-foreground/50">Eksist. elementer:</span>
-                                  <span className="font-medium">{bedPointFeatures.length} stk</span>
+                                  <span className="text-foreground/50">Nærliggende elementer:</span>
+                                  <span className="font-medium">{nearbyPointFeatures.length} stk</span>
                                 </div>
                               ) : null}
                               {elementPreview.obstacleWarnings.length > 0 ? (
