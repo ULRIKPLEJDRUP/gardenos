@@ -7540,13 +7540,13 @@ export function GardenMapClient() {
               </div>
 
               {/* ── Auto-element placement panel ── */}
-              <div className="rounded-lg border border-green-600/30 bg-green-50/20 dark:bg-green-900/15 dark:border-green-500/25 p-2.5 space-y-2">
+              <div className="rounded-lg border border-green-600/30 bg-green-50/20 p-2.5 space-y-2">
                 <button
                   type="button"
                   className="flex w-full items-center gap-1.5 text-left"
                   onClick={() => { setAutoElementOpen(!autoElementOpen); setAutoElementSearch(""); }}
                 >
-                  <span className="text-[10px] font-semibold text-green-800 dark:text-green-300 uppercase tracking-wide">🌿 Auto-elementer</span>
+                  <span className="text-[10px] font-semibold text-green-800 uppercase tracking-wide">🌿 Auto-elementer</span>
                   <span className="ml-auto text-[10px] text-foreground/30">{autoElementOpen ? "▲" : "▼"}</span>
                 </button>
 
