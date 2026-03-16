@@ -1,7 +1,7 @@
 // ---------------------------------------------------------------------------
 // GardenOS – Service Worker (minimal offline-capable PWA shell)
 // ---------------------------------------------------------------------------
-const CACHE_NAME = "gardenos-v5";
+const CACHE_NAME = "gardenos-v6";
 const PRECACHE_URLS = [
   "/",
   "/login",

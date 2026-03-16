@@ -958,6 +958,230 @@ function getExistingRowOffsetsInBed(
   return slots;
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+// Plant conflict detection — scans ALL point features for spacing,
+// companion, and layer competition problems.
+// ═══════════════════════════════════════════════════════════════════════════
+
+type PlantConflict = {
+  type: "spacing" | "bad-companion" | "layer-competition";
+  /** Severity 1 = info, 2 = warning, 3 = error */
+  severity: 1 | 2 | 3;
+  featureIdA: string;
+  featureIdB: string;
+  speciesA: PlantSpecies;
+  speciesB: PlantSpecies;
+  distanceM: number;
+  requiredM: number;
+  message: string;
+  suggestion: string;
+};
+
+/**
+ * Haversine distance between two [lng, lat] points, in metres.
+ */
+function haversineM(a: [number, number], b: [number, number]): number {
+  const R = 6_371_000;
+  const dLat = ((b[1] - a[1]) * Math.PI) / 180;
+  const dLng = ((b[0] - a[0]) * Math.PI) / 180;
+  const sinLat = Math.sin(dLat / 2);
+  const sinLng = Math.sin(dLng / 2);
+  const h = sinLat * sinLat + Math.cos((a[1] * Math.PI) / 180) * Math.cos((b[1] * Math.PI) / 180) * sinLng * sinLng;
+  return 2 * R * Math.asin(Math.sqrt(h));
+}
+
+/**
+ * Detect all pairwise plant conflicts among point features.
+ * Returns an array of PlantConflict objects.
+ */
+function detectPlantConflicts(features: GardenFeature[]): PlantConflict[] {
+  // Collect point features with a species
+  const points: { id: string; coords: [number, number]; species: PlantSpecies }[] = [];
+  for (const f of features) {
+    if (f.geometry?.type !== "Point") continue;
+    const sid = f.properties?.speciesId;
+    if (!sid) continue;
+    const sp = getPlantById(sid);
+    if (!sp) continue;
+    const coords = f.geometry.coordinates as [number, number];
+    points.push({ id: f.properties!.gardenosId, coords, species: sp });
+  }
+
+  const conflicts: PlantConflict[] = [];
+  const seen = new Set<string>();
+
+  for (let i = 0; i < points.length; i++) {
+    for (let j = i + 1; j < points.length; j++) {
+      const a = points[i];
+      const b = points[j];
+      const dist = haversineM(a.coords, b.coords);
+      const pairKey = [a.id, b.id].sort().join(":");
+
+      // 1. Spacing conflict: check recommended spacing between both species
+      const spreadA = (a.species.spreadDiameterCm ?? a.species.spacingCm ?? 30) / 100;
+      const spreadB = (b.species.spreadDiameterCm ?? b.species.spacingCm ?? 30) / 100;
+      // Required distance = half spread A + half spread B (canopy edges shouldn't overlap for competing layers)
+      let requiredM: number;
+      const layerA = a.species.forestGardenLayer;
+      const layerB = b.species.forestGardenLayer;
+      const layersCoexist = layerA && layerB && canLayersCoexist(layerA, layerB);
+
+      if (layersCoexist) {
+        // Compatible layers: only need trunk clearance
+        const trunkA = getTrunkExclusionRadiusM(a.species);
+        const trunkB = getTrunkExclusionRadiusM(b.species);
+        requiredM = trunkA + trunkB;
+      } else {
+        // Same or competing layers: need full spacing
+        requiredM = spreadA / 2 + spreadB / 2;
+      }
+
+      if (dist < requiredM * 0.95 && !seen.has(pairKey + ":spacing")) {
+        seen.add(pairKey + ":spacing");
+        const isSameSpecies = a.species.id === b.species.id;
+        const ratio = dist / requiredM;
+        const severity: 1 | 2 | 3 = ratio < 0.4 ? 3 : ratio < 0.7 ? 2 : 1;
+        conflicts.push({
+          type: "spacing",
+          severity,
+          featureIdA: a.id,
+          featureIdB: b.id,
+          speciesA: a.species,
+          speciesB: b.species,
+          distanceM: dist,
+          requiredM,
+          message: isSameSpecies
+            ? `${a.species.icon ?? "🌱"} To ${a.species.name} står for tæt (${dist.toFixed(1)}m / anbefalet ${requiredM.toFixed(1)}m)`
+            : `${a.species.icon ?? "🌱"} ${a.species.name} og ${b.species.icon ?? "🌱"} ${b.species.name} står for tæt (${dist.toFixed(1)}m / ${requiredM.toFixed(1)}m)`,
+          suggestion: isSameSpecies
+            ? `Anbefalet afstand for ${a.species.name}: ${requiredM.toFixed(1)}m. Flyt den ene, eller planlæg at fælde/flytte den når de vokser sig store.`
+            : `Flyt den ene plante mindst ${(requiredM - dist).toFixed(1)}m længere væk.`,
+        });
+      }
+
+      // 2. Bad companion conflict
+      const isBadCompanion = a.species.badCompanions?.includes(b.species.id) || b.species.badCompanions?.includes(a.species.id);
+      if (isBadCompanion && !seen.has(pairKey + ":companion")) {
+        seen.add(pairKey + ":companion");
+        // Only flag if they're within a reasonable "influence" distance (e.g. max of both spreads * 1.5)
+        const influenceM = Math.max(spreadA, spreadB) * 1.5;
+        if (dist < influenceM) {
+          conflicts.push({
+            type: "bad-companion",
+            severity: 2,
+            featureIdA: a.id,
+            featureIdB: b.id,
+            speciesA: a.species,
+            speciesB: b.species,
+            distanceM: dist,
+            requiredM: influenceM,
+            message: `⛔ ${a.species.icon ?? "🌱"} ${a.species.name} og ${b.species.icon ?? "🌱"} ${b.species.name} trives ikke sammen`,
+            suggestion: `Disse planter hæmmer hinanden. Flyt dem til forskellige bede eller placer dem mindst ${influenceM.toFixed(1)}m fra hinanden.`,
+          });
+        }
+      }
+
+      // 3. Layer competition (same layer, different species, close proximity)
+      if (layerA && layerB && layerA === layerB && a.species.id !== b.species.id) {
+        // They compete at the same vertical layer
+        const competitionDist = (spreadA / 2 + spreadB / 2) * 0.8;
+        if (dist < competitionDist && !seen.has(pairKey + ":layer")) {
+          seen.add(pairKey + ":layer");
+          conflicts.push({
+            type: "layer-competition",
+            severity: 1,
+            featureIdA: a.id,
+            featureIdB: b.id,
+            speciesA: a.species,
+            speciesB: b.species,
+            distanceM: dist,
+            requiredM: competitionDist,
+            message: `⚠️ ${a.species.icon ?? "🌱"} ${a.species.name} og ${b.species.icon ?? "🌱"} ${b.species.name} konkurrerer i samme lag (${FOREST_GARDEN_LAYER_LABELS[layerA]})`,
+            suggestion: `Begge er i ${FOREST_GARDEN_LAYER_LABELS[layerA]}-laget. Den ene vil sandsynligvis dominere. Overvej at flytte den ene eller vælge en art i et andet lag.`,
+          });
+        }
+      }
+    }
+  }
+
+  return conflicts;
+}
+
+/**
+ * Check if a PROPOSED placement at [lng, lat] for a species would cause conflicts.
+ * Returns conflicts (preview, no featureIdA).
+ */
+function checkPlacementConflicts(
+  proposedCoords: [number, number],
+  proposedSpecies: PlantSpecies,
+  existingFeatures: GardenFeature[],
+): PlantConflict[] {
+  const conflicts: PlantConflict[] = [];
+  const spreadNew = (proposedSpecies.spreadDiameterCm ?? proposedSpecies.spacingCm ?? 30) / 100;
+  const layerNew = proposedSpecies.forestGardenLayer;
+
+  for (const f of existingFeatures) {
+    if (f.geometry?.type !== "Point") continue;
+    const sid = f.properties?.speciesId;
+    if (!sid) continue;
+    const sp = getPlantById(sid);
+    if (!sp) continue;
+    const coords = f.geometry.coordinates as [number, number];
+    const dist = haversineM(proposedCoords, coords);
+
+    const spreadOther = (sp.spreadDiameterCm ?? sp.spacingCm ?? 30) / 100;
+    const layerOther = sp.forestGardenLayer;
+    const layersCoexist = layerNew && layerOther && canLayersCoexist(layerNew, layerOther);
+
+    // Spacing check
+    let requiredM: number;
+    if (layersCoexist) {
+      const trunkNew = getTrunkExclusionRadiusM(proposedSpecies);
+      const trunkOther = getTrunkExclusionRadiusM(sp);
+      requiredM = trunkNew + trunkOther;
+    } else {
+      requiredM = spreadNew / 2 + spreadOther / 2;
+    }
+
+    if (dist < requiredM * 0.95) {
+      const ratio = dist / requiredM;
+      conflicts.push({
+        type: "spacing",
+        severity: ratio < 0.4 ? 3 : ratio < 0.7 ? 2 : 1,
+        featureIdA: "__proposed__",
+        featureIdB: f.properties!.gardenosId,
+        speciesA: proposedSpecies,
+        speciesB: sp,
+        distanceM: dist,
+        requiredM,
+        message: `For tæt på ${sp.icon ?? "🌱"} ${sp.name} (${dist.toFixed(1)}m / ${requiredM.toFixed(1)}m)`,
+        suggestion: `Anbefalet afstand: ${requiredM.toFixed(1)}m`,
+      });
+    }
+
+    // Bad companion
+    if (proposedSpecies.badCompanions?.includes(sp.id) || sp.badCompanions?.includes(proposedSpecies.id)) {
+      const influenceM = Math.max(spreadNew, spreadOther) * 1.5;
+      if (dist < influenceM) {
+        conflicts.push({
+          type: "bad-companion",
+          severity: 2,
+          featureIdA: "__proposed__",
+          featureIdB: f.properties!.gardenosId,
+          speciesA: proposedSpecies,
+          speciesB: sp,
+          distanceM: dist,
+          requiredM: influenceM,
+          message: `⛔ Dårlig nabo: ${sp.icon ?? "🌱"} ${sp.name}`,
+          suggestion: `Disse arter hæmmer hinanden.`,
+        });
+      }
+    }
+  }
+
+  return conflicts;
+}
+
 /**
  * 2D obstacle circle in geo-coordinates [lng, lat] + radius in meters.
  * Used for bushes, trees, infrastructure elements placed inside beds.
@@ -2946,6 +3170,8 @@ export function GardenMapClient() {
   const [groupSectionOpen, setGroupSectionOpen] = useState(false);
   const edgeLabelLayerGroupRef = useRef<L.LayerGroup | null>(null);
   const rowEmojiLayerGroupRef = useRef<L.LayerGroup | null>(null);
+  const conflictOverlayRef = useRef<L.LayerGroup | null>(null);
+  const placementPreviewRef = useRef<L.LayerGroup | null>(null);
   const [layoutForContainment, setLayoutForContainment] = useState<GardenFeatureCollection>(() => {
     const parsed = safeJsonParse<unknown>(window.localStorage.getItem(STORAGE_LAYOUT_KEY));
     if (isFeatureCollection(parsed)) return parsed;
@@ -3664,20 +3890,192 @@ export function GardenMapClient() {
     [featureGroupRef, mapRef]
   );
 
+  // ---------------------------------------------------------------------------
+  // Conflict overlay: show ⚠️ markers + connecting lines on plants with problems
+  // ---------------------------------------------------------------------------
+  const updateConflictOverlays = useCallback(() => {
+    const map = mapRef.current;
+
+    // Always clear previous overlays
+    if (conflictOverlayRef.current) {
+      conflictOverlayRef.current.clearLayers();
+      if (map && map.hasLayer(conflictOverlayRef.current)) {
+        map.removeLayer(conflictOverlayRef.current);
+      }
+      conflictOverlayRef.current = null;
+    }
+
+    if (!map) return;
+
+    const conflicts = detectPlantConflicts(layoutForContainment.features);
+    if (conflicts.length === 0) return;
+
+    const overlayGroup = L.layerGroup();
+
+    // Collect unique feature IDs that have conflicts
+    const featureConflictMap = new Map<string, PlantConflict[]>();
+    for (const c of conflicts) {
+      if (!featureConflictMap.has(c.featureIdA)) featureConflictMap.set(c.featureIdA, []);
+      featureConflictMap.get(c.featureIdA)!.push(c);
+      if (!featureConflictMap.has(c.featureIdB)) featureConflictMap.set(c.featureIdB, []);
+      featureConflictMap.get(c.featureIdB)!.push(c);
+    }
+
+    // For each conflict, draw a dashed line between the two features
+    for (const c of conflicts) {
+      const fA = layoutForContainment.features.find((f) => f.properties?.gardenosId === c.featureIdA);
+      const fB = layoutForContainment.features.find((f) => f.properties?.gardenosId === c.featureIdB);
+      if (!fA || !fB || fA.geometry?.type !== "Point" || fB.geometry?.type !== "Point") continue;
+
+      const coordsA = fA.geometry.coordinates as [number, number];
+      const coordsB = fB.geometry.coordinates as [number, number];
+      const lineColor = c.severity === 3 ? "#dc2626" : c.severity === 2 ? "#ea580c" : "#eab308";
+
+      const line = L.polyline(
+        [[coordsA[1], coordsA[0]], [coordsB[1], coordsB[0]]],
+        { color: lineColor, weight: 2, opacity: 0.6, dashArray: "6 4", interactive: false },
+      );
+      overlayGroup.addLayer(line);
+    }
+
+    // For each conflicted feature, place a small warning DivIcon
+    const processedFeatures = new Set<string>();
+    for (const [featureId, fConflicts] of featureConflictMap) {
+      if (processedFeatures.has(featureId)) continue;
+      processedFeatures.add(featureId);
+
+      const feat = layoutForContainment.features.find((f) => f.properties?.gardenosId === featureId);
+      if (!feat || feat.geometry?.type !== "Point") continue;
+      const coords = feat.geometry.coordinates as [number, number];
+
+      const worstSeverity = Math.max(...fConflicts.map((c) => c.severity)) as 1 | 2 | 3;
+      const emoji = worstSeverity === 3 ? "🔴" : worstSeverity === 2 ? "🟠" : "🟡";
+      const badgeSize = 14;
+
+      const badge = L.marker([coords[1], coords[0]], {
+        icon: L.divIcon({
+          className: "gardenos-conflict-badge",
+          html: `<span style="font-size:${badgeSize}px;line-height:1;cursor:pointer">${emoji}</span>`,
+          iconSize: [badgeSize, badgeSize],
+          iconAnchor: [-4, badgeSize + 4], // offset to top-right of the plant icon
+        }),
+        interactive: true,
+        zIndexOffset: 2000,
+      });
+
+      // Build popup content
+      const uniqueMessages = [...new Set(fConflicts.map((c) => c.message))];
+      const uniqueSuggestions = [...new Set(fConflicts.map((c) => c.suggestion))];
+      const popupHtml = `
+        <div style="max-width:260px;font-size:12px;line-height:1.4">
+          <p style="font-weight:bold;margin:0 0 4px">${worstSeverity === 3 ? "🔴 Alvorlige konflikter" : worstSeverity === 2 ? "🟠 Advarsler" : "🟡 Bemærkninger"}</p>
+          ${uniqueMessages.map((m) => `<p style="margin:2px 0">${m}</p>`).join("")}
+          <hr style="margin:6px 0;border:0;border-top:1px solid #ddd"/>
+          <p style="font-weight:600;margin:0 0 2px">💡 Forslag:</p>
+          ${uniqueSuggestions.map((s) => `<p style="margin:2px 0;color:#555">${s}</p>`).join("")}
+        </div>
+      `;
+      badge.bindPopup(popupHtml, { maxWidth: 280, closeButton: true });
+
+      overlayGroup.addLayer(badge);
+    }
+
+    overlayGroup.addTo(map);
+    conflictOverlayRef.current = overlayGroup;
+  }, [layoutForContainment, mapRef]);
+
+  // ---------------------------------------------------------------------------
+  // Placement preview: green/red circle following the cursor during draw mode
+  // ---------------------------------------------------------------------------
+  const updatePlacementPreview = useCallback((latlng: L.LatLng | null) => {
+    const map = mapRef.current;
+
+    // Clear previous preview
+    if (placementPreviewRef.current) {
+      placementPreviewRef.current.clearLayers();
+      if (map && map.hasLayer(placementPreviewRef.current)) {
+        map.removeLayer(placementPreviewRef.current);
+      }
+      placementPreviewRef.current = null;
+    }
+
+    if (!map || !latlng) return;
+
+    // Only show preview when a species is selected for placement
+    const pending = createSpeciesRef.current;
+    if (!pending?.speciesId) return;
+    const species = getPlantById(pending.speciesId);
+    if (!species) return;
+
+    const coords: [number, number] = [latlng.lng, latlng.lat];
+    const spreadM = (species.spreadDiameterCm ?? species.spacingCm ?? 30) / 100;
+    const radiusM = spreadM / 2;
+
+    // Check conflicts at this position
+    const previewConflicts = checkPlacementConflicts(coords, species, layoutForContainment.features);
+    const hasConflict = previewConflicts.length > 0;
+    const worstSeverity = hasConflict ? Math.max(...previewConflicts.map((c) => c.severity)) : 0;
+
+    const color = worstSeverity >= 2 ? "#dc2626" : worstSeverity === 1 ? "#eab308" : "#22c55e";
+    const fillColor = worstSeverity >= 2 ? "#dc2626" : worstSeverity === 1 ? "#eab308" : "#22c55e";
+
+    const previewGroup = L.layerGroup();
+
+    // Spread/canopy circle
+    const circle = L.circle(latlng, {
+      radius: radiusM,
+      color,
+      fillColor,
+      fillOpacity: 0.15,
+      weight: 2,
+      opacity: 0.7,
+      dashArray: "4 4",
+      interactive: false,
+    });
+    previewGroup.addLayer(circle);
+
+    // Status label
+    if (hasConflict) {
+      const worstMsg = previewConflicts.reduce((worst, c) => c.severity > worst.severity ? c : worst, previewConflicts[0]);
+      const labelIcon = L.divIcon({
+        className: "gardenos-placement-label",
+        html: `<div style="background:${color};color:white;font-size:10px;padding:2px 6px;border-radius:4px;white-space:nowrap;pointer-events:none;font-weight:600">${worstSeverity >= 2 ? "⚠️" : "💡"} ${worstMsg.message}</div>`,
+        iconSize: [200, 20],
+        iconAnchor: [100, -10],
+      });
+      const label = L.marker(latlng, { icon: labelIcon, interactive: false, zIndexOffset: 3000 });
+      previewGroup.addLayer(label);
+    } else {
+      const okIcon = L.divIcon({
+        className: "gardenos-placement-label",
+        html: `<div style="background:#22c55e;color:white;font-size:10px;padding:2px 6px;border-radius:4px;white-space:nowrap;pointer-events:none;font-weight:600">✅ God placering</div>`,
+        iconSize: [120, 20],
+        iconAnchor: [60, -10],
+      });
+      const label = L.marker(latlng, { icon: okIcon, interactive: false, zIndexOffset: 3000 });
+      previewGroup.addLayer(label);
+    }
+
+    previewGroup.addTo(map);
+    placementPreviewRef.current = previewGroup;
+  }, [layoutForContainment, mapRef]);
+
   // Re-run visuals when highlightedGroupId changes
   useEffect(() => {
     highlightedGroupIdRef.current = highlightedGroupId;
     updateSelectionStyles(selected?.gardenosId ?? null);
     updateEdgeLabels(selected?.gardenosId ?? null);
     updateRowEmojiOverlays();
-  }, [highlightedGroupId, selected?.gardenosId, updateSelectionStyles, updateEdgeLabels, updateRowEmojiOverlays]);
+    updateConflictOverlays();
+  }, [highlightedGroupId, selected?.gardenosId, updateSelectionStyles, updateEdgeLabels, updateRowEmojiOverlays, updateConflictOverlays]);
 
   useEffect(() => {
     multiSelectedIdsRef.current = multiSelectedIds;
     updateSelectionStyles(selected?.gardenosId ?? null);
     updateEdgeLabels(selected?.gardenosId ?? null);
     updateRowEmojiOverlays();
-  }, [layoutForContainment, multiSelectedIds, selected?.gardenosId, updateSelectionStyles, updateEdgeLabels, updateRowEmojiOverlays]);
+    updateConflictOverlays();
+  }, [layoutForContainment, multiSelectedIds, selected?.gardenosId, updateSelectionStyles, updateEdgeLabels, updateRowEmojiOverlays, updateConflictOverlays]);
 
   useEffect(() => {
     selectedRef.current = selected;
@@ -3689,6 +4087,37 @@ export function GardenMapClient() {
     setDraftNotes(selected?.feature.properties?.notes ?? "");
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selected?.gardenosId]); // only when selection identity changes, not every render
+
+  // ---------------------------------------------------------------------------
+  // Placement preview: mousemove handler while in "plant" draw mode
+  // ---------------------------------------------------------------------------
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+
+    if (drawMode !== "plant") {
+      // Clean up preview when leaving draw mode
+      updatePlacementPreview(null);
+      return;
+    }
+
+    const onMouseMove = (e: L.LeafletMouseEvent) => {
+      updatePlacementPreview(e.latlng);
+    };
+
+    const onMouseOut = () => {
+      updatePlacementPreview(null);
+    };
+
+    map.on("mousemove", onMouseMove);
+    map.on("mouseout", onMouseOut);
+
+    return () => {
+      map.off("mousemove", onMouseMove);
+      map.off("mouseout", onMouseOut);
+      updatePlacementPreview(null);
+    };
+  }, [drawMode, mapRef, updatePlacementPreview]);
 
   const attachClickHandler = useCallback(
     (layer: L.Layer, feature: GardenFeature) => {
@@ -6074,6 +6503,22 @@ export function GardenMapClient() {
           border-color: rgba(245, 158, 11, 0.4);
         }
 
+        /* Conflict badge (warning icon on conflicted plants) */
+        .gardenos-conflict-badge {
+          background: transparent !important;
+          border: none !important;
+          z-index: 1500 !important;
+          pointer-events: auto;
+        }
+
+        /* Placement preview label (floating status while drawing) */
+        .gardenos-placement-label {
+          background: transparent !important;
+          border: none !important;
+          pointer-events: none;
+          z-index: 2000 !important;
+        }
+
         .leaflet-tooltip.gardenos-tooltip {
           background: var(--background);
           color: var(--foreground);
@@ -8370,6 +8815,51 @@ export function GardenMapClient() {
                           </div>
                         ) : null}
                       </div>
+                    </div>
+                  );
+                })() : null}
+
+                {/* ── Konflikter for dette element ── */}
+                {selected.feature.properties?.speciesId && selected.feature.geometry?.type === "Point" ? (() => {
+                  const myId = selected.gardenosId;
+                  const allConflicts = detectPlantConflicts(layoutForContainment.features);
+                  const myConflicts = allConflicts.filter((c) => c.featureIdA === myId || c.featureIdB === myId);
+                  if (myConflicts.length === 0) return null;
+                  const worstSeverity = Math.max(...myConflicts.map((c) => c.severity));
+                  const borderColor = worstSeverity === 3 ? "border-red-400" : worstSeverity === 2 ? "border-orange-400" : "border-yellow-400";
+                  const bgColor = worstSeverity === 3 ? "bg-red-50/60" : worstSeverity === 2 ? "bg-orange-50/60" : "bg-yellow-50/60";
+                  return (
+                    <div className={`rounded-lg border-2 ${borderColor} ${bgColor} p-2.5 space-y-2`}>
+                      <p className="text-[10px] font-bold text-foreground/70">
+                        {worstSeverity === 3 ? "🔴" : worstSeverity === 2 ? "🟠" : "🟡"} {myConflicts.length} konflikt{myConflicts.length > 1 ? "er" : ""} fundet
+                      </p>
+                      {myConflicts.map((c, idx) => {
+                        const other = c.featureIdA === myId ? c.speciesB : c.speciesA;
+                        const icon = c.type === "spacing" ? "📏" : c.type === "bad-companion" ? "⛔" : "⚠️";
+                        const typeLabel = c.type === "spacing" ? "Afstand" : c.type === "bad-companion" ? "Dårlig nabo" : "Lag-konkurrence";
+                        return (
+                          <div key={idx} className="rounded-md bg-white/60 border border-foreground/10 p-2 space-y-1">
+                            <div className="flex items-center gap-1.5">
+                              <span className="text-sm">{icon}</span>
+                              <span className="text-[10px] font-semibold text-foreground/70">{typeLabel}</span>
+                              <span className="text-[10px] text-foreground/40 ml-auto">{other.icon ?? "🌱"} {other.name}</span>
+                            </div>
+                            <p className="text-[10px] text-foreground/60">{c.message}</p>
+                            <p className="text-[10px] text-foreground/40 italic">💡 {c.suggestion}</p>
+                            {c.type === "spacing" ? (
+                              <div className="flex items-center gap-2 mt-1">
+                                <div className="flex-1 h-1.5 rounded-full bg-foreground/10 overflow-hidden">
+                                  <div
+                                    className={`h-full rounded-full ${c.severity === 3 ? "bg-red-500" : c.severity === 2 ? "bg-orange-400" : "bg-yellow-400"}`}
+                                    style={{ width: `${Math.min(100, (c.distanceM / c.requiredM) * 100)}%` }}
+                                  />
+                                </div>
+                                <span className="text-[9px] text-foreground/40 shrink-0">{c.distanceM.toFixed(1)}m / {c.requiredM.toFixed(1)}m</span>
+                              </div>
+                            ) : null}
+                          </div>
+                        );
+                      })}
                     </div>
                   );
                 })() : null}
