@@ -31,6 +31,13 @@ export interface InfraElement {
   featureKind: string;
   /** Optional extra tips shown in tooltip */
   tips?: string;
+  /**
+   * Physical exclusion radius in cm.
+   * When placed inside a bed, auto-rows must stay outside this radius.
+   * Useful for sprinklers (spray radius), barrels (physical footprint), etc.
+   * If not set, point features get a default 15 cm exclusion.
+   */
+  exclusionRadiusCm?: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -80,6 +87,7 @@ const WATER_ELEMENTS: InfraElement[] = [
     geometry: "point",
     featureKind: "water-tap",
     tips: "Markér hanens placering på kortet",
+    exclusionRadiusCm: 25,
   },
   {
     id: "water-sprinkler",
@@ -91,6 +99,7 @@ const WATER_ELEMENTS: InfraElement[] = [
     geometry: "point",
     featureKind: "water-sprinkler",
     tips: "Placér sprinkleren som en markør",
+    exclusionRadiusCm: 50,
   },
   {
     id: "water-timer",
@@ -113,6 +122,7 @@ const WATER_ELEMENTS: InfraElement[] = [
     geometry: "point",
     featureKind: "water-barrel",
     tips: "Placér tønden under et nedløb",
+    exclusionRadiusCm: 40,
   },
 ];
 
@@ -185,6 +195,7 @@ const ELECTRIC_ELEMENTS: InfraElement[] = [
     geometry: "point",
     featureKind: "electric-solar",
     tips: "Placér panelet i solrig position",
+    exclusionRadiusCm: 60,
   },
 ];
 

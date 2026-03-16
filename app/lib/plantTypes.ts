@@ -287,6 +287,13 @@ export type PlantSpecies = {
   rowSpacingCm?: number;
   /** Root depth in cm */
   rootDepthCm?: number;
+  /**
+   * Mature spread / canopy diameter in cm.
+   * Used for 2D obstacle exclusion when placed as point features in beds.
+   * Other rows/features must stay outside this circle.
+   * If not set, falls back to spacingCm.
+   */
+  spreadDiameterCm?: number;
 
   // ── Environmental needs ──
   light?: LightNeed;
