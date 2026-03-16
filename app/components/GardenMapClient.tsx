@@ -6942,8 +6942,9 @@ export function GardenMapClient() {
             ) : null}
 
 
-            {/* ── Auto-row creation panel ── */}
+            {/* ── Auto-row + Auto-element panels ── */}
             {selectedIsPolygon && (selectedCategory === "seedbed" || selectedCategory === "area" || selectedCategory === "container") ? (
+              <>
               <div className="rounded-lg border border-accent/30 bg-accent-light/10 p-2.5 space-y-2">
                 <button
                   type="button"
@@ -7428,10 +7429,8 @@ export function GardenMapClient() {
                   );
                 })() : null}
               </div>
-            ) : null}
 
-            {/* ── Auto-element placement panel ── */}
-            {selectedIsPolygon && (selectedCategory === "seedbed" || selectedCategory === "area" || selectedCategory === "container") ? (
+              {/* ── Auto-element placement panel ── */}
               <div className="rounded-lg border border-green-600/30 bg-green-50/20 dark:bg-green-900/15 dark:border-green-500/25 p-2.5 space-y-2">
                 <button
                   type="button"
@@ -7794,6 +7793,7 @@ export function GardenMapClient() {
                   );
                 })() : null}
               </div>
+              </>
             ) : null}
 
             {/* ── Linked infra element type display ── */}
