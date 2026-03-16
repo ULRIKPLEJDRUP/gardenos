@@ -1,7 +1,7 @@
 // ---------------------------------------------------------------------------
 // GardenOS – Service Worker (minimal offline-capable PWA shell)
 // ---------------------------------------------------------------------------
-const CACHE_NAME = "gardenos-v6";
+const CACHE_NAME = "gardenos-v7";
 const PRECACHE_URLS = [
   "/",
   "/login",
@@ -23,6 +23,13 @@ self.addEventListener("activate", (event) => {
       Promise.all(keys.filter((k) => k !== CACHE_NAME).map((k) => caches.delete(k)))
     ).then(() => self.clients.claim())
   );
+});
+
+// Listen for SKIP_WAITING message from the page so new SW activates immediately
+self.addEventListener("message", (event) => {
+  if (event.data && event.data.type === "SKIP_WAITING") {
+    self.skipWaiting();
+  }
 });
 
 // Fetch: ALWAYS network-first for HTML and _next/ assets.

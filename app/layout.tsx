@@ -55,8 +55,41 @@ export default function RootLayout({
           dangerouslySetInnerHTML={{
             __html: `
               if ('serviceWorker' in navigator) {
-                window.addEventListener('load', () => {
-                  navigator.serviceWorker.register('/sw.js').catch(() => {});
+                window.addEventListener('load', async () => {
+                  try {
+                    // Register / get existing registration
+                    const reg = await navigator.serviceWorker.register('/sw.js');
+
+                    // Force check for a new SW every page-load
+                    reg.update();
+
+                    // If a new SW is waiting right now, tell it to activate
+                    if (reg.waiting) {
+                      reg.waiting.postMessage({ type: 'SKIP_WAITING' });
+                    }
+
+                    // When a new SW moves to waiting, activate it immediately
+                    reg.addEventListener('updatefound', () => {
+                      const newSW = reg.installing;
+                      if (!newSW) return;
+                      newSW.addEventListener('statechange', () => {
+                        if (newSW.state === 'installed' && navigator.serviceWorker.controller) {
+                          newSW.postMessage({ type: 'SKIP_WAITING' });
+                        }
+                      });
+                    });
+
+                    // When the new SW takes control, reload to get fresh assets
+                    let refreshing = false;
+                    navigator.serviceWorker.addEventListener('controllerchange', () => {
+                      if (!refreshing) {
+                        refreshing = true;
+                        window.location.reload();
+                      }
+                    });
+                  } catch (e) {
+                    // SW registration failed – app still works without it
+                  }
                 });
               }
             `,
