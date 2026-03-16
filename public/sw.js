@@ -8,7 +8,7 @@ const PRECACHE_URLS = [
   "/manifest.json",
 ];
 
-// Install: pre-cache shell
+// Install: pre-cache shell — force immediate activation
 self.addEventListener("install", (event) => {
   event.waitUntil(
     caches.open(CACHE_NAME).then((cache) => cache.addAll(PRECACHE_URLS))
@@ -16,17 +16,17 @@ self.addEventListener("install", (event) => {
   self.skipWaiting();
 });
 
-// Activate: clean old caches
+// Activate: delete ALL old caches, then claim all clients immediately
 self.addEventListener("activate", (event) => {
   event.waitUntil(
     caches.keys().then((keys) =>
       Promise.all(keys.filter((k) => k !== CACHE_NAME).map((k) => caches.delete(k)))
-    )
+    ).then(() => self.clients.claim())
   );
-  self.clients.claim();
 });
 
-// Fetch: network-first with cache fallback for navigation requests
+// Fetch: ALWAYS network-first for HTML and _next/ assets.
+// Only use cache as offline fallback.
 self.addEventListener("fetch", (event) => {
   const { request } = event;
 
@@ -49,8 +49,6 @@ self.addEventListener("fetch", (event) => {
   }
 
   // For _next/ assets – network first, cache fallback
-  // This ensures code updates (new features, bug fixes) are always loaded
-  // when online, while still working offline from cache.
   if (request.url.includes("/_next/")) {
     event.respondWith(
       fetch(request)
@@ -64,20 +62,18 @@ self.addEventListener("fetch", (event) => {
     return;
   }
 
-  // For other static assets (images, fonts) – cache first, network fallback
+  // For other static assets (images, fonts) – network first too (safer)
   if (
     request.url.match(/\.(png|jpg|jpeg|svg|ico|woff2?)(\?.*)?$/)
   ) {
     event.respondWith(
-      caches.match(request).then(
-        (cached) =>
-          cached ||
-          fetch(request).then((response) => {
-            const clone = response.clone();
-            caches.open(CACHE_NAME).then((cache) => cache.put(request, clone));
-            return response;
-          })
-      )
+      fetch(request)
+        .then((response) => {
+          const clone = response.clone();
+          caches.open(CACHE_NAME).then((cache) => cache.put(request, clone));
+          return response;
+        })
+        .catch(() => caches.match(request))
     );
     return;
   }
