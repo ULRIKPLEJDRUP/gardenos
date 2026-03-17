@@ -6583,8 +6583,14 @@ export function GardenMapClient() {
 
         /* ── Scale bar styling ── */
         .leaflet-control-scale {
-          margin-bottom: 12px !important;
+          margin-bottom: 80px !important;   /* clear the mobile bottom-nav (~60px + safe-area) */
           margin-left: 12px !important;
+          z-index: 800 !important;          /* above map tiles, below UI overlays */
+        }
+        @media (min-width: 768px) {
+          .leaflet-control-scale {
+            margin-bottom: 16px !important; /* desktop: no bottom-nav, keep tighter */
+          }
         }
         .leaflet-control-scale-line {
           background: rgba(255, 255, 255, 0.85) !important;
