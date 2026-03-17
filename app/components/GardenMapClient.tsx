@@ -697,6 +697,26 @@ function areaForPolygonFeature(feature: Feature<Polygon, GardenFeatureProperties
   return geodesicArea(latlngs);
 }
 
+/** Compute geodesic area (m²) from an array of LatLng using local projection + shoelace. */
+function computeGeodesicArea(latlngs: L.LatLng[]): number {
+  if (latlngs.length < 3) return 0;
+  const cLat = latlngs.reduce((s, p) => s + p.lat, 0) / latlngs.length;
+  const cLng = latlngs.reduce((s, p) => s + p.lng, 0) / latlngs.length;
+  const origin = L.latLng(cLat, cLng);
+  const projected = latlngs.map((ll) => {
+    const dx = origin.distanceTo(L.latLng(origin.lat, ll.lng)) * (ll.lng >= origin.lng ? 1 : -1);
+    const dy = origin.distanceTo(L.latLng(ll.lat, origin.lng)) * (ll.lat >= origin.lat ? 1 : -1);
+    return { x: dx, y: dy };
+  });
+  let area = 0;
+  for (let i = 0; i < projected.length; i++) {
+    const j = (i + 1) % projected.length;
+    area += projected[i].x * projected[j].y;
+    area -= projected[j].x * projected[i].y;
+  }
+  return Math.abs(area) / 2;
+}
+
 function isPolygon(feature: GardenFeature): feature is Feature<Polygon, GardenFeatureProperties> {
   return feature.geometry.type === "Polygon";
 }
@@ -2408,143 +2428,307 @@ function MapDrawControls({
 }
 
 // ---------------------------------------------------------------------------
-// MapToolbar – Custom zoom + scale + ruler in one sleek panel (topleft)
+// MapToolbar – Horizontal frosted-glass bar: zoom · scale · distance · area
 // ---------------------------------------------------------------------------
 function MapToolbar() {
   const map = useMap();
-  const [scaleText, setScaleText] = useState("");
-  const [measuring, setMeasuring] = useState(false);
+  const [scaleLabel, setScaleLabel] = useState("1 m");
+  const [scaleBarPx, setScaleBarPx] = useState(60);
+  const [measureMode, setMeasureMode] = useState<null | "distance" | "area">(null);
+  const [measureTotal, setMeasureTotal] = useState(0);
+  const [measureSegments, setMeasureSegments] = useState(0);
+  const [measureArea, setMeasureArea] = useState<number | undefined>();
 
   // Compute a human-readable scale whenever the map moves/zooms
   useEffect(() => {
     const update = () => {
-      // Compute metres per screen-pixel at center of map
-      const center = map.getCenter();
       const size = map.getSize();
       const p1 = map.containerPointToLatLng(L.point(size.x / 2 - 50, size.y / 2));
       const p2 = map.containerPointToLatLng(L.point(size.x / 2 + 50, size.y / 2));
-      const dist = p1.distanceTo(p2); // metres across 100px
-      // Pick a nice round scale value
-      const niceValues = [0.1, 0.2, 0.5, 1, 2, 5, 10, 20, 50, 100, 200, 500, 1000, 2000, 5000];
+      const dist = p1.distanceTo(p2); // metres across 100 px
       const mPerPx = dist / 100;
-      const targetM = mPerPx * 80; // ~80px bar
+      const niceValues = [0.1, 0.2, 0.5, 1, 2, 5, 10, 20, 50, 100, 200, 500, 1000, 2000, 5000];
+      const targetM = mPerPx * 80;
       let best = niceValues[0];
-      for (const v of niceValues) {
-        if (v <= targetM * 1.2) best = v;
-      }
-      const label = best < 1 ? `${Math.round(best * 100)} cm` : best >= 1000 ? `${(best / 1000).toFixed(best >= 2000 ? 0 : 1)} km` : `${best} m`;
-      const barPx = Math.round(best / mPerPx);
-      setScaleText(`${label}|${barPx}`);
+      for (const v of niceValues) { if (v <= targetM * 1.2) best = v; }
+      const label = best < 1
+        ? `${Math.round(best * 100)} cm`
+        : best >= 1000
+          ? `${(best / 1000).toFixed(best >= 2000 ? 0 : 1)} km`
+          : `${best} m`;
+      setScaleLabel(label);
+      setScaleBarPx(Math.max(30, Math.min(Math.round(best / mPerPx), 120)));
     };
     update();
     map.on("zoomend moveend resize", update);
     return () => { map.off("zoomend moveend resize", update); };
   }, [map]);
 
-  const [label, barPxStr] = scaleText.split("|");
-  const barPx = parseInt(barPxStr) || 60;
+  const handleMeasureUpdate = useCallback(
+    (total: number, segments: number, area?: number) => {
+      setMeasureTotal(total);
+      setMeasureSegments(segments);
+      setMeasureArea(area);
+    },
+    [],
+  );
+
+  const closeMeasure = useCallback(() => {
+    setMeasureMode(null);
+    setMeasureTotal(0);
+    setMeasureSegments(0);
+    setMeasureArea(undefined);
+  }, []);
+
+  const toggleMode = (mode: "distance" | "area") => {
+    if (measureMode === mode) { closeMeasure(); return; }
+    setMeasureMode(mode);
+    setMeasureTotal(0);
+    setMeasureSegments(0);
+    setMeasureArea(undefined);
+  };
+
+  const isActive = measureMode !== null;
 
   return (
-    <div className="gardenos-map-toolbar" onClick={(e) => e.stopPropagation()}>
-      {/* Zoom buttons */}
-      <button type="button" title="Zoom ind" className="toolbar-btn" onClick={() => map.zoomIn()}>
-        <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2"><line x1="8" y1="3" x2="8" y2="13"/><line x1="3" y1="8" x2="13" y2="8"/></svg>
-      </button>
-      <div className="toolbar-divider" />
-      <button type="button" title="Zoom ud" className="toolbar-btn" onClick={() => map.zoomOut()}>
-        <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2"><line x1="3" y1="8" x2="13" y2="8"/></svg>
-      </button>
-      <div className="toolbar-divider" />
-      {/* Scale readout */}
-      <div className="toolbar-scale" title="Dynamisk skala">
-        <div className="scale-bar" style={{ width: `${Math.min(barPx, 100)}px` }} />
-        <span className="scale-label">{label}</span>
+    <>
+      <div className="gardenos-map-toolbar" onClick={(e) => e.stopPropagation()}>
+        {/* Zoom in */}
+        <button type="button" title="Zoom ind" className="toolbar-btn" onClick={() => map.zoomIn()}>
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2">
+            <line x1="8" y1="3" x2="8" y2="13"/><line x1="3" y1="8" x2="13" y2="8"/>
+          </svg>
+        </button>
+        {/* Zoom out */}
+        <button type="button" title="Zoom ud" className="toolbar-btn" onClick={() => map.zoomOut()}>
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2">
+            <line x1="3" y1="8" x2="13" y2="8"/>
+          </svg>
+        </button>
+
+        <div className="toolbar-sep" />
+
+        {/* Scale ruler */}
+        <div className="toolbar-scale" title="Dynamisk skala">
+          <div className="scale-ruler" style={{ width: `${scaleBarPx}px` }}>
+            <div className="scale-tick" />
+            <div className="scale-line" />
+            <div className="scale-tick" />
+          </div>
+          <span className="scale-label">{scaleLabel}</span>
+        </div>
+
+        <div className="toolbar-sep" />
+
+        {/* Distance measure */}
+        <button
+          type="button"
+          title={measureMode === "distance" ? "Afslut afstandsm\u00e5ling (Esc)" : "M\u00e5l afstand"}
+          className={`toolbar-btn ${measureMode === "distance" ? "toolbar-btn--active" : ""}`}
+          onClick={() => toggleMode("distance")}
+        >
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5">
+            <line x1="2" y1="14" x2="14" y2="2" strokeDasharray="2 2"/>
+            <line x1="2" y1="14" x2="2" y2="10"/><line x1="2" y1="14" x2="6" y2="14"/>
+            <line x1="14" y1="2" x2="14" y2="6"/><line x1="14" y1="2" x2="10" y2="2"/>
+          </svg>
+        </button>
+        {/* Area measure */}
+        <button
+          type="button"
+          title={measureMode === "area" ? "Afslut arealm\u00e5ling (Esc)" : "M\u00e5l areal"}
+          className={`toolbar-btn ${measureMode === "area" ? "toolbar-btn--active" : ""}`}
+          onClick={() => toggleMode("area")}
+        >
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5">
+            <polygon points="3,13 2,5 7,2 14,4 13,12 8,14" fill="none"/>
+          </svg>
+        </button>
+
+        {/* Inline measurement result */}
+        {isActive && (
+          <>
+            <div className="toolbar-sep" />
+            <div className="toolbar-result">
+              {measureSegments === 0 ? (
+                <span className="result-hint">Klik p\u00e5 kortet</span>
+              ) : measureMode === "area" && measureArea != null ? (
+                <>
+                  <span className="result-value result-value--area">{formatAreaSquareMeters(measureArea)}</span>
+                  <span className="result-detail">{formatEdgeLength(measureTotal)} omk.</span>
+                </>
+              ) : (
+                <>
+                  <span className="result-value">{formatEdgeLength(measureTotal)}</span>
+                  {measureSegments > 1 && <span className="result-detail">{measureSegments} seg</span>}
+                </>
+              )}
+            </div>
+            <button type="button" className="toolbar-btn toolbar-btn--close" onClick={closeMeasure} title="Luk (Esc)">
+              <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="2">
+                <line x1="2" y1="2" x2="10" y2="10"/><line x1="10" y1="2" x2="2" y2="10"/>
+              </svg>
+            </button>
+          </>
+        )}
       </div>
-      <div className="toolbar-divider" />
-      {/* Measure button */}
-      <button
-        type="button"
-        title={measuring ? "Afslut m\u00e5ling (Esc)" : "M\u00e5l afstand"}
-        className={`toolbar-btn ${measuring ? "toolbar-btn--active" : ""}`}
-        onClick={() => setMeasuring((v) => !v)}
-      >
-        <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5">
-          <line x1="1" y1="14" x2="14" y2="1" strokeDasharray="2 2" />
-          <line x1="1" y1="14" x2="1" y2="10" />
-          <line x1="1" y1="14" x2="5" y2="14" />
-          <line x1="14" y1="1" x2="14" y2="5" />
-          <line x1="14" y1="1" x2="10" y2="1" />
-        </svg>
-      </button>
-      {measuring && <MeasureOverlay onClose={() => setMeasuring(false)} />}
-    </div>
+
+      {/* Keyboard hints (subtle, below toolbar) */}
+      {isActive && (
+        <div className="gardenos-measure-hint-bar">
+          {measureMode === "area"
+            ? "Klik = hj\u00f8rne \u00b7 Klik 1. punkt / dblklik = luk polygon \u00b7 \u2318Z = fortryd \u00b7 Esc = luk"
+            : "Klik = tilf\u00f8j punkt \u00b7 \u2318Z = fortryd \u00b7 Esc = luk"}
+        </div>
+      )}
+
+      {/* Measure overlay (Leaflet layers only – no DOM) */}
+      {measureMode && (
+        <MeasureOverlay
+          key={measureMode}
+          mode={measureMode}
+          onUpdate={handleMeasureUpdate}
+          onClose={closeMeasure}
+        />
+      )}
+    </>
   );
 }
 
 // ---------------------------------------------------------------------------
-// MeasureOverlay – click-to-place waypoints, shows segment + total distance
+// MeasureOverlay – distance or area measurement via Leaflet layers
 // ---------------------------------------------------------------------------
-function MeasureOverlay({ onClose }: { onClose: () => void }) {
+function MeasureOverlay({ mode, onUpdate, onClose }: {
+  mode: "distance" | "area";
+  onUpdate: (total: number, segments: number, area?: number) => void;
+  onClose: () => void;
+}) {
   const map = useMap();
   const pointsRef = useRef<L.LatLng[]>([]);
   const layerGroupRef = useRef<L.LayerGroup | null>(null);
   const ghostLineRef = useRef<L.Polyline | null>(null);
   const ghostLabelRef = useRef<L.Marker | null>(null);
-  const [totalDist, setTotalDist] = useState(0);
-  const [segCount, setSegCount] = useState(0);
+  const closedRef = useRef(false);
 
   useEffect(() => {
     const lg = L.layerGroup().addTo(map);
     layerGroupRef.current = lg;
     map.getContainer().style.cursor = "crosshair";
+    map.doubleClickZoom.disable();
 
-    const onClick = (e: L.LeafletMouseEvent) => {
+    const accent = mode === "area" ? "#1d6fa5" : "#2d7a3a";
+
+    /* ---- full redraw from pointsRef ---- */
+    const redraw = () => {
+      lg.clearLayers();
+      ghostLineRef.current = null;
+      ghostLabelRef.current = null;
       const pts = pointsRef.current;
-      pts.push(e.latlng);
+      let total = 0;
 
-      // Dot marker
-      L.circleMarker(e.latlng, {
-        radius: 5, color: "#fff", fillColor: "#2d7a3a", fillOpacity: 1, weight: 2,
-      }).addTo(lg);
-
-      if (pts.length > 1) {
-        const prev = pts[pts.length - 2];
-        const segDist = prev.distanceTo(e.latlng);
-
-        // Segment line
-        L.polyline([prev, e.latlng], {
-          color: "#2d7a3a", weight: 2.5, opacity: 0.85, dashArray: "6,4",
+      for (let i = 0; i < pts.length; i++) {
+        // Vertex dot
+        L.circleMarker(pts[i], {
+          radius: 4, color: "#fff", fillColor: accent, fillOpacity: 1, weight: 2,
         }).addTo(lg);
 
-        // Segment label at midpoint
-        const mid = L.latLng((prev.lat + e.latlng.lat) / 2, (prev.lng + e.latlng.lng) / 2);
-        L.marker(mid, {
+        if (i > 0) {
+          const segDist = pts[i - 1].distanceTo(pts[i]);
+          total += segDist;
+          L.polyline([pts[i - 1], pts[i]], {
+            color: accent, weight: 2, opacity: 0.85, dashArray: "6,4",
+          }).addTo(lg);
+          const mid = L.latLng((pts[i - 1].lat + pts[i].lat) / 2, (pts[i - 1].lng + pts[i].lng) / 2);
+          L.marker(mid, {
+            icon: L.divIcon({
+              className: "gardenos-measure-label",
+              html: `<span>${formatEdgeLength(segDist)}</span>`,
+              iconSize: [80, 22], iconAnchor: [40, 11],
+            }),
+            interactive: false,
+          }).addTo(lg);
+        }
+      }
+
+      /* Area mode: closed polygon */
+      if (mode === "area" && closedRef.current && pts.length >= 3) {
+        const closeDist = pts[pts.length - 1].distanceTo(pts[0]);
+        total += closeDist;
+        // Closing segment
+        L.polyline([pts[pts.length - 1], pts[0]], {
+          color: accent, weight: 2, opacity: 0.85, dashArray: "6,4",
+        }).addTo(lg);
+        const closeMid = L.latLng(
+          (pts[pts.length - 1].lat + pts[0].lat) / 2,
+          (pts[pts.length - 1].lng + pts[0].lng) / 2,
+        );
+        L.marker(closeMid, {
           icon: L.divIcon({
             className: "gardenos-measure-label",
-            html: `<span>${formatEdgeLength(segDist)}</span>`,
-            iconSize: [80, 22],
-            iconAnchor: [40, 11],
+            html: `<span>${formatEdgeLength(closeDist)}</span>`,
+            iconSize: [80, 22], iconAnchor: [40, 11],
           }),
           interactive: false,
         }).addTo(lg);
-      }
+        // Filled polygon
+        L.polygon(pts, {
+          color: accent, weight: 2, fillColor: accent, fillOpacity: 0.10, dashArray: "6,4",
+        }).addTo(lg);
+        // Area label at centroid
+        const area = computeGeodesicArea(pts);
+        const cLat = pts.reduce((s, p) => s + p.lat, 0) / pts.length;
+        const cLng = pts.reduce((s, p) => s + p.lng, 0) / pts.length;
+        L.marker(L.latLng(cLat, cLng), {
+          icon: L.divIcon({
+            className: "gardenos-measure-area-label",
+            html: `<span>${formatAreaSquareMeters(area)}</span>`,
+            iconSize: [100, 28], iconAnchor: [50, 14],
+          }),
+          interactive: false,
+        }).addTo(lg);
 
-      // Recalculate total
-      let total = 0;
-      for (let i = 1; i < pts.length; i++) total += pts[i - 1].distanceTo(pts[i]);
-      setTotalDist(total);
-      setSegCount(pts.length - 1);
+        onUpdate(total, pts.length, area);
+      } else {
+        onUpdate(total, Math.max(0, pts.length - 1));
+      }
+    };
+
+    /* ---- handlers ---- */
+    const onClick = (e: L.LeafletMouseEvent) => {
+      if (closedRef.current) return;
+      const pts = pointsRef.current;
+
+      // Area: close polygon when clicking near first vertex
+      if (mode === "area" && pts.length >= 3) {
+        const firstPx = map.latLngToContainerPoint(pts[0]);
+        const clickPx = map.latLngToContainerPoint(e.latlng);
+        if (firstPx.distanceTo(clickPx) < 15) {
+          closedRef.current = true;
+          redraw();
+          return;
+        }
+      }
+      pts.push(e.latlng);
+      redraw();
+    };
+
+    const onDblClick = (e: L.LeafletMouseEvent) => {
+      if (mode === "area" && pointsRef.current.length >= 3 && !closedRef.current) {
+        L.DomEvent.stop(e);
+        closedRef.current = true;
+        redraw();
+      }
     };
 
     const onMouseMove = (e: L.LeafletMouseEvent) => {
       const pts = pointsRef.current;
-      if (pts.length === 0) return;
+      if (pts.length === 0 || closedRef.current) return;
       const last = pts[pts.length - 1];
 
-      // Ghost line
+      // Ghost line from last point to cursor
       if (!ghostLineRef.current) {
         ghostLineRef.current = L.polyline([last, e.latlng], {
-          color: "#2d7a3a", weight: 1.5, opacity: 0.5, dashArray: "4,6",
+          color: accent, weight: 1.5, opacity: 0.45, dashArray: "4,6",
         }).addTo(lg);
       } else {
         ghostLineRef.current.setLatLngs([last, e.latlng]);
@@ -2558,16 +2742,12 @@ function MeasureOverlay({ onClose }: { onClose: () => void }) {
           icon: L.divIcon({
             className: "gardenos-measure-ghost-label",
             html: `<span>${formatEdgeLength(dist)}</span>`,
-            iconSize: [80, 22],
-            iconAnchor: [40, 11],
+            iconSize: [80, 22], iconAnchor: [40, 11],
           }),
           interactive: false,
         }).addTo(lg);
       } else {
         ghostLabelRef.current.setLatLng(mid);
-        const icon = ghostLabelRef.current.getIcon() as L.DivIcon;
-        (icon.options as { html?: string }).html = `<span>${formatEdgeLength(dist)}</span>`;
-        // Force icon refresh
         const el = (ghostLabelRef.current as unknown as { _icon?: HTMLElement })._icon;
         if (el) el.innerHTML = `<span>${formatEdgeLength(dist)}</span>`;
       }
@@ -2575,76 +2755,36 @@ function MeasureOverlay({ onClose }: { onClose: () => void }) {
 
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key === "Escape") onClose();
-      // Ctrl+Z / Cmd+Z to undo last point
       if ((e.metaKey || e.ctrlKey) && e.key === "z") {
         e.preventDefault();
-        // Rebuild: clear and re-add all but the last point
         const pts = pointsRef.current;
         if (pts.length === 0) return;
-        pts.pop();
-        lg.clearLayers();
-        ghostLineRef.current = null;
-        ghostLabelRef.current = null;
-        // Re-draw remaining
-        let total = 0;
-        for (let i = 0; i < pts.length; i++) {
-          L.circleMarker(pts[i], {
-            radius: 5, color: "#fff", fillColor: "#2d7a3a", fillOpacity: 1, weight: 2,
-          }).addTo(lg);
-          if (i > 0) {
-            const segDist = pts[i - 1].distanceTo(pts[i]);
-            total += segDist;
-            L.polyline([pts[i - 1], pts[i]], {
-              color: "#2d7a3a", weight: 2.5, opacity: 0.85, dashArray: "6,4",
-            }).addTo(lg);
-            const mid = L.latLng((pts[i - 1].lat + pts[i].lat) / 2, (pts[i - 1].lng + pts[i].lng) / 2);
-            L.marker(mid, {
-              icon: L.divIcon({
-                className: "gardenos-measure-label",
-                html: `<span>${formatEdgeLength(segDist)}</span>`,
-                iconSize: [80, 22],
-                iconAnchor: [40, 11],
-              }),
-              interactive: false,
-            }).addTo(lg);
-          }
+        if (closedRef.current) {
+          closedRef.current = false; // re-open polygon
+        } else {
+          pts.pop();
         }
-        setTotalDist(total);
-        setSegCount(Math.max(0, pts.length - 1));
+        redraw();
       }
     };
 
     map.on("click", onClick);
+    map.on("dblclick", onDblClick);
     map.on("mousemove", onMouseMove);
     window.addEventListener("keydown", onKeyDown);
 
     return () => {
       map.off("click", onClick);
+      map.off("dblclick", onDblClick);
       map.off("mousemove", onMouseMove);
       window.removeEventListener("keydown", onKeyDown);
       lg.remove();
       map.getContainer().style.cursor = "";
+      map.doubleClickZoom.enable();
     };
-  }, [map, onClose]);
+  }, [map, mode, onUpdate, onClose]);
 
-  return (
-    <div className="gardenos-measure-hud">
-      <div className="measure-hud-inner">
-        {segCount === 0 ? (
-          <span className="measure-hint">Klik p\u00e5 kortet for at m\u00e5le</span>
-        ) : (
-          <>
-            <span className="measure-total">{formatEdgeLength(totalDist)}</span>
-            {segCount > 1 && <span className="measure-segs">{segCount} segmenter</span>}
-          </>
-        )}
-        <button type="button" className="measure-close" onClick={onClose} title="Luk (Esc)">✕</button>
-      </div>
-      <div className="measure-tip">
-        Klik = tilf\u00f8j punkt &nbsp;·&nbsp; ⌘Z = fortryd &nbsp;·&nbsp; Esc = luk
-      </div>
-    </div>
-  );
+  return null; // All visuals are Leaflet layers; HUD lives in MapToolbar
 }
 
 // ---------------------------------------------------------------------------
@@ -6808,27 +6948,28 @@ export function GardenMapClient() {
         /* ── Hide default Leaflet zoom (we use custom toolbar) ── */
         .leaflet-control-zoom { display: none !important; }
 
-        /* ── Map Toolbar (zoom + scale + ruler) ── */
+        /* ── Map Toolbar (horizontal frosted-glass bar) ── */
         .gardenos-map-toolbar {
           position: absolute;
           top: 12px;
           left: 12px;
           z-index: 1000;
           display: flex;
-          flex-direction: column;
+          flex-direction: row;
           align-items: center;
-          background: rgba(255, 255, 255, 0.72);
-          backdrop-filter: blur(12px) saturate(1.4);
-          -webkit-backdrop-filter: blur(12px) saturate(1.4);
+          background: rgba(255, 255, 255, 0.78);
+          backdrop-filter: blur(14px) saturate(1.5);
+          -webkit-backdrop-filter: blur(14px) saturate(1.5);
           border-radius: 14px;
-          box-shadow: 0 2px 12px rgba(0,0,0,0.10), 0 0 0 1px rgba(0,0,0,0.06);
-          padding: 4px;
-          gap: 0px;
+          box-shadow: 0 2px 16px rgba(0,0,0,0.08), 0 0 0 0.5px rgba(0,0,0,0.06);
+          padding: 3px;
+          gap: 0;
           pointer-events: auto;
+          transition: box-shadow 0.2s ease;
         }
         .toolbar-btn {
-          width: 36px;
-          height: 36px;
+          width: 34px;
+          height: 34px;
           display: flex;
           align-items: center;
           justify-content: center;
@@ -6838,107 +6979,100 @@ export function GardenMapClient() {
           border-radius: 10px;
           cursor: pointer;
           transition: all 0.15s;
+          flex-shrink: 0;
         }
-        .toolbar-btn:hover {
-          background: rgba(0,0,0,0.06);
-        }
-        .toolbar-btn:active {
-          background: rgba(0,0,0,0.10);
-          transform: scale(0.95);
-        }
+        .toolbar-btn:hover { background: rgba(0,0,0,0.06); }
+        .toolbar-btn:active { background: rgba(0,0,0,0.10); transform: scale(0.95); }
         .toolbar-btn--active {
-          background: rgba(45, 122, 58, 0.15) !important;
+          background: rgba(45,122,58,0.14) !important;
           color: #2d7a3a !important;
         }
-        .toolbar-divider {
-          width: 24px;
-          height: 1px;
-          background: rgba(0,0,0,0.10);
-          margin: 1px 0;
+        .toolbar-btn--close { width: 28px; height: 28px; color: #9ca3af; }
+        .toolbar-btn--close:hover { color: #ef4444; background: rgba(239,68,68,0.08); }
+        .toolbar-sep {
+          width: 1px;
+          height: 20px;
+          background: rgba(0,0,0,0.08);
+          margin: 0 3px;
+          flex-shrink: 0;
         }
+
+        /* Scale ruler with end-ticks */
         .toolbar-scale {
           display: flex;
           flex-direction: column;
           align-items: center;
-          padding: 6px 4px 4px;
-          gap: 3px;
-          min-width: 36px;
+          padding: 2px 6px;
+          gap: 2px;
         }
-        .scale-bar {
-          height: 3px;
-          background: #374151;
-          border-radius: 1.5px;
-          min-width: 20px;
-          transition: width 0.3s ease;
+        .scale-ruler {
+          display: flex;
+          align-items: center;
+          height: 10px;
+          transition: width 0.25s ease;
+        }
+        .scale-tick {
+          width: 1.5px;
+          height: 10px;
+          background: #6b7280;
+          border-radius: 1px;
+          flex-shrink: 0;
+        }
+        .scale-line {
+          flex: 1;
+          height: 1.5px;
+          background: #6b7280;
         }
         .scale-label {
           font-size: 9px;
-          font-weight: 700;
-          color: #374151;
-          letter-spacing: 0.02em;
+          font-weight: 600;
+          color: #6b7280;
           line-height: 1;
           white-space: nowrap;
+          letter-spacing: 0.01em;
         }
 
-        /* ── Measure HUD ── */
-        .gardenos-measure-hud {
-          position: absolute;
-          top: 12px;
-          left: 60px;
-          z-index: 1001;
+        /* Inline measurement result */
+        .toolbar-result {
           display: flex;
-          flex-direction: column;
-          gap: 2px;
-          pointer-events: auto;
+          align-items: baseline;
+          gap: 6px;
+          padding: 0 6px;
+          white-space: nowrap;
         }
-        .measure-hud-inner {
-          display: flex;
-          align-items: center;
-          gap: 8px;
-          background: rgba(255, 255, 255, 0.80);
-          backdrop-filter: blur(12px) saturate(1.4);
-          -webkit-backdrop-filter: blur(12px) saturate(1.4);
-          border-radius: 12px;
-          box-shadow: 0 2px 12px rgba(0,0,0,0.10), 0 0 0 1px rgba(0,0,0,0.06);
-          padding: 8px 12px;
-        }
-        .measure-total {
-          font-size: 18px;
+        .result-value {
+          font-size: 15px;
           font-weight: 800;
           color: #2d7a3a;
           letter-spacing: -0.02em;
         }
-        .measure-segs {
-          font-size: 11px;
-          color: #6b7280;
-          font-weight: 500;
-        }
-        .measure-hint {
-          font-size: 12px;
-          color: #6b7280;
-          font-weight: 500;
-        }
-        .measure-close {
-          width: 24px;
-          height: 24px;
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          background: rgba(0,0,0,0.06);
-          border: none;
-          border-radius: 8px;
-          color: #6b7280;
-          cursor: pointer;
-          font-size: 12px;
-          transition: all 0.15s;
-          margin-left: 4px;
-        }
-        .measure-close:hover { background: rgba(0,0,0,0.12); color: #374151; }
-        .measure-tip {
-          font-size: 9px;
+        .result-value--area { color: #1d6fa5; }
+        .result-detail {
+          font-size: 10px;
           color: #9ca3af;
-          text-align: center;
-          padding: 0 4px;
+          font-weight: 500;
+        }
+        .result-hint {
+          font-size: 11px;
+          color: #9ca3af;
+          font-weight: 500;
+        }
+
+        /* Keyboard-hint bar below toolbar */
+        .gardenos-measure-hint-bar {
+          position: absolute;
+          top: 52px;
+          left: 12px;
+          z-index: 1000;
+          font-size: 9.5px;
+          color: rgba(107,114,128,0.8);
+          background: rgba(255,255,255,0.55);
+          backdrop-filter: blur(8px);
+          -webkit-backdrop-filter: blur(8px);
+          padding: 3px 10px;
+          border-radius: 8px;
+          pointer-events: none;
+          white-space: nowrap;
         }
 
         /* ── Measure labels on map ── */
@@ -6949,7 +7083,7 @@ export function GardenMapClient() {
         }
         .gardenos-measure-label span {
           display: inline-block;
-          background: rgba(255,255,255,0.85);
+          background: rgba(255,255,255,0.88);
           backdrop-filter: blur(6px);
           -webkit-backdrop-filter: blur(6px);
           color: #2d7a3a;
@@ -6957,7 +7091,7 @@ export function GardenMapClient() {
           font-weight: 700;
           padding: 2px 6px;
           border-radius: 6px;
-          box-shadow: 0 1px 4px rgba(0,0,0,0.12);
+          box-shadow: 0 1px 4px rgba(0,0,0,0.10);
           white-space: nowrap;
         }
         .gardenos-measure-ghost-label {
@@ -6967,12 +7101,30 @@ export function GardenMapClient() {
         }
         .gardenos-measure-ghost-label span {
           display: inline-block;
-          background: rgba(255,255,255,0.6);
+          background: rgba(255,255,255,0.55);
           color: #6b7280;
           font-size: 10px;
           font-weight: 600;
           padding: 1px 5px;
           border-radius: 5px;
+          white-space: nowrap;
+        }
+        .gardenos-measure-area-label {
+          background: none !important;
+          border: none !important;
+          box-shadow: none !important;
+        }
+        .gardenos-measure-area-label span {
+          display: inline-block;
+          background: rgba(29,111,165,0.12);
+          backdrop-filter: blur(6px);
+          -webkit-backdrop-filter: blur(6px);
+          color: #1d6fa5;
+          font-size: 13px;
+          font-weight: 800;
+          padding: 4px 10px;
+          border-radius: 8px;
+          box-shadow: 0 1px 6px rgba(0,0,0,0.10);
           white-space: nowrap;
         }
 
