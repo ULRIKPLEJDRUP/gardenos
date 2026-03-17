@@ -216,8 +216,9 @@ export default function FeedbackPanel() {
   };
 
   // ── Render ──
-  // Don't show button until we know if feedback is enabled
-  if (feedbackEnabled === null || feedbackEnabled === false) return null;
+  // Admin always sees feedback; regular users only when enabled
+  const shouldShow = isAdmin || feedbackEnabled === true;
+  if (!shouldShow) return null;
 
   return (
     <>

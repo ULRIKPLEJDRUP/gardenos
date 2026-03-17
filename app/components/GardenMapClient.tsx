@@ -7927,8 +7927,18 @@ export function GardenMapClient({ userId }: { userId: string }) {
                     );
                   })}
                 </div>
-                {/* ── Admin + Log ud ── */}
+                {/* ── Bruger + Admin + Log ud ── */}
                 <div className="border-t border-foreground/10 px-2 pt-1.5 pb-2 space-y-1">
+                  {/* Logged-in user identity */}
+                  {sessionData?.user && (
+                    <div className="flex items-center gap-1.5 px-2.5 py-1.5 text-[10px] text-foreground/40 truncate">
+                      <span className="text-sm leading-none">👤</span>
+                      <span className="truncate">
+                        {sessionData.user.name || sessionData.user.email}
+                        {isAdmin && <span className="ml-1 text-amber-500 font-semibold">(admin)</span>}
+                      </span>
+                    </div>
+                  )}
                   {isAdmin && (
                     <a
                       href="/admin"
