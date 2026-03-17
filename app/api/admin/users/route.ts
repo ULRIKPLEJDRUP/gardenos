@@ -30,6 +30,7 @@ export async function GET() {
       email: true,
       name: true,
       role: true,
+      feedbackEnabled: true,
       createdAt: true,
     },
   });
@@ -127,24 +128,45 @@ export async function PATCH(request: NextRequest) {
   });
 }
 
-// ── PUT: Change user password ──
+// ── PUT: Change user password or toggle feedbackEnabled ──
 export async function PUT(request: NextRequest) {
   const session = await auth();
   if (!isAdmin(session)) {
     return NextResponse.json({ error: "Ingen adgang." }, { status: 403 });
   }
 
-  let body: { id?: string; password?: string };
+  let body: { id?: string; password?: string; feedbackEnabled?: boolean };
   try {
     body = await request.json();
   } catch {
     return NextResponse.json({ error: "Ugyldig JSON." }, { status: 400 });
   }
 
-  const { id: userId, password } = body;
-  if (!userId || !password) {
+  const userId = body.id;
+  if (!userId) {
+    return NextResponse.json({ error: "Mangler id." }, { status: 400 });
+  }
+
+  const user = await prisma.user.findUnique({ where: { id: userId } });
+  if (!user) {
+    return NextResponse.json({ error: "Bruger ikke fundet." }, { status: 404 });
+  }
+
+  // Toggle feedbackEnabled
+  if (typeof body.feedbackEnabled === "boolean") {
+    const db = prisma as any;
+    await db.user.update({
+      where: { id: userId },
+      data: { feedbackEnabled: body.feedbackEnabled },
+    });
+    return NextResponse.json({ ok: true, feedbackEnabled: body.feedbackEnabled });
+  }
+
+  // Change password
+  const { password } = body;
+  if (!password) {
     return NextResponse.json(
-      { error: "Mangler id og/eller password." },
+      { error: "Mangler password." },
       { status: 400 },
     );
   }
@@ -154,11 +176,6 @@ export async function PUT(request: NextRequest) {
       { error: "Adgangskoden skal være mindst 8 tegn." },
       { status: 400 },
     );
-  }
-
-  const user = await prisma.user.findUnique({ where: { id: userId } });
-  if (!user) {
-    return NextResponse.json({ error: "Bruger ikke fundet." }, { status: 404 });
   }
 
   const hashedPassword = await bcrypt.hash(password, 12);

@@ -55,6 +55,7 @@ import PlantEditor from "./PlantEditor";
 import IconPicker from "./IconPicker";
 import YearWheel from "./YearWheel";
 import TaskList from "./TaskList";
+import FeedbackPanel from "./FeedbackPanel";
 import { createTask, parseAiResponse } from "../lib/taskStore";
 import {
   getInfraElementById,
@@ -7045,6 +7046,7 @@ export function GardenMapClient({ userId }: { userId: string }) {
             >
               ↩ <span className="hidden md:inline">Fortryd</span>
             </button>
+            <FeedbackPanel />
             {multiSelectedIds.size >= 2 ? (
               <button
                 type="button"

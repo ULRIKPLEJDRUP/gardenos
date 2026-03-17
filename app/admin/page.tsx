@@ -22,6 +22,7 @@ type AdminUser = {
   role: string;
   createdAt: string;
   dataKeys: number;
+  feedbackEnabled: boolean;
 };
 
 export default function AdminPage() {
@@ -36,6 +37,23 @@ export default function AdminPage() {
   const [busyUserId, setBusyUserId] = useState<string | null>(null);
   const [passwordEditId, setPasswordEditId] = useState<string | null>(null);
   const [newPassword, setNewPassword] = useState("");
+
+  // Feedback state
+  type AdminFeedback = {
+    id: string;
+    type: string;
+    title: string;
+    description: string;
+    status: string;
+    createdAt: string;
+    imageData: string | null;
+    user: { name: string | null; email: string };
+    _count: { replies: number };
+  };
+  const [feedbackItems, setFeedbackItems] = useState<AdminFeedback[]>([]);
+  const [feedbackDetail, setFeedbackDetail] = useState<string | null>(null);
+  const [adminReplyText, setAdminReplyText] = useState("");
+  const [adminReplying, setAdminReplying] = useState(false);
 
   const fetchCodes = useCallback(async () => {
     try {
@@ -57,23 +75,36 @@ export default function AdminPage() {
     }
   }, []);
 
+  const fetchFeedback = useCallback(async () => {
+    try {
+      const res = await fetch("/api/admin/feedback");
+      const data = await res.json();
+      if (data.feedback) setFeedbackItems(data.feedback);
+    } catch {
+      /* ignore */
+    }
+  }, []);
+
   useEffect(() => {
     if (status !== "authenticated") return;
     let cancelled = false;
     (async () => {
       setLoading(true);
       try {
-        const [codesRes, usersRes] = await Promise.all([
+        const [codesRes, usersRes, feedbackRes] = await Promise.all([
           fetch("/api/admin/invite-codes"),
           fetch("/api/admin/users"),
+          fetch("/api/admin/feedback"),
         ]);
-        const [codesData, usersData] = await Promise.all([
+        const [codesData, usersData, feedbackData] = await Promise.all([
           codesRes.json(),
           usersRes.json(),
+          feedbackRes.json(),
         ]);
         if (!cancelled) {
           if (codesData.codes) setCodes(codesData.codes);
           if (usersData.users) setUsers(usersData.users);
+          if (feedbackData.feedback) setFeedbackItems(feedbackData.feedback);
         }
       } catch { /* ignore */ }
       if (!cancelled) setLoading(false);
@@ -176,6 +207,53 @@ export default function AdminPage() {
       alert("Netværksfejl – prøv igen");
     }
     setBusyUserId(null);
+  };
+
+  const toggleFeedback = async (user: AdminUser) => {
+    setBusyUserId(user.id);
+    try {
+      const res = await fetch("/api/admin/users", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          id: user.id,
+          feedbackEnabled: !user.feedbackEnabled,
+        }),
+      });
+      if (res.ok) await fetchUsers();
+    } catch { /* ignore */ }
+    setBusyUserId(null);
+  };
+
+  const updateFeedbackStatus = async (id: string, newStatus: string) => {
+    try {
+      await fetch(`/api/admin/feedback?id=${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status: newStatus }),
+      });
+      await fetchFeedback();
+    } catch { /* ignore */ }
+  };
+
+  const sendAdminReply = async (feedbackId: string) => {
+    if (!adminReplyText.trim()) return;
+    setAdminReplying(true);
+    try {
+      const res = await fetch("/api/feedback/reply", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          feedbackId,
+          message: adminReplyText.trim(),
+        }),
+      });
+      if (res.ok) {
+        setAdminReplyText("");
+        await fetchFeedback();
+      }
+    } catch { /* ignore */ }
+    setAdminReplying(false);
   };
 
   const copyCode = (code: string) => {
@@ -373,6 +451,19 @@ export default function AdminPage() {
                         <button
                           type="button"
                           disabled={busy}
+                          className={`rounded-md border px-2.5 py-1.5 text-xs transition-colors disabled:opacity-30 disabled:cursor-not-allowed ${
+                            u.feedbackEnabled
+                              ? "border-green-300 bg-green-50 text-green-700 hover:bg-green-100"
+                              : "border-gray-200 bg-white text-gray-400 hover:bg-gray-50"
+                          }`}
+                          onClick={() => toggleFeedback(u)}
+                          title={u.feedbackEnabled ? "Deaktivér feedback" : "Aktivér feedback"}
+                        >
+                          💬 {u.feedbackEnabled ? "On" : "Off"}
+                        </button>
+                        <button
+                          type="button"
+                          disabled={busy}
                           className="rounded-md border border-blue-200 bg-white px-2.5 py-1.5 text-xs text-blue-600 hover:bg-blue-50 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
                           onClick={() => {
                             setPasswordEditId(
@@ -440,6 +531,136 @@ export default function AdminPage() {
                         >
                           Annullér
                         </button>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+
+        {/* ── Feedback overview ── */}
+        <div className="rounded-xl border border-gray-200 bg-white p-6 shadow-sm">
+          <h2 className="text-lg font-semibold text-gray-900">
+            💬 Feedback ({feedbackItems.length})
+          </h2>
+          <p className="mt-1 text-sm text-gray-500">
+            Indmeldinger fra brugere – fejl, idéer, spørgsmål m.m.
+          </p>
+          {loading ? (
+            <p className="mt-3 text-sm text-gray-400">Indlæser…</p>
+          ) : feedbackItems.length === 0 ? (
+            <p className="mt-3 text-sm text-gray-400 italic">
+              Ingen feedback modtaget endnu.
+            </p>
+          ) : (
+            <div className="mt-3 space-y-2">
+              {feedbackItems.map((fb) => {
+                const typeEmoji: Record<string, string> = {
+                  bug: "🐛",
+                  idea: "💡",
+                  question: "❓",
+                  other: "📝",
+                };
+                const statusOptions = [
+                  { value: "new", label: "🆕 Ny" },
+                  { value: "read", label: "👀 Læst" },
+                  { value: "in-progress", label: "🔧 I gang" },
+                  { value: "fixed", label: "✅ Fixet" },
+                  { value: "closed", label: "🔒 Lukket" },
+                ];
+                const isExpanded = feedbackDetail === fb.id;
+                return (
+                  <div
+                    key={fb.id}
+                    className="rounded-lg border border-gray-100 bg-gray-50 overflow-hidden"
+                  >
+                    {/* Summary row */}
+                    <button
+                      type="button"
+                      className="w-full text-left px-4 py-3 hover:bg-gray-100 transition-colors"
+                      onClick={() =>
+                        setFeedbackDetail(isExpanded ? null : fb.id)
+                      }
+                    >
+                      <div className="flex items-center gap-2">
+                        <span className="text-sm shrink-0">
+                          {typeEmoji[fb.type] || "📝"}
+                        </span>
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm font-medium text-gray-800 truncate">
+                            {fb.title}
+                          </p>
+                          <p className="text-xs text-gray-400 mt-0.5">
+                            {fb.user.name || fb.user.email} ·{" "}
+                            {new Date(fb.createdAt).toLocaleDateString("da-DK")}{" "}
+                            {fb._count.replies > 0 && (
+                              <span>· 💬 {fb._count.replies} svar</span>
+                            )}
+                          </p>
+                        </div>
+                        <select
+                          className="shrink-0 rounded-md border border-gray-200 bg-white px-2 py-1 text-xs text-gray-600 focus:border-green-400 focus:outline-none"
+                          value={fb.status}
+                          onClick={(e) => e.stopPropagation()}
+                          onChange={(e) => {
+                            e.stopPropagation();
+                            updateFeedbackStatus(fb.id, e.target.value);
+                          }}
+                        >
+                          {statusOptions.map((opt) => (
+                            <option key={opt.value} value={opt.value}>
+                              {opt.label}
+                            </option>
+                          ))}
+                        </select>
+                        <span className="text-gray-300 text-xs">
+                          {isExpanded ? "▼" : "›"}
+                        </span>
+                      </div>
+                    </button>
+
+                    {/* Expanded detail */}
+                    {isExpanded && (
+                      <div className="border-t border-gray-100 px-4 py-3 space-y-3 bg-white">
+                        <p className="text-sm text-gray-700 whitespace-pre-wrap">
+                          {fb.description}
+                        </p>
+                        {fb.imageData && (
+                          <div className="rounded-lg border border-gray-200 overflow-hidden">
+                            <img
+                              src={fb.imageData}
+                              alt="Vedhæftet billede"
+                              className="w-full max-h-64 object-contain bg-gray-50"
+                            />
+                          </div>
+                        )}
+
+                        {/* Admin reply input */}
+                        <div className="flex gap-2">
+                          <input
+                            type="text"
+                            className="flex-1 rounded-md border border-gray-300 px-3 py-1.5 text-sm focus:border-green-400 focus:outline-none focus:ring-1 focus:ring-green-400"
+                            placeholder="Skriv et svar til brugeren…"
+                            value={feedbackDetail === fb.id ? adminReplyText : ""}
+                            onChange={(e) => setAdminReplyText(e.target.value)}
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter" && !e.shiftKey) {
+                                e.preventDefault();
+                                sendAdminReply(fb.id);
+                              }
+                            }}
+                          />
+                          <button
+                            type="button"
+                            disabled={adminReplying || !adminReplyText.trim()}
+                            className="rounded-md bg-green-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-green-700 disabled:opacity-40 transition-colors"
+                            onClick={() => sendAdminReply(fb.id)}
+                          >
+                            {adminReplying ? "…" : "Svar"}
+                          </button>
+                        </div>
                       </div>
                     )}
                   </div>
