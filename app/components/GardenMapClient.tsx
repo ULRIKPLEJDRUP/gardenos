@@ -2297,7 +2297,7 @@ function MapDrawControls({
         imperial: false,
         metric: true,
         maxWidth: 200,         // wider bar = finer resolution at high zoom
-        position: "bottomleft",
+        position: "topleft",
       });
       scaleControlRef.current.addTo(map);
     }
@@ -6583,14 +6583,9 @@ export function GardenMapClient() {
 
         /* ── Scale bar styling ── */
         .leaflet-control-scale {
-          margin-bottom: 80px !important;   /* clear the mobile bottom-nav (~60px + safe-area) */
+          margin-top: 6px !important;       /* just below the zoom buttons */
           margin-left: 12px !important;
           z-index: 800 !important;          /* above map tiles, below UI overlays */
-        }
-        @media (min-width: 768px) {
-          .leaflet-control-scale {
-            margin-bottom: 16px !important; /* desktop: no bottom-nav, keep tighter */
-          }
         }
         .leaflet-control-scale-line {
           background: rgba(255, 255, 255, 0.85) !important;
