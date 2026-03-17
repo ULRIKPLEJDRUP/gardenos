@@ -9974,10 +9974,10 @@ export function GardenMapClient({ userId }: { userId: string }) {
                                 const sp = selected.feature.properties;
                                 const species = sp?.speciesId ? getPlantById(sp.speciesId) : undefined;
                                 const variety = sp?.speciesId && sp?.varietyId ? getVarietiesForSpecies(sp.speciesId).find((v) => v.id === sp.varietyId) : undefined;
-                                const sowS = variety?.sowStart ?? (species?.sowOutdoor?.[0] || species?.sowIndoor?.[0]);
-                                const sowE = variety?.sowEnd ?? (species?.sowOutdoor?.[1] || species?.sowIndoor?.[1]);
-                                const harS = variety?.harvestStart ?? species?.harvest?.[0];
-                                const harE = variety?.harvestEnd ?? species?.harvest?.[1];
+                                const sowS = variety?.sowStart ?? (species?.sowOutdoor?.from || species?.sowIndoor?.from);
+                                const sowE = variety?.sowEnd ?? (species?.sowOutdoor?.to || species?.sowIndoor?.to);
+                                const harS = variety?.harvestStart ?? species?.harvest?.from;
+                                const harE = variety?.harvestEnd ?? species?.harvest?.to;
                                 const hints: string[] = [];
                                 if (sowS && sowE) hints.push(`🌱 Så mnd ${sowS}–${sowE}`);
                                 if (harS && harE) hints.push(`🥕 Høst mnd ${harS}–${harE}`);
@@ -10412,7 +10412,6 @@ export function GardenMapClient({ userId }: { userId: string }) {
                 </p>
                 {selectedCategory !== "area" ? (
                   <p className="text-[9px] text-foreground/40 leading-snug">
-                    {selectedCategory === "element" && "Element: Enkelt plante – træer, buske, store planter"}
                     {selectedCategory === "row" && "Række: Planter i rækker – rodfrugter, løg, bønner, kål"}
                     {selectedCategory === "seedbed" && "Såbed: Bredsåede planter – radiser, salat, urter"}
                     {selectedCategory === "container" && "Container: Krukker, højbede – tomater, urter, salat"}
