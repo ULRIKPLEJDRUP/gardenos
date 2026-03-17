@@ -25,12 +25,14 @@ export async function middleware(req: NextRequest) {
     return NextResponse.next();
   }
 
-  // Allow static assets & Next.js internals
+  // Allow static assets, PWA manifest & Next.js internals
   if (
     pathname.startsWith("/_next") ||
     pathname.startsWith("/favicon") ||
     pathname.startsWith("/leaflet") ||
-    pathname.match(/\.(ico|png|svg|jpg|jpeg|gif|webp|css|js|woff2?)$/)
+    pathname === "/manifest.json" ||
+    pathname === "/sw.js" ||
+    pathname.match(/\.(ico|png|svg|jpg|jpeg|gif|webp|css|js|json|woff2?)$/)
   ) {
     return NextResponse.next();
   }
