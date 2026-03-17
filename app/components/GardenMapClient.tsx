@@ -2293,7 +2293,12 @@ function MapDrawControls({
     mapRef.current = map;
 
     if (!scaleControlRef.current) {
-      scaleControlRef.current = L.control.scale({ imperial: false, metric: true });
+      scaleControlRef.current = L.control.scale({
+        imperial: false,
+        metric: true,
+        maxWidth: 200,         // wider bar = finer resolution at high zoom
+        position: "bottomleft",
+      });
       scaleControlRef.current.addTo(map);
     }
 
@@ -6574,6 +6579,24 @@ export function GardenMapClient() {
 
         .leaflet-tooltip.gardenos-tooltip:before {
           border-top-color: var(--foreground);
+        }
+
+        /* ── Scale bar styling ── */
+        .leaflet-control-scale {
+          margin-bottom: 12px !important;
+          margin-left: 12px !important;
+        }
+        .leaflet-control-scale-line {
+          background: rgba(255, 255, 255, 0.85) !important;
+          border: 2px solid #333 !important;
+          border-top: none !important;
+          padding: 2px 8px 3px !important;
+          font-size: 12px !important;
+          font-weight: 600 !important;
+          color: #333 !important;
+          text-shadow: 0 0 3px rgba(255,255,255,0.9) !important;
+          line-height: 1.3 !important;
+          white-space: nowrap !important;
         }
 
         .leaflet-tooltip.gardenos-row-emoji-label {
