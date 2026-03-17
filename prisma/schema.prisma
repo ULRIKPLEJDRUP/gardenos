@@ -2,7 +2,8 @@
 // GardenOS – Database Schema
 // ---------------------------------------------------------------------------
 // Users + invite codes for access control.
-// Garden data stays in localStorage per user (for now).
+// Garden data is synced between localStorage (cache) and the database
+// (source of truth) via /api/sync.
 // ---------------------------------------------------------------------------
 
 generator client {
@@ -31,7 +32,27 @@ model User {
   usedInvite     InviteCode?  @relation("UsedBy")
   usedInviteId   String?      @unique
 
+  // Garden data blobs (key-value)
+  data UserData[]
+
   @@map("users")
+}
+
+// ---------------------------------------------------------------------------
+// UserData – per-user key→JSON store (synced with localStorage)
+// ---------------------------------------------------------------------------
+model UserData {
+  id        String   @id @default(cuid())
+  userId    String
+  key       String   // e.g. "layout:v1", "plants:custom:v1"
+  value     String   // JSON-encoded blob
+  updatedAt DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, key])
+  @@index([userId])
+  @@map("user_data")
 }
 
 // ---------------------------------------------------------------------------

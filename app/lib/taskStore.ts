@@ -8,6 +8,7 @@
 
 import type { TaskCategory } from "./yearWheelStore";
 import { addCustomTask } from "./yearWheelStore";
+import { userKey, markDirty } from "./userStorage";
 
 // ---------------------------------------------------------------------------
 // Text helpers – strip markdown & extract months from AI text
@@ -140,7 +141,7 @@ const STORAGE_KEY = "gardenos:tasks:v1";
 export function loadTasks(): GardenTask[] {
   if (typeof window === "undefined") return [];
   try {
-    const raw = localStorage.getItem(STORAGE_KEY);
+    const raw = localStorage.getItem(userKey(STORAGE_KEY));
     if (!raw) return [];
     return JSON.parse(raw);
   } catch { return []; }
@@ -148,7 +149,8 @@ export function loadTasks(): GardenTask[] {
 
 export function saveTasks(tasks: GardenTask[]): void {
   if (typeof window === "undefined") return;
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(tasks));
+  localStorage.setItem(userKey(STORAGE_KEY), JSON.stringify(tasks));
+  markDirty(STORAGE_KEY);
 }
 
 // ---------------------------------------------------------------------------

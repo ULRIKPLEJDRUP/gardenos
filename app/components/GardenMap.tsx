@@ -6,6 +6,6 @@ const GardenMapClient = dynamic(() => import("./GardenMapClient").then((m) => m.
   ssr: false,
 });
 
-export function GardenMap() {
-  return <GardenMapClient />;
+export function GardenMap({ userId }: { userId: string }) {
+  return <GardenMapClient userId={userId} />;
 }

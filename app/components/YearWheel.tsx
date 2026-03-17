@@ -20,6 +20,7 @@ import {
   type YearWheelTask,
   type TaskCategory,
 } from "../lib/yearWheelStore";
+import { userKey } from "../lib/userStorage";
 
 // ---------------------------------------------------------------------------
 // Props
@@ -70,7 +71,7 @@ export default function YearWheel({ plantDataVersion, plantInstancesVersion, fla
   const featureNameMap = useMemo(() => {
     const map = new Map<string, string>();
     try {
-      const raw = typeof window !== "undefined" ? localStorage.getItem("gardenos:layout:v1") : null;
+      const raw = typeof window !== "undefined" ? localStorage.getItem(userKey("gardenos:layout:v1")) : null;
       if (raw) {
         const layout = JSON.parse(raw);
         if (layout?.features) {

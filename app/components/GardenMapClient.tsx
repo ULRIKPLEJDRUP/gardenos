@@ -6,6 +6,8 @@ import "leaflet-draw";
 import "leaflet-path-drag";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { MapContainer, Marker, Popup, TileLayer, WMSTileLayer, useMap, useMapEvents } from "react-leaflet";
+import { setCurrentUser, userKey, pullFromServer, markDirty } from "../lib/userStorage";
+import { signOut } from "next-auth/react";
 import {
   getAllPlants,
   getPlantById,
@@ -42,6 +44,11 @@ import {
   canLayersCoexist,
   FOREST_GARDEN_LAYER_LABELS,
   FOREST_GARDEN_LAYER_DESC,
+  computeShadeImpact,
+  estimateHeightM,
+  maxAcceptableShadeHours,
+  couldCastSignificantShade,
+  GROWING_SEASON_SUN_HOURS,
 } from "../lib/plantTypes";
 import VarietyManager from "./VarietyManager";
 import PlantEditor from "./PlantEditor";
@@ -224,7 +231,7 @@ interface ScanHistoryItem {
 function loadScanHistory(): ScanHistoryItem[] {
   if (typeof window === "undefined") return [];
   try {
-    const raw = localStorage.getItem(STORAGE_SCAN_HISTORY_KEY);
+    const raw = localStorage.getItem(userKey(STORAGE_SCAN_HISTORY_KEY));
     if (!raw) return [];
     return JSON.parse(raw) as ScanHistoryItem[];
   } catch { return []; }
@@ -232,7 +239,8 @@ function loadScanHistory(): ScanHistoryItem[] {
 
 function saveScanHistory(items: ScanHistoryItem[]): void {
   if (typeof window === "undefined") return;
-  localStorage.setItem(STORAGE_SCAN_HISTORY_KEY, JSON.stringify(items));
+  localStorage.setItem(userKey(STORAGE_SCAN_HISTORY_KEY), JSON.stringify(items));
+  markDirty(STORAGE_SCAN_HISTORY_KEY);
 }
 
 /** Resize a base64 data-URL image to max 200px for thumbnail storage */
@@ -265,7 +273,7 @@ interface MapBookmark {
 function loadBookmarks(): MapBookmark[] {
   if (typeof window === "undefined") return [];
   try {
-    const raw = localStorage.getItem(STORAGE_BOOKMARKS_KEY);
+    const raw = localStorage.getItem(userKey(STORAGE_BOOKMARKS_KEY));
     if (!raw) return [];
     const parsed = JSON.parse(raw) as MapBookmark[];
     // Migrate: old bookmarks without favorite field default to true
@@ -275,7 +283,8 @@ function loadBookmarks(): MapBookmark[] {
 
 function saveBookmarks(bookmarks: MapBookmark[]): void {
   if (typeof window === "undefined") return;
-  localStorage.setItem(STORAGE_BOOKMARKS_KEY, JSON.stringify(bookmarks));
+  localStorage.setItem(userKey(STORAGE_BOOKMARKS_KEY), JSON.stringify(bookmarks));
+  markDirty(STORAGE_BOOKMARKS_KEY);
 }
 
 // ---------------------------------------------------------------------------
@@ -294,7 +303,7 @@ interface AnchorPoint {
 function loadAnchors(): AnchorPoint[] {
   if (typeof window === "undefined") return [];
   try {
-    const raw = localStorage.getItem(STORAGE_ANCHORS_KEY);
+    const raw = localStorage.getItem(userKey(STORAGE_ANCHORS_KEY));
     if (!raw) return [];
     return JSON.parse(raw) as AnchorPoint[];
   } catch { return []; }
@@ -302,7 +311,8 @@ function loadAnchors(): AnchorPoint[] {
 
 function saveAnchors(anchors: AnchorPoint[]): void {
   if (typeof window === "undefined") return;
-  localStorage.setItem(STORAGE_ANCHORS_KEY, JSON.stringify(anchors));
+  localStorage.setItem(userKey(STORAGE_ANCHORS_KEY), JSON.stringify(anchors));
+  markDirty(STORAGE_ANCHORS_KEY);
 }
 
 /**
@@ -371,7 +381,7 @@ function trilaterate(
 function loadHiddenKinds(): Set<string> {
   if (typeof window === "undefined") return new Set();
   try {
-    const raw = localStorage.getItem(STORAGE_HIDDEN_KINDS_KEY);
+    const raw = localStorage.getItem(userKey(STORAGE_HIDDEN_KINDS_KEY));
     if (!raw) return new Set();
     const parsed = JSON.parse(raw);
     if (Array.isArray(parsed)) return new Set(parsed.map((s: unknown) => String(s).toLowerCase()));
@@ -381,12 +391,13 @@ function loadHiddenKinds(): Set<string> {
 
 function saveHiddenKinds(hidden: Set<string>): void {
   if (typeof window === "undefined") return;
-  localStorage.setItem(STORAGE_HIDDEN_KINDS_KEY, JSON.stringify([...hidden]));
+  localStorage.setItem(userKey(STORAGE_HIDDEN_KINDS_KEY), JSON.stringify([...hidden]));
+  markDirty(STORAGE_HIDDEN_KINDS_KEY);
 }
 
 function loadHiddenVisKinds(): Set<string> {
   try {
-    const raw = localStorage.getItem(STORAGE_HIDDEN_VIS_KINDS_KEY);
+    const raw = localStorage.getItem(userKey(STORAGE_HIDDEN_VIS_KINDS_KEY));
     if (raw) { const arr = JSON.parse(raw); if (Array.isArray(arr)) return new Set(arr.map(String)); }
   } catch { /* ignore */ }
   return new Set();
@@ -394,7 +405,8 @@ function loadHiddenVisKinds(): Set<string> {
 
 function saveHiddenVisKinds(hidden: Set<string>): void {
   if (typeof window === "undefined") return;
-  localStorage.setItem(STORAGE_HIDDEN_VIS_KINDS_KEY, JSON.stringify([...hidden]));
+  localStorage.setItem(userKey(STORAGE_HIDDEN_VIS_KINDS_KEY), JSON.stringify([...hidden]));
+  markDirty(STORAGE_HIDDEN_VIS_KINDS_KEY);
 }
 
 type GroupMeta = { name: string };
@@ -402,7 +414,7 @@ type GroupRegistry = Record<string, GroupMeta>;
 
 function loadGroupRegistry(): GroupRegistry {
   try {
-    const raw = localStorage.getItem(STORAGE_GROUPS_KEY);
+    const raw = localStorage.getItem(userKey(STORAGE_GROUPS_KEY));
     if (!raw) return {};
     const parsed = JSON.parse(raw);
     if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) return parsed as GroupRegistry;
@@ -411,7 +423,8 @@ function loadGroupRegistry(): GroupRegistry {
 }
 
 function saveGroupRegistry(reg: GroupRegistry) {
-  localStorage.setItem(STORAGE_GROUPS_KEY, JSON.stringify(reg));
+  localStorage.setItem(userKey(STORAGE_GROUPS_KEY), JSON.stringify(reg));
+  markDirty(STORAGE_GROUPS_KEY);
 }
 
 const KNOWN_KIND_DEFS: KindDef[] = [
@@ -506,7 +519,7 @@ function dedupeKindDefs(defs: KindDef[]): KindDef[] {
 
 function loadCustomKindDefsFromStorage(): KindDef[] {
   if (typeof window === "undefined") return [];
-  const raw = safeJsonParse<unknown>(localStorage.getItem(STORAGE_KIND_DEFS_KEY));
+  const raw = safeJsonParse<unknown>(localStorage.getItem(userKey(STORAGE_KIND_DEFS_KEY)));
   if (!Array.isArray(raw)) return [];
 
   const parsed: KindDef[] = [];
@@ -527,7 +540,8 @@ function loadCustomKindDefsFromStorage(): KindDef[] {
 function saveCustomKindDefsToStorage(defs: KindDef[]): void {
   if (typeof window === "undefined") return;
   const customOnly = defs.filter((d) => !isKnownKind(d.kind));
-  localStorage.setItem(STORAGE_KIND_DEFS_KEY, JSON.stringify(dedupeKindDefs(customOnly)));
+  localStorage.setItem(userKey(STORAGE_KIND_DEFS_KEY), JSON.stringify(dedupeKindDefs(customOnly)));
+  markDirty(STORAGE_KIND_DEFS_KEY);
 }
 
 function kindDefForKind(kind: string | undefined): KindDef | undefined {
@@ -996,7 +1010,7 @@ function getExistingRowOffsetsInBed(
 // ═══════════════════════════════════════════════════════════════════════════
 
 type PlantConflict = {
-  type: "spacing" | "bad-companion" | "layer-competition";
+  type: "spacing" | "bad-companion" | "layer-competition" | "shade";
   /** Severity 1 = info, 2 = warning, 3 = error */
   severity: 1 | 2 | 3;
   featureIdA: string;
@@ -1133,10 +1147,90 @@ function detectPlantConflicts(features: GardenFeature[]): PlantConflict[] {
           });
         }
       }
+
+      // 4. Shade conflict: does a tall tree/bush cast significant shadow
+      //    on a sun-loving plant? Check both directions (a shades b, b shades a).
+      if (!seen.has(pairKey + ":shade")) {
+        const heightA = estimateHeightM(a.species);
+        const heightB = estimateHeightM(b.species);
+        const latitude = a.coords[1]; // lat from coordinates
+
+        // Check if A casts shade on B (threshold 1m: bushes at 1.2-1.5m can shade low crops)
+        if (heightA && heightA >= 1 && couldCastSignificantShade(heightA, dist, latitude)) {
+          const maxShadeB = maxAcceptableShadeHours(b.species.light);
+          if (maxShadeB < 900) { // skip shade-tolerant plants
+            const canopyRadA = (a.species.spreadDiameterCm ?? a.species.spacingCm ?? 100) / 200;
+            const bearingAtoB = geoBearing(a.coords, b.coords);
+            const shade = computeShadeImpact(heightA, canopyRadA, dist, bearingAtoB, latitude);
+            if (shade.avgShadeHoursPerDay > maxShadeB) {
+              seen.add(pairKey + ":shade");
+              const excess = shade.avgShadeHoursPerDay - maxShadeB;
+              const severity: 1 | 2 | 3 = excess > 4 ? 3 : excess > 2 ? 2 : 1;
+              const lightLabel = b.species.light === "full-sun" ? "fuld sol" : b.species.light === "partial-shade" ? "halvskygge" : "sol";
+              const effectiveSun = GROWING_SEASON_SUN_HOURS - shade.avgShadeHoursPerDay;
+              conflicts.push({
+                type: "shade",
+                severity,
+                featureIdA: a.id,
+                featureIdB: b.id,
+                speciesA: a.species,
+                speciesB: b.species,
+                distanceM: dist,
+                requiredM: heightA * 2.5,
+                message: `☀️ ${a.species.icon ?? "🌳"} ${a.species.name} (${heightA}m) skygger for ${b.species.icon ?? "🌱"} ${b.species.name} ~${shade.avgShadeHoursPerDay.toFixed(1)} timer/dag i vækstsæsonen`,
+                suggestion: `${b.species.name} kræver ${lightLabel} (maks ${maxShadeB}t skygge/dag). Skyggen fra ${a.species.name} giver ~${shade.avgShadeHoursPerDay.toFixed(1)}t skygge, sol reduceres til ~${effectiveSun.toFixed(0)}t. Flyt planten mod syd/vest eller vælg en skyggetolerant art.`,
+              });
+            }
+          }
+        }
+
+        // Check if B casts shade on A
+        if (!seen.has(pairKey + ":shade") && heightB && heightB >= 1 && couldCastSignificantShade(heightB, dist, latitude)) {
+          const maxShadeA = maxAcceptableShadeHours(a.species.light);
+          if (maxShadeA < 900) {
+            const canopyRadB = (b.species.spreadDiameterCm ?? b.species.spacingCm ?? 100) / 200;
+            const bearingBtoA = geoBearing(b.coords, a.coords);
+            const shade = computeShadeImpact(heightB, canopyRadB, dist, bearingBtoA, latitude);
+            if (shade.avgShadeHoursPerDay > maxShadeA) {
+              seen.add(pairKey + ":shade");
+              const excess = shade.avgShadeHoursPerDay - maxShadeA;
+              const severity: 1 | 2 | 3 = excess > 4 ? 3 : excess > 2 ? 2 : 1;
+              const lightLabel = a.species.light === "full-sun" ? "fuld sol" : a.species.light === "partial-shade" ? "halvskygge" : "sol";
+              const effectiveSun = GROWING_SEASON_SUN_HOURS - shade.avgShadeHoursPerDay;
+              conflicts.push({
+                type: "shade",
+                severity,
+                featureIdA: b.id,
+                featureIdB: a.id,
+                speciesA: b.species,
+                speciesB: a.species,
+                distanceM: dist,
+                requiredM: heightB * 2.5,
+                message: `☀️ ${b.species.icon ?? "🌳"} ${b.species.name} (${heightB}m) skygger for ${a.species.icon ?? "🌱"} ${a.species.name} ~${shade.avgShadeHoursPerDay.toFixed(1)} timer/dag i vækstsæsonen`,
+                suggestion: `${a.species.name} kræver ${lightLabel} (maks ${maxShadeA}t skygge/dag). Skyggen fra ${b.species.name} giver ~${shade.avgShadeHoursPerDay.toFixed(1)}t skygge, sol reduceres til ~${effectiveSun.toFixed(0)}t. Flyt planten mod syd/vest eller vælg en skyggetolerant art.`,
+              });
+            }
+          }
+        }
+      }
     }
   }
 
   return conflicts;
+}
+
+/**
+ * Bearing in degrees (0=North, clockwise) from point A to point B.
+ * Uses [lng, lat] coordinate format.
+ */
+function geoBearing(a: [number, number], b: [number, number]): number {
+  const dLng = ((b[0] - a[0]) * Math.PI) / 180;
+  const lat1 = (a[1] * Math.PI) / 180;
+  const lat2 = (b[1] * Math.PI) / 180;
+  const x = Math.sin(dLng) * Math.cos(lat2);
+  const y = Math.cos(lat1) * Math.sin(lat2) - Math.sin(lat1) * Math.cos(lat2) * Math.cos(dLng);
+  const bearing = (Math.atan2(x, y) * 180) / Math.PI;
+  return (bearing + 360) % 360;
 }
 
 /**
@@ -1207,6 +1301,61 @@ function checkPlacementConflicts(
           message: `⛔ Dårlig nabo: ${sp.icon ?? "🌱"} ${sp.name}`,
           suggestion: `Disse arter hæmmer hinanden.`,
         });
+      }
+    }
+
+    // Shade: does the existing tree shade the proposed plant, or vice versa?
+    const latitude = proposedCoords[1];
+    const heightOther = estimateHeightM(sp);
+    const heightNew = estimateHeightM(proposedSpecies);
+
+    // Existing tree/bush shading proposed plant
+    if (heightOther && heightOther >= 1 && couldCastSignificantShade(heightOther, dist, latitude)) {
+      const maxShadeNew = maxAcceptableShadeHours(proposedSpecies.light);
+      if (maxShadeNew < 900) {
+        const canopyRadOther = (sp.spreadDiameterCm ?? sp.spacingCm ?? 100) / 200;
+        const bearing = geoBearing(coords, proposedCoords);
+        const shade = computeShadeImpact(heightOther, canopyRadOther, dist, bearing, latitude);
+        if (shade.avgShadeHoursPerDay > maxShadeNew) {
+          const excess = shade.avgShadeHoursPerDay - maxShadeNew;
+          conflicts.push({
+            type: "shade",
+            severity: excess > 4 ? 3 : excess > 2 ? 2 : 1,
+            featureIdA: "__proposed__",
+            featureIdB: f.properties!.gardenosId,
+            speciesA: proposedSpecies,
+            speciesB: sp,
+            distanceM: dist,
+            requiredM: heightOther * 2.5,
+            message: `☀️ I skygge fra ${sp.icon ?? "🌳"} ${sp.name} (~${shade.avgShadeHoursPerDay.toFixed(1)}t/dag)`,
+            suggestion: `Planten tåler maks ${maxShadeNew}t skygge/dag. Flyt mod syd/vest.`,
+          });
+        }
+      }
+    }
+
+    // Proposed tree/bush shading existing plant
+    if (heightNew && heightNew >= 1 && couldCastSignificantShade(heightNew, dist, latitude)) {
+      const maxShadeOther = maxAcceptableShadeHours(sp.light);
+      if (maxShadeOther < 900) {
+        const canopyRadNew = (proposedSpecies.spreadDiameterCm ?? proposedSpecies.spacingCm ?? 100) / 200;
+        const bearing = geoBearing(proposedCoords, coords);
+        const shade = computeShadeImpact(heightNew, canopyRadNew, dist, bearing, latitude);
+        if (shade.avgShadeHoursPerDay > maxShadeOther) {
+          const excess = shade.avgShadeHoursPerDay - maxShadeOther;
+          conflicts.push({
+            type: "shade",
+            severity: excess > 4 ? 3 : excess > 2 ? 2 : 1,
+            featureIdA: "__proposed__",
+            featureIdB: f.properties!.gardenosId,
+            speciesA: proposedSpecies,
+            speciesB: sp,
+            distanceM: dist,
+            requiredM: heightNew * 2.5,
+            message: `☀️ Vil skygge for ${sp.icon ?? "🌱"} ${sp.name} (~${shade.avgShadeHoursPerDay.toFixed(1)}t/dag)`,
+            suggestion: `${sp.name} tåler maks ${maxShadeOther}t skygge/dag.`,
+          });
+        }
       }
     }
   }
@@ -2148,13 +2297,14 @@ const ICON_REGISTRY_KEY = "gardenos:kindIcons:v1";
 
 function loadKindIconRegistry(): Record<string, string> {
   try {
-    const raw = window.localStorage.getItem(ICON_REGISTRY_KEY);
+    const raw = window.localStorage.getItem(userKey(ICON_REGISTRY_KEY));
     return raw ? (JSON.parse(raw) as Record<string, string>) : {};
   } catch { return {}; }
 }
 
 function saveKindIconRegistry(registry: Record<string, string>) {
-  window.localStorage.setItem(ICON_REGISTRY_KEY, JSON.stringify(registry));
+  window.localStorage.setItem(userKey(ICON_REGISTRY_KEY), JSON.stringify(registry));
+  markDirty(ICON_REGISTRY_KEY);
 }
 
 function getKindDefaultIcon(kind: string): string {
@@ -2910,7 +3060,10 @@ function BoxSelectOverlay({ featureGroupRef, setMultiSelectedIds }: BoxSelectPro
   return null;
 }
 
-export function GardenMapClient() {
+export function GardenMapClient({ userId }: { userId: string }) {
+  // ── Scope all localStorage keys to the authenticated user ──
+  setCurrentUser(userId);
+
   const featureGroupRef = useRef<L.FeatureGroup | null>(null);
   const mapRef = useRef<L.Map | null>(null);
   const activeDrawHandlerRef = useRef<{ disable: () => void } | null>(null);
@@ -2928,7 +3081,13 @@ export function GardenMapClient() {
   const [newKindText, setNewKindText] = useState("");
   const [newKindError, setNewKindError] = useState<string | null>(null);
   const [undoStack, setUndoStack] = useState<UndoSnapshot[]>([]);
-  const [sidebarTab, setSidebarTab] = useState<"create" | "content" | "groups" | "plants" | "view" | "scan" | "chat" | "calendar" | "tasks">("create");
+  const [sidebarTab, setSidebarTab] = useState<"create" | "content" | "groups" | "plants" | "view" | "scan" | "chat" | "calendar" | "tasks" | "conflicts">("create");
+  const [conflictFilter, setConflictFilter] = useState<"all" | "spacing" | "bad-companion" | "layer-competition" | "shade">("all");
+  const [conflictSortBy, setConflictSortBy] = useState<"severity" | "type" | "distance">("severity");
+  const [conflictResolvedIds, setConflictResolvedIds] = useState<Set<string>>(() => {
+    try { const s = localStorage.getItem(userKey("gardenos:conflicts:resolved:v1")); return s ? new Set(JSON.parse(s)) : new Set(); } catch { return new Set(); }
+  });
+  const [conflictShowResolved, setConflictShowResolved] = useState(false);
   const [viewSubTab, setViewSubTab] = useState<"steder" | "baggrund" | "synlighed" | "ankre">("steder");
 
   // ── Draft state for name/notes (commit on blur/Enter, not per-keystroke) ──
@@ -2970,6 +3129,118 @@ export function GardenMapClient() {
     setMobileSidebarOpen(false);
   }, []);
 
+  // ── Mobile bottom-nav: customisable pinned shortcuts ──
+  type SidebarTabId = typeof sidebarTab;
+  const ALL_SIDEBAR_TABS: { id: SidebarTabId; icon: string; label: string }[] = [
+    { id: "create", icon: "＋", label: "Opret" },
+    { id: "content", icon: "◉", label: "Indhold" },
+    { id: "conflicts", icon: "⚡", label: "Konflikter" },
+    { id: "groups", icon: "⊞", label: "Grupper" },
+    { id: "plants", icon: "🌱", label: "Planter" },
+    { id: "scan", icon: "📷", label: "Scan" },
+    { id: "view", icon: "👁", label: "Visning" },
+    { id: "tasks", icon: "📋", label: "Opgaver" },
+    { id: "calendar", icon: "📅", label: "Årshjul" },
+    { id: "chat", icon: "💬", label: "Rådgiver" },
+  ];
+  const DEFAULT_PINNED: SidebarTabId[] = ["create", "scan", "plants", "content"];
+  const PINNED_STORAGE_KEY = "gardenos:mobile:pinnedTabs:v1";
+  const [pinnedMobileTabs, setPinnedMobileTabs] = useState<SidebarTabId[]>(() => {
+    if (typeof window === "undefined") return DEFAULT_PINNED;
+    try {
+      const raw = localStorage.getItem(userKey(PINNED_STORAGE_KEY));
+      if (raw) { const arr = JSON.parse(raw); if (Array.isArray(arr) && arr.length > 0) return arr; }
+    } catch { /* ignore */ }
+    return DEFAULT_PINNED;
+  });
+  const savePinnedTabs = useCallback((tabs: SidebarTabId[]) => {
+    setPinnedMobileTabs(tabs);
+    try { localStorage.setItem(userKey(PINNED_STORAGE_KEY), JSON.stringify(tabs)); } catch { /* ignore */ }
+  }, []);
+  const [mobileNavMenuOpen, setMobileNavMenuOpen] = useState(false);
+  const togglePinnedTab = useCallback((id: SidebarTabId) => {
+    setPinnedMobileTabs((prev) => {
+      const next = prev.includes(id) ? prev.filter((t) => t !== id) : [...prev, id];
+      try { localStorage.setItem(userKey(PINNED_STORAGE_KEY), JSON.stringify(next)); } catch { /* ignore */ }
+      return next;
+    });
+  }, []);
+
+  // ── Sidebar tab-strip: pinned quick-access tabs (ordered) ──
+  const MAX_PINNED_SIDEBAR = 6;
+  const DEFAULT_SIDEBAR_PINS: SidebarTabId[] = ["create", "content", "plants", "scan", "conflicts", "chat"];
+  const SIDEBAR_PINS_KEY = "gardenos:sidebar:pinnedTabs:v2";
+  const [pinnedSidebarTabs, setPinnedSidebarTabs] = useState<SidebarTabId[]>(() => {
+    if (typeof window === "undefined") return DEFAULT_SIDEBAR_PINS;
+    try {
+      const raw = localStorage.getItem(userKey(SIDEBAR_PINS_KEY));
+      if (raw) { const arr = JSON.parse(raw); if (Array.isArray(arr) && arr.length > 0) return arr; }
+    } catch { /* ignore */ }
+    return DEFAULT_SIDEBAR_PINS;
+  });
+  const saveSidebarPins = useCallback((tabs: SidebarTabId[]) => {
+    setPinnedSidebarTabs(tabs);
+    try { localStorage.setItem(userKey(SIDEBAR_PINS_KEY), JSON.stringify(tabs)); } catch { /* ignore */ }
+  }, []);
+  const toggleSidebarPin = useCallback((id: SidebarTabId) => {
+    setPinnedSidebarTabs((prev) => {
+      const next = prev.includes(id)
+        ? prev.filter((t) => t !== id)
+        : prev.length < MAX_PINNED_SIDEBAR ? [...prev, id] : prev;
+      try { localStorage.setItem(userKey(SIDEBAR_PINS_KEY), JSON.stringify(next)); } catch { /* ignore */ }
+      return next;
+    });
+  }, []);
+  const [sidebarTabPickerOpen, setSidebarTabPickerOpen] = useState(false);
+  const [sidebarDropdownOpen, setSidebarDropdownOpen] = useState(false);
+  // Drag-and-drop reorder state for the picker
+  const [dragIdx, setDragIdx] = useState<number | null>(null);
+  const [dragOverIdx, setDragOverIdx] = useState<number | null>(null);
+  const handlePickerDragStart = useCallback((idx: number) => { setDragIdx(idx); }, []);
+  const handlePickerDragOver = useCallback((e: React.DragEvent, idx: number) => { e.preventDefault(); setDragOverIdx(idx); }, []);
+  const handlePickerDrop = useCallback((dropIdx: number) => {
+    if (dragIdx === null || dragIdx === dropIdx) { setDragIdx(null); setDragOverIdx(null); return; }
+    setPinnedSidebarTabs((prev) => {
+      const next = [...prev];
+      const [moved] = next.splice(dragIdx, 1);
+      next.splice(dropIdx, 0, moved);
+      try { localStorage.setItem(userKey(SIDEBAR_PINS_KEY), JSON.stringify(next)); } catch { /* ignore */ }
+      return next;
+    });
+    setDragIdx(null);
+    setDragOverIdx(null);
+  }, [dragIdx]);
+  const handlePickerDragEnd = useCallback(() => { setDragIdx(null); setDragOverIdx(null); }, []);
+
+  // ── Server sync: pull latest data on mount, then reload state ──
+  const [syncReady, setSyncReady] = useState(false);
+  useEffect(() => {
+    let cancelled = false;
+    pullFromServer().then(() => {
+      if (!cancelled) setSyncReady(true);
+    });
+    return () => { cancelled = true; };
+  }, []);
+
+  // Keyboard shortcuts: ⌘1-⌘9 for pinned sidebar tabs
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if (!e.metaKey && !e.ctrlKey) return;
+      const num = parseInt(e.key, 10);
+      if (num >= 1 && num <= 9) {
+        const idx = num - 1;
+        if (idx < pinnedSidebarTabs.length) {
+          e.preventDefault();
+          const tabId = pinnedSidebarTabs[idx];
+          setSidebarTab(tabId);
+          if (tabId !== "groups") setHighlightedGroupId(null);
+        }
+      }
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [pinnedSidebarTabs]);
+
   // ── AI Chat / Rådgiver state ──
   type ChatMsg = { role: "user" | "assistant"; content: string; ts: number };
   const CHAT_STORAGE_KEY = "gardenos:chat:history:v1";
@@ -2977,13 +3248,13 @@ export function GardenMapClient() {
 
   const [chatMessages, setChatMessages] = useState<ChatMsg[]>(() => {
     if (typeof window === "undefined") return [];
-    try { const raw = localStorage.getItem(CHAT_STORAGE_KEY); return raw ? JSON.parse(raw) : []; } catch { return []; }
+    try { const raw = localStorage.getItem(userKey(CHAT_STORAGE_KEY)); return raw ? JSON.parse(raw) : []; } catch { return []; }
   });
   const [chatInput, setChatInput] = useState("");
   const [chatLoading, setChatLoading] = useState(false);
   const [chatPersona, setChatPersona] = useState<string>(() => {
     if (typeof window === "undefined") return "generalist";
-    return localStorage.getItem(CHAT_PERSONA_KEY) ?? "generalist";
+    return localStorage.getItem(userKey(CHAT_PERSONA_KEY)) ?? "generalist";
   });
   const chatEndRef = useRef<HTMLDivElement>(null);
   const chatInputRef = useRef<HTMLTextAreaElement>(null);
@@ -3000,7 +3271,7 @@ export function GardenMapClient() {
   useEffect(() => {
     const doFetch = async () => {
       // Get lat/lng from saved view
-      const viewRaw = localStorage.getItem("gardenos:view:v1");
+      const viewRaw = localStorage.getItem(userKey("gardenos:view:v1"));
       let lat = 55.676;
       let lng = 12.568; // default: Copenhagen
       if (viewRaw) {
@@ -3044,13 +3315,13 @@ export function GardenMapClient() {
   // Persist chat messages
   useEffect(() => {
     if (typeof window === "undefined") return;
-    localStorage.setItem(CHAT_STORAGE_KEY, JSON.stringify(chatMessages));
+    localStorage.setItem(userKey(CHAT_STORAGE_KEY), JSON.stringify(chatMessages));
   }, [chatMessages]);
 
   // Persist persona choice
   useEffect(() => {
     if (typeof window === "undefined") return;
-    localStorage.setItem(CHAT_PERSONA_KEY, chatPersona);
+    localStorage.setItem(userKey(CHAT_PERSONA_KEY), chatPersona);
   }, [chatPersona]);
 
   // Scroll to bottom on new messages
@@ -3086,7 +3357,7 @@ export function GardenMapClient() {
         }).format(now)
       );
 
-      const viewRaw = localStorage.getItem("gardenos:view:v1");
+      const viewRaw = localStorage.getItem(userKey("gardenos:view:v1"));
       let locationLine = "Lokation ukendt";
 
       if (viewRaw) {
@@ -3100,7 +3371,7 @@ export function GardenMapClient() {
         }
       }
 
-      const bookmarkRaw = localStorage.getItem("gardenos:bookmarks:v1");
+      const bookmarkRaw = localStorage.getItem(userKey("gardenos:bookmarks:v1"));
       let addressHint = "";
       if (bookmarkRaw) {
         const bms = JSON.parse(bookmarkRaw) as Array<{ name?: string; favorite?: boolean }>;
@@ -3119,7 +3390,7 @@ export function GardenMapClient() {
 
     // 1. Garden features (beds, areas, elements)
     try {
-      const layoutRaw = localStorage.getItem("gardenos:layout:v1");
+      const layoutRaw = localStorage.getItem(userKey("gardenos:layout:v1"));
       if (layoutRaw) {
         const layout = JSON.parse(layoutRaw);
         if (layout?.features?.length) {
@@ -3138,7 +3409,7 @@ export function GardenMapClient() {
 
     // 2. Plant instances with FULL species data (harvest, sowing, etc.)
     try {
-      const instancesRaw = localStorage.getItem("gardenos:plants:instances:v1");
+      const instancesRaw = localStorage.getItem(userKey("gardenos:plants:instances:v1"));
       if (instancesRaw) {
         const instances = JSON.parse(instancesRaw) as Array<{
           speciesId?: string; varietyId?: string; varietyName?: string;
@@ -3148,7 +3419,7 @@ export function GardenMapClient() {
           // Build a lookup: featureId → name
           const featureNames = new Map<string, string>();
           try {
-            const lr = localStorage.getItem("gardenos:layout:v1");
+            const lr = localStorage.getItem(userKey("gardenos:layout:v1"));
             if (lr) {
               const lj = JSON.parse(lr);
               for (const f of lj?.features ?? []) {
@@ -3211,7 +3482,7 @@ export function GardenMapClient() {
     // 3. Species NOT planted but available in database (brief, for suggestions only)
     try {
       const allPlants = getAllPlants();
-      const instancesRaw = localStorage.getItem("gardenos:plants:instances:v1");
+      const instancesRaw = localStorage.getItem(userKey("gardenos:plants:instances:v1"));
       const plantedIds = new Set<string>();
       if (instancesRaw) {
         const instances = JSON.parse(instancesRaw) as Array<{ speciesId?: string }>;
@@ -3331,7 +3602,7 @@ export function GardenMapClient() {
 
   const clearChatHistory = useCallback(() => {
     setChatMessages([]);
-    localStorage.removeItem(CHAT_STORAGE_KEY);
+    localStorage.removeItem(userKey(CHAT_STORAGE_KEY));
   }, []);
 
   const addToScanHistory = useCallback(async (type: ScanType, imageDataUrl: string, data: Record<string, unknown>) => {
@@ -3377,7 +3648,11 @@ export function GardenMapClient() {
   const [editPlantSpeciesId, setEditPlantSpeciesId] = useState<string | null>(null);
   const [plantDataVersion, setPlantDataVersion] = useState(0);
   const [contentPlantDetailsOpen, setContentPlantDetailsOpen] = useState(false);
-  const [contentVarietyPickerOpen, setContentVarietyPickerOpen] = useState(false);
+  const [contentTypeOpen, setContentTypeOpen] = useState(false);
+  const [contentNameOpen, setContentNameOpen] = useState(false);
+  const [contentNotesOpen, setContentNotesOpen] = useState(false);
+  const [contentSpeciesOpen, setContentSpeciesOpen] = useState(false);
+  const [speciesPickerSearch, setSpeciesPickerSearch] = useState("");
 
   // ── Auto-row creation state ──
   const [autoRowOpen, setAutoRowOpen] = useState(false);
@@ -3432,8 +3707,8 @@ export function GardenMapClient() {
   const [showMatrikel, setShowMatrikel] = useState(false);
   const [showJordart, setShowJordart] = useState(false);
   const [showTerrain, setShowTerrain] = useState(false);
-  const [dfUser, setDfUser] = useState(() => window.localStorage.getItem("gardenos:df:user") ?? "");
-  const [dfPass, setDfPass] = useState(() => window.localStorage.getItem("gardenos:df:pass") ?? "");
+  const [dfUser, setDfUser] = useState(() => window.localStorage.getItem(userKey("gardenos:df:user")) ?? "");
+  const [dfPass, setDfPass] = useState(() => window.localStorage.getItem(userKey("gardenos:df:pass")) ?? "");
   const dfReady = dfUser.length > 0 && dfPass.length > 0;
   const [dfTestStatus, setDfTestStatus] = useState<"idle" | "testing" | "ok" | "fail">("idle");
 
@@ -3583,7 +3858,7 @@ export function GardenMapClient() {
   const conflictOverlayRef = useRef<L.LayerGroup | null>(null);
   const placementPreviewRef = useRef<L.LayerGroup | null>(null);
   const [layoutForContainment, setLayoutForContainment] = useState<GardenFeatureCollection>(() => {
-    const parsed = safeJsonParse<unknown>(window.localStorage.getItem(STORAGE_LAYOUT_KEY));
+    const parsed = safeJsonParse<unknown>(window.localStorage.getItem(userKey(STORAGE_LAYOUT_KEY)));
     if (isFeatureCollection(parsed)) return parsed;
     return { type: "FeatureCollection", features: [] } as GardenFeatureCollection;
   });
@@ -4300,6 +4575,11 @@ export function GardenMapClient() {
     [featureGroupRef, mapRef]
   );
 
+  // ── Cached conflict scan — used by conflict tab, content tab, and overlays ──
+  const allConflicts = useMemo(() => {
+    return detectPlantConflicts(layoutForContainment.features);
+  }, [layoutForContainment]);
+
   // ---------------------------------------------------------------------------
   // Conflict overlay: show ⚠️ markers + connecting lines on plants with problems
   // ---------------------------------------------------------------------------
@@ -4317,9 +4597,7 @@ export function GardenMapClient() {
 
     if (!map) return;
 
-    const conflicts = detectPlantConflicts(layoutForContainment.features);
-    // eslint-disable-next-line no-console
-    console.log("[GardenOS] Conflict scan:", layoutForContainment.features.filter((f) => f.geometry?.type === "Point" && f.properties?.speciesId).length, "plants,", conflicts.length, "conflicts");
+    const conflicts = allConflicts;
     if (conflicts.length === 0) return;
 
     const overlayGroup = L.layerGroup();
@@ -4333,24 +4611,7 @@ export function GardenMapClient() {
       featureConflictMap.get(c.featureIdB)!.push(c);
     }
 
-    // For each conflict, draw a dashed line between the two features
-    for (const c of conflicts) {
-      const fA = layoutForContainment.features.find((f) => f.properties?.gardenosId === c.featureIdA);
-      const fB = layoutForContainment.features.find((f) => f.properties?.gardenosId === c.featureIdB);
-      if (!fA || !fB || fA.geometry?.type !== "Point" || fB.geometry?.type !== "Point") continue;
-
-      const coordsA = fA.geometry.coordinates as [number, number];
-      const coordsB = fB.geometry.coordinates as [number, number];
-      const lineColor = c.severity === 3 ? "#dc2626" : c.severity === 2 ? "#ea580c" : "#eab308";
-
-      const line = L.polyline(
-        [[coordsA[1], coordsA[0]], [coordsB[1], coordsB[0]]],
-        { color: lineColor, weight: 2, opacity: 0.6, dashArray: "6 4", interactive: false },
-      );
-      overlayGroup.addLayer(line);
-    }
-
-    // For each conflicted feature, place a small warning DivIcon
+    // For each conflicted feature, place a small warning badge (NO lines — cleaner)
     const processedFeatures = new Set<string>();
     for (const [featureId, fConflicts] of featureConflictMap) {
       if (processedFeatures.has(featureId)) continue;
@@ -4367,34 +4628,25 @@ export function GardenMapClient() {
       const badge = L.marker([coords[1], coords[0]], {
         icon: L.divIcon({
           className: "gardenos-conflict-badge",
-          html: `<span style="font-size:${badgeSize}px;line-height:1;cursor:pointer">${emoji}</span>`,
-          iconSize: [badgeSize, badgeSize],
-          iconAnchor: [-4, badgeSize + 4], // offset to top-right of the plant icon
+          html: `<span style="font-size:${badgeSize}px;line-height:1;cursor:pointer" title="${fConflicts.length} konflikt${fConflicts.length > 1 ? "er" : ""} — klik for detaljer">${emoji}<sup style="font-size:8px;font-weight:bold">${fConflicts.length}</sup></span>`,
+          iconSize: [badgeSize + 8, badgeSize],
+          iconAnchor: [-4, badgeSize + 4],
         }),
         interactive: true,
         zIndexOffset: 2000,
       });
 
-      // Build popup content
-      const uniqueMessages = [...new Set(fConflicts.map((c) => c.message))];
-      const uniqueSuggestions = [...new Set(fConflicts.map((c) => c.suggestion))];
-      const popupHtml = `
-        <div style="max-width:260px;font-size:12px;line-height:1.4">
-          <p style="font-weight:bold;margin:0 0 4px">${worstSeverity === 3 ? "🔴 Alvorlige konflikter" : worstSeverity === 2 ? "🟠 Advarsler" : "🟡 Bemærkninger"}</p>
-          ${uniqueMessages.map((m) => `<p style="margin:2px 0">${m}</p>`).join("")}
-          <hr style="margin:6px 0;border:0;border-top:1px solid #ddd"/>
-          <p style="font-weight:600;margin:0 0 2px">💡 Forslag:</p>
-          ${uniqueSuggestions.map((s) => `<p style="margin:2px 0;color:#555">${s}</p>`).join("")}
-        </div>
-      `;
-      badge.bindPopup(popupHtml, { maxWidth: 280, closeButton: true });
+      // Click badge → select feature & open content tab (shows conflict details)
+      badge.on("click", () => {
+        selectFeatureById(featureId);
+      });
 
       overlayGroup.addLayer(badge);
     }
 
     overlayGroup.addTo(map);
     conflictOverlayRef.current = overlayGroup;
-  }, [layoutForContainment, mapRef]);
+  }, [allConflicts, layoutForContainment, mapRef, selectFeatureById]);
 
   // ---------------------------------------------------------------------------
   // Placement preview: green/red circle following the cursor during draw mode
@@ -4427,6 +4679,7 @@ export function GardenMapClient() {
     const previewConflicts = checkPlacementConflicts(coords, species, layoutForContainment.features);
     const hasConflict = previewConflicts.length > 0;
     const worstSeverity = hasConflict ? Math.max(...previewConflicts.map((c) => c.severity)) : 0;
+    const shadeConflicts = previewConflicts.filter((c) => c.type === "shade");
 
     const color = worstSeverity >= 2 ? "#dc2626" : worstSeverity === 1 ? "#eab308" : "#22c55e";
     const fillColor = worstSeverity >= 2 ? "#dc2626" : worstSeverity === 1 ? "#eab308" : "#22c55e";
@@ -4446,14 +4699,83 @@ export function GardenMapClient() {
     });
     previewGroup.addLayer(circle);
 
+    // ── Shade zone visualization ──
+    // If placing a TREE: show the shadow footprint (north-facing wedge)
+    const heightM = estimateHeightM(species);
+    if (heightM && heightM >= 2) {
+      // Approximate shadow zone: a semi-ellipse to the north (in northern hemisphere)
+      // Shadow reach ≈ height × 1.5 (equinox noon approximation at 56°N)
+      const shadowReachM = heightM * 1.5;
+      const canopyR = (species.spreadDiameterCm ?? species.spacingCm ?? 100) / 200;
+      // Draw a translucent wedge pointing roughly north
+      // At 56°N, shadow falls between NW and NE, concentrated around due north at noon
+      const centerBearing = 0; // north (shadow direction at noon)
+      const halfSpread = 70; // degrees: shadow sweeps ~70° each side of north (morning east, evening west)
+      const steps = 20;
+      const polyPoints: L.LatLng[] = [latlng]; // start at tree
+      for (let i = -steps; i <= steps; i++) {
+        const angle = centerBearing + (halfSpread * i) / steps;
+        const angleRad = (angle * Math.PI) / 180;
+        // Distance varies: longer at edges (morning/evening lower sun), shorter at center (noon)
+        const edgeFactor = 1 + 0.3 * Math.abs(i / steps); // edges are ~30% longer
+        const dist = shadowReachM * edgeFactor;
+        // Convert metres to lat/lng offset
+        const dLat = (dist * Math.cos(angleRad)) / 111320;
+        const dLng = (dist * Math.sin(angleRad)) / (111320 * Math.cos(latlng.lat * Math.PI / 180));
+        polyPoints.push(L.latLng(latlng.lat + dLat, latlng.lng + dLng));
+      }
+      polyPoints.push(latlng); // close shape
+
+      const shadeZone = L.polygon(polyPoints, {
+        color: "#475569",
+        fillColor: "#475569",
+        fillOpacity: 0.12,
+        weight: 1,
+        opacity: 0.3,
+        dashArray: "3 3",
+        interactive: false,
+      });
+      previewGroup.addLayer(shadeZone);
+
+      // Label for shade zone
+      const northPoint = L.latLng(latlng.lat + shadowReachM / 111320, latlng.lng);
+      const shadeLabelIcon = L.divIcon({
+        className: "gardenos-shade-label",
+        html: `<div style="background:rgba(71,85,105,0.8);color:white;font-size:9px;padding:1px 5px;border-radius:3px;white-space:nowrap;pointer-events:none">🌑 Skygge ~${shadowReachM.toFixed(0)}m</div>`,
+        iconSize: [100, 16],
+        iconAnchor: [50, 8],
+      });
+      const shadeLabel = L.marker(northPoint, { icon: shadeLabelIcon, interactive: false, zIndexOffset: 2900 });
+      previewGroup.addLayer(shadeLabel);
+    }
+
+    // If there are shade conflicts, draw a dashed line to each shaded plant
+    for (const sc of shadeConflicts) {
+      const shadedFeat = layoutForContainment.features.find((f) => f.properties?.gardenosId === sc.featureIdB);
+      if (!shadedFeat || shadedFeat.geometry?.type !== "Point") continue;
+      const shadedCoords = shadedFeat.geometry.coordinates as [number, number];
+      const line = L.polyline(
+        [latlng, L.latLng(shadedCoords[1], shadedCoords[0])],
+        { color: "#475569", weight: 2, opacity: 0.5, dashArray: "4 6", interactive: false },
+      );
+      previewGroup.addLayer(line);
+    }
+
     // Status label
     if (hasConflict) {
       const worstMsg = previewConflicts.reduce((worst, c) => c.severity > worst.severity ? c : worst, previewConflicts[0]);
+      const summaryParts: string[] = [];
+      const conflictTypes = new Set(previewConflicts.map((c) => c.type));
+      if (conflictTypes.has("shade")) summaryParts.push(`☀️${shadeConflicts.length} skygge`);
+      if (conflictTypes.has("spacing")) summaryParts.push(`📏 afstand`);
+      if (conflictTypes.has("bad-companion")) summaryParts.push(`⛔ nabo`);
+      if (conflictTypes.has("layer-competition")) summaryParts.push(`⚠️ lag`);
+      const labelText = summaryParts.length > 1 ? summaryParts.join(" · ") : worstMsg.message;
       const labelIcon = L.divIcon({
         className: "gardenos-placement-label",
-        html: `<div style="background:${color};color:white;font-size:10px;padding:2px 6px;border-radius:4px;white-space:nowrap;pointer-events:none;font-weight:600">${worstSeverity >= 2 ? "⚠️" : "💡"} ${worstMsg.message}</div>`,
-        iconSize: [200, 20],
-        iconAnchor: [100, -10],
+        html: `<div style="background:${color};color:white;font-size:10px;padding:2px 6px;border-radius:4px;white-space:nowrap;pointer-events:none;font-weight:600;max-width:300px;overflow:hidden;text-overflow:ellipsis">${worstSeverity >= 2 ? "⚠️" : "💡"} ${labelText}</div>`,
+        iconSize: [300, 20],
+        iconAnchor: [150, -10],
       });
       const label = L.marker(latlng, { icon: labelIcon, interactive: false, zIndexOffset: 3000 });
       previewGroup.addLayer(label);
@@ -4497,6 +4819,13 @@ export function GardenMapClient() {
   useEffect(() => {
     setDraftName(selected?.feature.properties?.name ?? "");
     setDraftNotes(selected?.feature.properties?.notes ?? "");
+    // Auto-open species picker for plant elements without a species
+    const cat = selected?.feature.properties?.category;
+    const kind = selected?.feature.properties?.kind;
+    const isPlant = cat === "element" && ["tree", "bush", "flower", "plant"].includes(kind ?? "");
+    const hasSpecies = !!selected?.feature.properties?.speciesId;
+    setContentSpeciesOpen(isPlant && !hasSpecies);
+    if (!isPlant || hasSpecies) setSpeciesPickerSearch("");
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selected?.gardenosId]); // only when selection identity changes, not every render
 
@@ -4536,7 +4865,13 @@ export function GardenMapClient() {
       const typedFeature = ensureDefaultProperties(feature);
 
       const onClick = (e: L.LeafletMouseEvent) => {
-        const id = typedFeature.properties!.gardenosId;
+        // Read the CURRENT feature from the layer — it may have been updated
+        // by updateSelectedProperty / serializeLayer since the handler was
+        // first attached.  Fall back to the closure-captured typedFeature
+        // only if the layer somehow lost its feature reference.
+        const currentFeature =
+          (layer as L.Layer & { feature?: GardenFeature }).feature ?? typedFeature;
+        const id = currentFeature.properties!.gardenosId;
         const origEvt = (e as unknown as { originalEvent?: MouseEvent }).originalEvent;
 
         if (origEvt?.shiftKey) {
@@ -4552,7 +4887,7 @@ export function GardenMapClient() {
 
         // Normal click: single-select, clear multi-selection
         setMultiSelectedIds(new Set());
-        setSelectedAndFocus({ gardenosId: id, feature: typedFeature });
+        setSelectedAndFocus({ gardenosId: id, feature: currentFeature });
       };
 
       layer.on("click", onClick);
@@ -4574,14 +4909,14 @@ export function GardenMapClient() {
   );
 
   const savedLayout = useMemo(() => {
-    const parsed = safeJsonParse<unknown>(window.localStorage.getItem(STORAGE_LAYOUT_KEY));
+    const parsed = safeJsonParse<unknown>(window.localStorage.getItem(userKey(STORAGE_LAYOUT_KEY)));
     if (!isFeatureCollection(parsed)) return null;
     return parsed;
   }, []);
 
   const savedView = useMemo(() => {
     return safeJsonParse<{ center: [number, number]; zoom: number }>(
-      window.localStorage.getItem(STORAGE_VIEW_KEY)
+      window.localStorage.getItem(userKey(STORAGE_VIEW_KEY))
     );
   }, []);
 
@@ -4590,7 +4925,8 @@ export function GardenMapClient() {
     if (!group) return;
 
     const normalized = serializeGroup(group);
-    window.localStorage.setItem(STORAGE_LAYOUT_KEY, JSON.stringify(normalized));
+    window.localStorage.setItem(userKey(STORAGE_LAYOUT_KEY), JSON.stringify(normalized));
+    markDirty(STORAGE_LAYOUT_KEY);
   }, []);
 
   const pushUndoSnapshot = useCallback(() => {
@@ -4630,7 +4966,8 @@ export function GardenMapClient() {
         group.addLayer(layer);
       });
 
-      window.localStorage.setItem(STORAGE_LAYOUT_KEY, JSON.stringify(snapshot.layout));
+      window.localStorage.setItem(userKey(STORAGE_LAYOUT_KEY), JSON.stringify(snapshot.layout));
+      markDirty(STORAGE_LAYOUT_KEY);
       setLayoutForContainment(snapshot.layout as GardenFeatureCollection);
 
       if (snapshot.selectedId) {
@@ -4661,7 +4998,8 @@ export function GardenMapClient() {
     if (!group) return;
 
     const normalized = serializeGroup(group);
-    window.localStorage.setItem(STORAGE_LAYOUT_KEY, JSON.stringify(normalized));
+    window.localStorage.setItem(userKey(STORAGE_LAYOUT_KEY), JSON.stringify(normalized));
+    markDirty(STORAGE_LAYOUT_KEY);
 
     setLayoutForContainment(normalized);
 
@@ -6242,9 +6580,10 @@ export function GardenMapClient() {
 
     const center = map.getCenter();
     window.localStorage.setItem(
-      STORAGE_VIEW_KEY,
+      userKey(STORAGE_VIEW_KEY),
       JSON.stringify({ center: [center.lat, center.lng] as [number, number], zoom: map.getZoom() })
     );
+    markDirty(STORAGE_VIEW_KEY);
   }, []);
 
   const updateSelectedProperty = useCallback(
@@ -7367,29 +7706,76 @@ export function GardenMapClient() {
         ) : null}
       </div>
 
-      {/* ── Mobile Bottom Navigation ── */}
-      <div className="mobile-bottom-nav md:hidden">
-        <button type="button" className={sidebarTab === "create" && mobileSidebarOpen ? "active" : ""} onClick={() => { openMobileSidebar("create"); }}>
-          <span className="nav-icon">＋</span>
-          <span className="nav-label">Opret</span>
-        </button>
-        <button type="button" className={sidebarTab === "scan" && mobileSidebarOpen ? "active" : ""} onClick={() => { openMobileSidebar("scan"); }}>
-          <span className="nav-icon">📷</span>
-          <span className="nav-label">Scan</span>
-        </button>
-        <button type="button" className={sidebarTab === "plants" && mobileSidebarOpen ? "active" : ""} onClick={() => { openMobileSidebar("plants"); }}>
-          <span className="nav-icon">🌱</span>
-          <span className="nav-label">Planter</span>
-        </button>
-        <button type="button" className={sidebarTab === "content" && mobileSidebarOpen ? "active" : ""} onClick={() => { if (selected) openMobileSidebar("content"); }} style={{ opacity: selected ? 1 : 0.3 }}>
-          <span className="nav-icon">◉</span>
-          <span className="nav-label">Indhold</span>
-        </button>
-        <button type="button" onClick={() => { if (mobileSidebarOpen) closeMobileSidebar(); else openMobileSidebar(sidebarTab); }}>
-          <span className="nav-icon">{mobileSidebarOpen ? "✕" : "☰"}</span>
-          <span className="nav-label">{mobileSidebarOpen ? "Luk" : "Menu"}</span>
+      {/* ── Mobile Bottom Navigation (customisable) ── */}
+      <div className="mobile-bottom-nav hidden max-md:flex">
+        {pinnedMobileTabs.map((tabId) => {
+          const def = ALL_SIDEBAR_TABS.find((t) => t.id === tabId);
+          if (!def) return null;
+          const isActive = sidebarTab === tabId && mobileSidebarOpen;
+          const isContent = tabId === "content";
+          const isDisabled = isContent && !selected;
+          return (
+            <button
+              key={tabId}
+              type="button"
+              className={isActive ? "active" : ""}
+              style={isDisabled ? { opacity: 0.3 } : undefined}
+              onClick={() => {
+                if (isDisabled) return;
+                if (isActive) { closeMobileSidebar(); } else { openMobileSidebar(tabId); }
+              }}
+            >
+              <span className="nav-icon">{def.icon}</span>
+              <span className="nav-label">{def.label}</span>
+            </button>
+          );
+        })}
+        {/* ☰ Menu: åbner genvejs-vælger */}
+        <button type="button" className={mobileNavMenuOpen ? "active" : ""} onClick={() => setMobileNavMenuOpen((v) => !v)}>
+          <span className="nav-icon">{mobileNavMenuOpen ? "✕" : "☰"}</span>
+          <span className="nav-label">{mobileNavMenuOpen ? "Luk" : "Menu"}</span>
         </button>
       </div>
+
+      {/* ── Mobile nav tab picker (popup above bottom bar) ── */}
+      {mobileNavMenuOpen && (
+        <>
+          <div className="fixed inset-0 z-[9997] md:hidden" onClick={() => setMobileNavMenuOpen(false)} />
+          <div className="mobile-nav-picker md:hidden">
+            <div className="text-[11px] font-bold uppercase tracking-wide text-foreground/50 px-3 pt-3 pb-1">Vælg genveje til bundlinjen</div>
+            <div className="grid grid-cols-2 gap-1.5 px-3 pb-3">
+              {ALL_SIDEBAR_TABS.map((tab) => {
+                const isPinned = pinnedMobileTabs.includes(tab.id);
+                return (
+                  <button
+                    key={tab.id}
+                    type="button"
+                    className={`flex items-center gap-2 rounded-lg px-3 py-2.5 text-left transition-all ${
+                      isPinned
+                        ? "bg-accent/15 text-accent ring-1 ring-accent/30"
+                        : "bg-foreground/[0.04] text-foreground/60 hover:bg-foreground/[0.08]"
+                    }`}
+                    onClick={() => togglePinnedTab(tab.id)}
+                  >
+                    <span className="text-base leading-none">{tab.icon}</span>
+                    <span className="text-[12px] font-semibold">{tab.label}</span>
+                    {isPinned && <span className="ml-auto text-accent text-xs">✓</span>}
+                  </button>
+                );
+              })}
+            </div>
+            <div className="px-3 pb-3">
+              <button
+                type="button"
+                className="w-full text-center text-[11px] text-foreground/40 hover:text-foreground/60 py-1"
+                onClick={() => { savePinnedTabs(DEFAULT_PINNED); }}
+              >
+                Nulstil til standard
+              </button>
+            </div>
+          </div>
+        </>
+      )}
 
       {/* ── Mobile Bottom Sheet Backdrop ── */}
       {mobileSidebarOpen ? (
@@ -7413,44 +7799,221 @@ export function GardenMapClient() {
           <div className="w-9 h-1 rounded-full bg-border" />
         </div>
 
-        <div className="px-3 pt-2 md:pt-2 max-md:pt-0 pb-0.5">
-          <nav className="flex items-stretch gap-px overflow-x-auto scrollbar-hide">
-            {[
-              { id: "create" as const, icon: "＋", label: "Opret" },
-              { id: "content" as const, icon: "◉", label: "Indhold", disabled: !selected },
-              { id: "groups" as const, icon: "⊞", label: `Grupper${allGroups.length > 0 ? " " + allGroups.length : ""}` },
-              { id: "plants" as const, icon: "🌱", label: "Planter" },
-              { id: "scan" as const, icon: "📷", label: "Scan" },
-              { id: "view" as const, icon: "👁", label: "Visning" },
-              { id: "tasks" as const, icon: "📋", label: "Opgaver" },
-              { id: "calendar" as const, icon: "📅", label: "Årshjul" },
-              { id: "chat" as const, icon: "💬", label: "Rådgiver" },
-            ].map((tab) => {
-              const isActive = sidebarTab === tab.id;
-              const isDisabled = "disabled" in tab && tab.disabled;
-              return (
-                <button
-                  key={tab.id}
-                  type="button"
-                  disabled={!!isDisabled}
-                  className={`flex flex-col items-center justify-center rounded-xl px-2 py-1.5 min-w-[46px] transition-all ${
-                    isActive
-                      ? "bg-accent text-white shadow-md -translate-y-px"
-                      : isDisabled
-                      ? "text-foreground/20 cursor-not-allowed"
-                      : "text-foreground/50 hover:bg-foreground/[0.06] hover:text-foreground/70"
-                  }`}
-                  onClick={() => { setSidebarTab(tab.id); if (tab.id !== "groups") setHighlightedGroupId(null); }}
-                  title={isDisabled ? "Vælg noget på kortet først" : tab.label}
-                >
-                  <span className={`text-[15px] leading-none ${isActive ? "" : ""}`}>{tab.icon}</span>
-                  <span className={`text-[8px] font-semibold mt-0.5 leading-tight tracking-tight whitespace-nowrap ${
-                    isActive ? "" : "text-foreground/40"
-                  }`}>{tab.label}</span>
-                </button>
-              );
-            })}
+        <div className="px-3 pt-2 md:pt-2 max-md:pt-0 pb-0.5 relative">
+          <nav className="flex items-stretch gap-px">
+            {/* ── Pinned quick-access tabs (ordered) ── */}
+            <div className="flex items-stretch gap-px overflow-x-auto scrollbar-hide flex-1 min-w-0">
+              {pinnedSidebarTabs.map((tabId, idx) => {
+                const def = ALL_SIDEBAR_TABS.find((t) => t.id === tabId);
+                if (!def) return null;
+                const isActive = sidebarTab === tabId;
+                const isDisabled = tabId === "content" && !selected;
+                // Dynamic label with counts
+                const label = tabId === "conflicts" && allConflicts.length > 0
+                  ? `Konflikter ${allConflicts.length}`
+                  : tabId === "groups" && allGroups.length > 0
+                  ? `Grupper ${allGroups.length}`
+                  : def.label;
+                return (
+                  <button
+                    key={tabId}
+                    type="button"
+                    disabled={!!isDisabled}
+                    className={`flex flex-col items-center justify-center rounded-xl px-2 py-1.5 min-w-[46px] transition-all ${
+                      isActive
+                        ? "bg-accent text-white shadow-md -translate-y-px"
+                        : isDisabled
+                        ? "text-foreground/20 cursor-not-allowed"
+                        : "text-foreground/50 hover:bg-foreground/[0.06] hover:text-foreground/70"
+                    }`}
+                    onClick={() => {
+                      if (isDisabled) return;
+                      setSidebarTab(tabId);
+                      if (tabId !== "groups") setHighlightedGroupId(null);
+                      setSidebarDropdownOpen(false);
+                    }}
+                    title={isDisabled ? "Vælg noget på kortet først" : `${label} (⌘${idx + 1})`}
+                  >
+                    <span className="text-[15px] leading-none">{def.icon}</span>
+                    <span className={`text-[8px] font-semibold mt-0.5 leading-tight tracking-tight whitespace-nowrap ${
+                      isActive ? "" : "text-foreground/40"
+                    }`}>{label}</span>
+                  </button>
+                );
+              })}
+            </div>
+
+            {/* ── ▾ Dropdown: alle tabs ── */}
+            <button
+              type="button"
+              className={`flex flex-col items-center justify-center rounded-xl px-1.5 py-1.5 min-w-[32px] transition-all flex-shrink-0 ${
+                sidebarDropdownOpen
+                  ? "bg-foreground/10 text-foreground/80"
+                  : "text-foreground/30 hover:bg-foreground/[0.06] hover:text-foreground/50"
+              }`}
+              onClick={() => { setSidebarDropdownOpen((v) => !v); setSidebarTabPickerOpen(false); }}
+              title="Alle faner"
+            >
+              <span className="text-[13px] leading-none">▾</span>
+              <span className="text-[7px] font-semibold mt-0.5 text-foreground/30">Alle</span>
+            </button>
+
+            {/* ── ⚙️ Tilpas ── */}
+            <button
+              type="button"
+              className={`flex flex-col items-center justify-center rounded-xl px-1.5 py-1.5 min-w-[32px] transition-all flex-shrink-0 ${
+                sidebarTabPickerOpen
+                  ? "bg-foreground/10 text-foreground/80"
+                  : "text-foreground/30 hover:bg-foreground/[0.06] hover:text-foreground/50"
+              }`}
+              onClick={() => { setSidebarTabPickerOpen((v) => !v); setSidebarDropdownOpen(false); }}
+              title="Tilpas genveje"
+            >
+              <span className="text-[13px] leading-none">⚙️</span>
+              <span className="text-[7px] font-semibold mt-0.5 text-foreground/30">Tilpas</span>
+            </button>
           </nav>
+
+          {/* ── ▾ All-tabs dropdown ── */}
+          {sidebarDropdownOpen && (
+            <>
+              <div className="fixed inset-0 z-[40]" onClick={() => setSidebarDropdownOpen(false)} />
+              <div className="sidebar-tab-picker z-[41]">
+                <div className="grid grid-cols-2 gap-1 px-2 py-2">
+                  {ALL_SIDEBAR_TABS.map((tab) => {
+                    const isActive = sidebarTab === tab.id;
+                    const isDisabled = tab.id === "content" && !selected;
+                    const pinIdx = pinnedSidebarTabs.indexOf(tab.id);
+                    return (
+                      <button
+                        key={tab.id}
+                        type="button"
+                        disabled={!!isDisabled}
+                        className={`flex items-center gap-1.5 rounded-lg px-2.5 py-2 text-left transition-all text-[11px] ${
+                          isActive
+                            ? "bg-accent/20 text-accent font-bold ring-1 ring-accent/40"
+                            : isDisabled
+                            ? "text-foreground/20 cursor-not-allowed bg-foreground/[0.02]"
+                            : "bg-foreground/[0.04] text-foreground/60 hover:bg-foreground/[0.08]"
+                        }`}
+                        onClick={() => {
+                          if (isDisabled) return;
+                          setSidebarTab(tab.id);
+                          if (tab.id !== "groups") setHighlightedGroupId(null);
+                          setSidebarDropdownOpen(false);
+                        }}
+                      >
+                        <span className="text-sm leading-none">{tab.icon}</span>
+                        <span className="flex-1">{tab.label}</span>
+                        {pinIdx >= 0 && <span className="text-[9px] text-foreground/30 font-mono">⌘{pinIdx + 1}</span>}
+                      </button>
+                    );
+                  })}
+                </div>
+                {/* ── Log ud ── */}
+                <div className="border-t border-foreground/10 px-2 pt-1.5 pb-2">
+                  <button
+                    type="button"
+                    className="flex w-full items-center gap-1.5 rounded-lg px-2.5 py-2 text-left text-[11px] bg-foreground/[0.04] text-foreground/60 hover:bg-red-500/10 hover:text-red-600 transition-all"
+                    onClick={() => signOut({ callbackUrl: "/login" })}
+                  >
+                    <span className="text-sm leading-none">🚪</span>
+                    <span className="flex-1">Log ud</span>
+                  </button>
+                </div>
+              </div>
+            </>
+          )}
+
+          {/* ── ⚙️ Customization picker ── */}
+          {sidebarTabPickerOpen && (
+            <>
+              <div className="fixed inset-0 z-[40]" onClick={() => setSidebarTabPickerOpen(false)} />
+              <div className="sidebar-tab-picker z-[41]">
+                <div className="text-[10px] font-bold uppercase tracking-wide text-foreground/40 px-3 pt-2.5 pb-1">Genveje (maks {MAX_PINNED_SIDEBAR}) — træk for at ændre rækkefølge</div>
+
+                {/* Pinned tabs — draggable reorder */}
+                <div className="flex flex-col gap-0.5 px-2 pb-1">
+                  {pinnedSidebarTabs.map((tabId, idx) => {
+                    const def = ALL_SIDEBAR_TABS.find((t) => t.id === tabId);
+                    if (!def) return null;
+                    const isDragOver = dragOverIdx === idx && dragIdx !== idx;
+                    return (
+                      <div
+                        key={tabId}
+                        draggable
+                        onDragStart={() => handlePickerDragStart(idx)}
+                        onDragOver={(e) => handlePickerDragOver(e, idx)}
+                        onDrop={() => handlePickerDrop(idx)}
+                        onDragEnd={handlePickerDragEnd}
+                        className={`flex items-center gap-2 rounded-lg px-2 py-1.5 transition-all cursor-grab active:cursor-grabbing
+                          bg-accent/10 text-accent ring-1 ring-accent/25
+                          ${isDragOver ? "ring-accent/60 bg-accent/20 scale-[1.02]" : ""}
+                          ${dragIdx === idx ? "opacity-40" : ""}
+                        `}
+                      >
+                        <span className="text-foreground/25 text-[10px] cursor-grab select-none" title="Træk for at flytte">⠿</span>
+                        <span className="text-sm leading-none">{def.icon}</span>
+                        <span className="text-[11px] font-semibold flex-1">{def.label}</span>
+                        <span className="text-[9px] text-foreground/30 font-mono">⌘{idx + 1}</span>
+                        <button
+                          type="button"
+                          className="text-[10px] text-foreground/30 hover:text-red-500 transition-colors px-1"
+                          onClick={(e) => { e.stopPropagation(); toggleSidebarPin(tabId); }}
+                          title="Fjern fra genveje"
+                        >✕</button>
+                      </div>
+                    );
+                  })}
+                </div>
+
+                {/* Unpinned tabs — click to add */}
+                {pinnedSidebarTabs.length < ALL_SIDEBAR_TABS.length && (
+                  <>
+                    <div className="text-[9px] font-bold uppercase tracking-wide text-foreground/30 px-3 pt-1.5 pb-0.5">Tilgængelige</div>
+                    <div className="grid grid-cols-2 gap-0.5 px-2 pb-2">
+                      {ALL_SIDEBAR_TABS.filter((t) => !pinnedSidebarTabs.includes(t.id)).map((tab) => (
+                        <button
+                          key={tab.id}
+                          type="button"
+                          disabled={pinnedSidebarTabs.length >= MAX_PINNED_SIDEBAR}
+                          className={`flex items-center gap-1.5 rounded-lg px-2 py-1.5 text-left transition-all text-[11px]
+                            ${pinnedSidebarTabs.length >= MAX_PINNED_SIDEBAR
+                              ? "text-foreground/20 cursor-not-allowed bg-foreground/[0.02]"
+                              : "bg-foreground/[0.04] text-foreground/50 hover:bg-foreground/[0.08] hover:text-foreground/70"
+                            }
+                          `}
+                          onClick={() => toggleSidebarPin(tab.id)}
+                          title={pinnedSidebarTabs.length >= MAX_PINNED_SIDEBAR ? `Maks ${MAX_PINNED_SIDEBAR} genveje — fjern én først` : `Tilføj ${tab.label} som genvej`}
+                        >
+                          <span className="text-sm leading-none">{tab.icon}</span>
+                          <span>{tab.label}</span>
+                          <span className="ml-auto text-[10px] text-foreground/25">＋</span>
+                        </button>
+                      ))}
+                    </div>
+                  </>
+                )}
+
+                <div className="flex items-center justify-between px-3 pb-2 gap-2 border-t border-border/50 pt-1.5">
+                  <button
+                    type="button"
+                    className="text-[10px] text-foreground/35 hover:text-foreground/60 transition-colors"
+                    onClick={() => saveSidebarPins(DEFAULT_SIDEBAR_PINS)}
+                  >
+                    Nulstil
+                  </button>
+                  <button
+                    type="button"
+                    className="text-[10px] text-accent hover:text-accent/80 font-semibold transition-colors"
+                    onClick={() => setSidebarTabPickerOpen(false)}
+                  >
+                    Færdig
+                  </button>
+                </div>
+              </div>
+            </>
+          )}
         </div>
 
         <div className="flex-1 overflow-y-auto sidebar-scroll px-4 pb-4">
@@ -7872,147 +8435,135 @@ export function GardenMapClient() {
           ) : (
             <div className="mt-3 space-y-3">
             <div>
-              <p className="mb-1.5 text-[10px] font-semibold uppercase tracking-wide text-accent">
-                {CATEGORY_LABELS[selectedCategory as GardenFeatureCategory] ?? "—"}
-              </p>
-              <label className="block text-[11px] font-semibold text-foreground/60 uppercase tracking-wide">Type</label>
-              {selectedCategory === "element" ? (
-                <div className="mt-1.5 grid grid-cols-2 gap-1.5">
-                  {([
-                    { mode: "planter" as const, label: "🌱 Planter", kinds: ["tree", "bush", "flower", "plant"] },
-                    { mode: "el" as const, label: "⚡ El / Ledning", kinds: ["electric", "electric-cable", "electric-lv", "electric-outlet", "electric-junction", "electric-panel", "electric-solar"] },
-                    { mode: "vand" as const, label: "💧 Vand / Rør", kinds: ["water", "water-pipe", "water-hose", "water-drip", "water-tap", "water-sprinkler", "water-timer", "water-barrel"] },
-                    { mode: "lampe" as const, label: "💡 Lampe", kinds: ["lamp", "lamp-garden", "lamp-spot", "lamp-led-string", "lamp-wall", "lamp-solar", "lamp-path", "lamp-battery", "lamp-flood"] },
-                  ]).map((opt) => {
-                    const currentKind = String(selectedKind ?? "plant").toLowerCase();
-                    const isActive = opt.kinds.includes(currentKind);
-                    return (
-                      <button
-                        key={opt.mode}
-                        type="button"
-                        className={`rounded-lg border px-3 py-2 text-xs text-left transition-all ${
-                          isActive
-                            ? "border-accent/40 bg-accent-light text-accent-dark font-semibold shadow-sm"
-                            : "border-border bg-background hover:bg-foreground/5 text-foreground/70"
-                        }`}
-                        onClick={() => {
-                          const defaultKind = kindForElementMode(opt.mode);
-                          updateSelectedProperty({
-                            kind: defaultKind,
-                            category: "element",
-                            // Clear plant link when switching to infra, clear infra link when switching to plant
-                            ...(opt.mode === "planter"
-                              ? { elementTypeId: "" }
-                              : { speciesId: "", varietyId: "", varietyName: "" }),
-                          });
+              {/* Compact type chip — click to expand and change */}
+              {selectedCategory === "element" ? (() => {
+                const typeOpts = [
+                  { mode: "planter" as const, label: "Planter", icon: "🌱", kinds: ["tree", "bush", "flower", "plant"] },
+                  { mode: "el" as const, label: "El / Ledning", icon: "⚡", kinds: ["electric", "electric-cable", "electric-lv", "electric-outlet", "electric-junction", "electric-panel", "electric-solar"] },
+                  { mode: "vand" as const, label: "Vand / Rør", icon: "💧", kinds: ["water", "water-pipe", "water-hose", "water-drip", "water-tap", "water-sprinkler", "water-timer", "water-barrel"] },
+                  { mode: "lampe" as const, label: "Lampe", icon: "💡", kinds: ["lamp", "lamp-garden", "lamp-spot", "lamp-led-string", "lamp-wall", "lamp-solar", "lamp-path", "lamp-battery", "lamp-flood"] },
+                ];
+                const currentKind = String(selectedKind ?? "plant").toLowerCase();
+                const activeOpt = typeOpts.find((o) => o.kinds.includes(currentKind)) ?? typeOpts[0];
+                return (
+                  <div className="rounded-lg border border-foreground/10 bg-foreground/[0.02] overflow-hidden">
+                    <button
+                      type="button"
+                      className="flex w-full items-center gap-2 px-2.5 py-1.5 text-left hover:bg-foreground/[0.03] transition-colors"
+                      onClick={() => setContentTypeOpen(!contentTypeOpen)}
+                    >
+                      <span className="text-[10px] font-semibold text-foreground/50 uppercase tracking-wide">{activeOpt.icon} {activeOpt.label}</span>
+                      <span className="text-[9px] text-foreground/30">·</span>
+                      <span className="text-[10px] text-foreground/40">{CATEGORY_LABELS[selectedCategory as GardenFeatureCategory] ?? "—"}</span>
+                      <span className="flex-1" />
+                      <span className="text-[9px] text-foreground/30">{contentTypeOpen ? "▲" : "▼"}</span>
+                    </button>
+                    {contentTypeOpen ? (
+                      <div className="px-2.5 pb-2 pt-1 grid grid-cols-2 gap-1.5">
+                        {typeOpts.map((opt) => {
+                          const isActive = opt.kinds.includes(currentKind);
+                          return (
+                            <button
+                              key={opt.mode}
+                              type="button"
+                              className={`rounded-md border px-2.5 py-1.5 text-[11px] text-left transition-all ${
+                                isActive
+                                  ? "border-accent/40 bg-accent-light text-accent-dark font-semibold"
+                                  : "border-border bg-background hover:bg-foreground/5 text-foreground/70"
+                              }`}
+                              onClick={() => {
+                                const defaultKind = kindForElementMode(opt.mode);
+                                updateSelectedProperty({
+                                  kind: defaultKind,
+                                  category: "element",
+                                  ...(opt.mode === "planter"
+                                    ? { elementTypeId: "" }
+                                    : { speciesId: "", varietyId: "", varietyName: "" }),
+                                });
+                                setContentTypeOpen(false);
+                              }}
+                            >
+                              {opt.icon} {opt.label}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    ) : null}
+                  </div>
+                );
+              })() : (
+                <div className="rounded-lg border border-foreground/10 bg-foreground/[0.02] overflow-hidden">
+                  <button
+                    type="button"
+                    className="flex w-full items-center gap-2 px-2.5 py-1.5 text-left hover:bg-foreground/[0.03] transition-colors"
+                    onClick={() => setContentTypeOpen(!contentTypeOpen)}
+                  >
+                    <span className="text-[10px] font-semibold text-foreground/50 uppercase tracking-wide">{selectedKindDef?.label ?? "Type"}</span>
+                    <span className="text-[9px] text-foreground/30">·</span>
+                    <span className="text-[10px] text-foreground/40">{CATEGORY_LABELS[selectedCategory as GardenFeatureCategory] ?? "—"}</span>
+                    <span className="flex-1" />
+                    <span className="text-[9px] text-foreground/30">{contentTypeOpen ? "▲" : "▼"}</span>
+                  </button>
+                  {contentTypeOpen ? (
+                    <div className="px-2.5 pb-2 pt-1">
+                      <select
+                        className="w-full rounded-md border border-border bg-background px-2.5 py-1.5 text-xs shadow-sm focus:outline-none focus:ring-2 focus:ring-accent/30 focus:border-accent/50"
+                        value={selectedKind ?? defaultKindForGeometry(selected.feature.geometry)}
+                        onChange={(e) => {
+                          const nextKind = e.target.value as GardenFeatureKind;
+                          updateSelectedProperty({ kind: nextKind, category: categoryForKind(nextKind, selected.feature.geometry) });
                         }}
                       >
-                        {opt.label}
-                      </button>
-                    );
-                  })}
+                        {allowedKindDefsForSelected.map((def) => (
+                          <option key={def.kind} value={def.kind}>
+                            {def.label} ({CATEGORY_LABELS[def.category]})
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  ) : null}
                 </div>
-              ) : (
-                <select
-                  className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm shadow-sm focus:outline-none focus:ring-2 focus:ring-accent/30 focus:border-accent/50"
-                  value={selectedKind ?? defaultKindForGeometry(selected.feature.geometry)}
-                  onChange={(e) => {
-                    const nextKind = e.target.value as GardenFeatureKind;
-                    updateSelectedProperty({ kind: nextKind, category: categoryForKind(nextKind, selected.feature.geometry) });
-                  }}
-                >
-                  {allowedKindDefsForSelected.map((def) => (
-                    <option key={def.kind} value={def.kind}>
-                      {def.label} ({CATEGORY_LABELS[def.category]})
-                    </option>
-                  ))}
-                </select>
               )}
             </div>
 
-            <div>
-              <label className="block text-[11px] font-semibold text-foreground/60 uppercase tracking-wide">Navn</label>
-              <div className="mt-1 flex gap-1.5 items-center">
-                <input
-                  className={`flex-1 rounded-lg border px-3 py-2 text-sm shadow-sm focus:outline-none focus:ring-2 focus:ring-accent/30 focus:border-accent/50 bg-background ${draftNameDirty ? "border-amber-400" : "border-border"}`}
-                  value={draftName}
-                  onChange={(e) => setDraftName(e.target.value)}
-                  onBlur={() => commitDraftName()}
-                  onKeyDown={(e) => { if (e.key === "Enter") { commitDraftName(); (e.target as HTMLInputElement).blur(); } }}
-                  placeholder="Fx Køkkenbed 1 / Æbletræ"
-                />
-                {draftNameDirty && (
-                  <button
-                    type="button"
-                    className="shrink-0 rounded-md bg-accent px-2.5 py-1.5 text-xs font-semibold text-white shadow-sm hover:bg-accent/80 transition-colors"
-                    onClick={() => commitDraftName()}
-                  >
-                    Gem
-                  </button>
-                )}
-              </div>
-            </div>
-
-            {/* ── Ikon-vælger (only for point markers) ── */}
-            {selectedIsPoint ? (() => {
-              // Count how many features of the same kind exist (for "set as default" confirmation)
-              const sameKindCount = selectedKind ? (() => {
-                let count = 0;
-                featureGroupRef.current?.eachLayer((layer) => {
-                  const lf = (layer as L.Layer & { feature?: GardenFeature }).feature;
-                  if (lf?.properties?.kind === selectedKind && layer instanceof L.Marker) count++;
-                });
-                return count;
-              })() : 0;
-
-              return (
-                <div>
-                  <label className="block text-[11px] font-semibold text-foreground/60 uppercase tracking-wide">Kort-ikon</label>
-                  <div className="mt-1">
-                    <IconPicker
-                      value={selected.feature.properties?.customIcon ?? ""}
-                      onChange={(emoji) => {
-                        updateSelectedProperty({ customIcon: emoji });
-                      }}
-                      kindLabel={selectedKindDef?.label}
-                      kindCount={sameKindCount}
-                      onSetKindDefault={selectedKind ? (emoji) => {
-                        pushUndoSnapshot();
-
-                        // 1. Save as kind-level default for future elements
-                        setKindDefaultIcon(selectedKind!, emoji);
-
-                        // 2. Update ALL existing features of this kind
-                        const group = featureGroupRef.current;
-                        if (group) {
-                          group.eachLayer((layer) => {
-                            const layerWithFeature = layer as L.Layer & { feature?: GardenFeature };
-                            const lf = layerWithFeature.feature;
-                            if (lf?.properties?.kind === selectedKind && layer instanceof L.Marker) {
-                              lf.properties.customIcon = emoji;
-                            }
-                          });
-                        }
-
-                        // 3. Update the currently selected feature's state
-                        if (selected.feature.properties?.kind === selectedKind) {
-                          setSelected({
-                            gardenosId: selected.gardenosId,
-                            feature: ensureDefaultProperties({
-                              ...selected.feature,
-                              properties: { ...selected.feature.properties, customIcon: emoji },
-                            }),
-                          });
-                        }
-
-                        // 4. Refresh all visuals
-                        rebuildFromGroupAndUpdateSelection();
-                      } : undefined}
+            {/* ── Navn (collapsible box) ── */}
+            <div className="rounded-lg border border-foreground/10 bg-foreground/[0.02] overflow-hidden">
+              <button
+                type="button"
+                className="flex w-full items-center gap-2 px-2.5 py-1.5 text-left hover:bg-foreground/[0.03] transition-colors"
+                onClick={() => setContentNameOpen(!contentNameOpen)}
+              >
+                <span className="text-[10px] font-semibold text-foreground/50 uppercase tracking-wide">✏️ Navn</span>
+                <span className="text-[9px] text-foreground/30">·</span>
+                <span className="text-[11px] text-foreground/70 truncate flex-1">{draftName || "(intet navn)"}</span>
+                {draftNameDirty ? <span className="text-[8px] text-amber-500 font-bold">●</span> : null}
+                <span className="text-[9px] text-foreground/30 shrink-0">{contentNameOpen ? "▲" : "▼"}</span>
+              </button>
+              {contentNameOpen ? (
+                <div className="px-2.5 pb-2 pt-1">
+                  <div className="flex gap-1.5 items-center">
+                    <input
+                      className={`flex-1 min-w-0 rounded-md border px-2.5 py-1.5 text-xs shadow-sm focus:outline-none focus:ring-2 focus:ring-accent/30 focus:border-accent/50 bg-background ${draftNameDirty ? "border-amber-400" : "border-foreground/15"}`}
+                      value={draftName}
+                      onChange={(e) => setDraftName(e.target.value)}
+                      onBlur={() => commitDraftName()}
+                      onKeyDown={(e) => { if (e.key === "Enter") { commitDraftName(); (e.target as HTMLInputElement).blur(); } }}
+                      placeholder="Fx Køkkenbed 1 / Æbletræ"
+                      autoFocus
                     />
+                    {draftNameDirty ? (
+                      <button
+                        type="button"
+                        className="shrink-0 rounded-md bg-accent px-2 py-1 text-[10px] font-semibold text-white shadow-sm hover:bg-accent/80 transition-colors"
+                        onClick={() => commitDraftName()}
+                      >
+                        Gem
+                      </button>
+                    ) : null}
                   </div>
                 </div>
-              );
-            })() : null}
+              ) : null}
+            </div>
 
             {selectedContainerAreaText ? (
               <div>
@@ -9164,6 +9715,123 @@ export function GardenMapClient() {
             {/* ── Element (plant) fields ── */}
             {selectedCategory === "element" && !selectedIsInfra ? (
               <>
+                {/* ── Art (species) picker — collapsible chip ── */}
+                {(() => {
+                  const currentSpeciesId = selected.feature.properties?.speciesId ?? "";
+                  const currentSpecies = currentSpeciesId ? getPlantById(currentSpeciesId) : undefined;
+                  const speciesLabel = currentSpecies ? `${currentSpecies.icon ?? "🌿"} ${currentSpecies.name}` : "Vælg art";
+                  return (
+                    <div className="rounded-lg border border-foreground/10 bg-foreground/[0.02] overflow-hidden">
+                      <div
+                        role="button"
+                        tabIndex={0}
+                        className="flex w-full items-center gap-2 px-2.5 py-1.5 text-left hover:bg-foreground/[0.03] transition-colors cursor-pointer"
+                        onClick={() => { setContentSpeciesOpen(!contentSpeciesOpen); if (!contentSpeciesOpen) setSpeciesPickerSearch(""); }}
+                        onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setContentSpeciesOpen(!contentSpeciesOpen); if (!contentSpeciesOpen) setSpeciesPickerSearch(""); } }}
+                      >
+                        <span className="text-[10px] font-semibold text-foreground/50 uppercase tracking-wide">🌿 Art</span>
+                        <span className="text-[9px] text-foreground/30">·</span>
+                        <span className={`text-[11px] truncate flex-1 ${currentSpecies ? "text-foreground/70" : "text-foreground/40 italic"}`}>{speciesLabel}</span>
+                        {currentSpeciesId ? (
+                          <button
+                            type="button"
+                            className="shrink-0 rounded px-1 py-0.5 text-[9px] text-foreground/30 hover:bg-red-50 hover:text-red-500"
+                            onClick={(e) => { e.stopPropagation(); updateSelectedProperty({ speciesId: "", varietyId: "", varietyName: "" }); }}
+                            title="Fjern art"
+                          >✕</button>
+                        ) : null}
+                        <span className="text-[9px] text-foreground/30 shrink-0">{contentSpeciesOpen ? "▲" : "▼"}</span>
+                      </div>
+                      {contentSpeciesOpen ? (
+                        <div className="px-2.5 pb-2.5 pt-1 space-y-1.5">
+                          <input
+                            className="w-full rounded-md border border-foreground/15 bg-background px-2.5 py-1.5 text-xs shadow-sm focus:outline-none focus:ring-2 focus:ring-accent/30"
+                            value={speciesPickerSearch}
+                            onChange={(e) => setSpeciesPickerSearch(e.target.value)}
+                            placeholder="Søg art… (navn eller latin)"
+                            autoFocus
+                          />
+                          <div className="max-h-48 overflow-y-auto space-y-0.5 -mx-0.5 px-0.5">
+                            {(() => {
+                              const q = speciesPickerSearch.trim().toLowerCase();
+                              // Filter by kind → category mapping
+                              const kindCategoryMap: Record<string, string[]> = {
+                                tree: ["tree", "fruit"],
+                                bush: ["fruit", "bush", "perennial"],
+                                flower: ["flower", "perennial", "grass", "cover-crop"],
+                                plant: ["vegetable", "herb", "soil-amendment"],
+                              };
+                              const kindStr = String(selectedKind ?? "plant").toLowerCase();
+                              const preferredCategories = kindCategoryMap[kindStr] ?? [];
+                              let candidates = allPlants;
+                              // If no search query, filter by kind-appropriate categories
+                              if (!q && preferredCategories.length > 0) {
+                                candidates = candidates.filter((p) => preferredCategories.includes(p.category));
+                              }
+                              if (q) {
+                                candidates = candidates.filter((p) =>
+                                  p.name.toLowerCase().includes(q) ||
+                                  (p.latinName?.toLowerCase().includes(q) ?? false) ||
+                                  p.id.includes(q)
+                                );
+                              }
+                              // Sort: current species first, then alphabetically
+                              candidates.sort((a, b) => {
+                                if (a.id === currentSpeciesId) return -1;
+                                if (b.id === currentSpeciesId) return 1;
+                                return a.name.localeCompare(b.name, "da");
+                              });
+                              if (candidates.length === 0) return <p className="text-[10px] text-foreground/40 py-2 text-center">Ingen arter fundet</p>;
+                              return candidates.slice(0, 50).map((sp) => (
+                                <button
+                                  key={sp.id}
+                                  type="button"
+                                  className={`flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left transition-all ${
+                                    sp.id === currentSpeciesId
+                                      ? "border border-accent/30 bg-accent-light/30 text-accent-dark font-semibold"
+                                      : "border border-transparent hover:bg-foreground/5 text-foreground/70"
+                                  }`}
+                                  onClick={() => {
+                                    const newProps: Partial<GardenFeatureProperties> = {
+                                      speciesId: sp.id,
+                                      varietyId: "",
+                                      varietyName: "",
+                                    };
+                                    // Auto-fill name if currently empty or was auto-set from a previous species
+                                    const currentName = selected.feature.properties?.name ?? "";
+                                    const prevSpecies = currentSpeciesId ? getPlantById(currentSpeciesId) : undefined;
+                                    if (!currentName || currentName === prevSpecies?.name) {
+                                      newProps.name = sp.name;
+                                      newProps.planted = sp.name;
+                                    }
+                                    // Auto-fill icon if species has one
+                                    if (sp.icon) {
+                                      newProps.customIcon = sp.icon;
+                                    }
+                                    updateSelectedProperty(newProps);
+                                    setContentSpeciesOpen(false);
+                                    setSpeciesPickerSearch("");
+                                  }}
+                                >
+                                  <span className="text-base leading-none shrink-0">{sp.icon ?? "🌱"}</span>
+                                  <div className="flex-1 min-w-0">
+                                    <p className="text-[11px] truncate">{sp.name}</p>
+                                    {sp.latinName ? <p className="text-[9px] text-foreground/40 italic truncate">{sp.latinName}</p> : null}
+                                  </div>
+                                  <span className="text-[9px] text-foreground/30 shrink-0">{PLANT_CATEGORY_LABELS[sp.category]}</span>
+                                </button>
+                              ));
+                            })()}
+                          </div>
+                          {!speciesPickerSearch.trim() ? (
+                            <p className="text-[9px] text-foreground/30 text-center pt-0.5">Filtreret til {String(selectedKind ?? "plant")}-relevante arter · Søg for alle</p>
+                          ) : null}
+                        </div>
+                      ) : null}
+                    </div>
+                  );
+                })()}
+
                 {/* Linked species display — rich expandable panel */}
                 {selected.feature.properties?.speciesId ? (() => {
                   const linkedSpecies = getPlantById(selected.feature.properties.speciesId);
@@ -9210,99 +9878,81 @@ export function GardenMapClient() {
                         </div>
                       </div>
 
-                      {/* ── Sort (variety) display + switcher ── */}
-                      {varieties.length > 0 ? (
-                        <div className="border-t border-accent/10 px-2.5 py-2">
+                      {/* ── Sort (variety) — always visible ── */}
+                      <div className="border-t border-accent/10 px-2.5 py-2 space-y-2">
+                        <div className="flex items-center gap-1.5">
+                          <span className="text-[10px] font-semibold text-foreground/50 uppercase tracking-wide shrink-0">🏷️ Sort</span>
+                          {varieties.length > 0 ? (
+                            <select
+                              className="flex-1 min-w-0 rounded-md border border-accent/20 bg-background px-2 py-1 text-xs font-medium text-accent focus:outline-none focus:ring-2 focus:ring-accent/30 focus:border-accent/50"
+                              value={currentVarietyId}
+                              onChange={(e) => {
+                                const vId = e.target.value;
+                                const v = vId ? varieties.find((vv) => vv.id === vId) : undefined;
+                                const updates: Record<string, string> = {
+                                  varietyId: vId,
+                                  varietyName: v?.name ?? "",
+                                  planted: v?.name ?? linkedSpecies.name,
+                                };
+                                // Pre-fill plantedAt from variety's sowStart if currently empty
+                                if (v?.sowStart && !selected.feature.properties?.plantedAt) {
+                                  const year = new Date().getFullYear();
+                                  const month = String(v.sowStart).padStart(2, "0");
+                                  updates.plantedAt = `${year}-${month}-01`;
+                                }
+                                updateSelectedProperty(updates);
+                              }}
+                            >
+                              <option value="">— Uspecificeret —</option>
+                              {varieties.map((v) => (
+                                <option key={v.id} value={v.id}>
+                                  {v.name}{v.daysToHarvest ? ` (${v.daysToHarvest}d)` : ""}{v.taste ? ` · ${v.taste}` : ""}
+                                </option>
+                              ))}
+                            </select>
+                          ) : (
+                            <span className="flex-1 text-[10px] text-foreground/40 italic">Ingen sorter oprettet</span>
+                          )}
                           <button
                             type="button"
-                            className="flex w-full items-center gap-1.5 text-left"
-                            onClick={() => setContentVarietyPickerOpen(!contentVarietyPickerOpen)}
+                            className="shrink-0 rounded-md border border-accent/20 px-1.5 py-1 text-[10px] text-accent hover:bg-accent/5 transition-colors"
+                            onClick={() => {
+                              setVarietyManagerSpeciesId(linkedSpecies.id);
+                              setShowVarietyManager(true);
+                            }}
+                            title="Administrér sorter"
                           >
-                            <span className="text-[10px] font-semibold text-foreground/50 uppercase tracking-wide">Sort</span>
-                            <span className="flex-1 text-xs font-medium text-accent truncate">
-                              {currentVariety ? currentVariety.name : "Uspecificeret"}
-                            </span>
-                            <span className="text-[10px] text-foreground/30">{contentVarietyPickerOpen ? "▲" : "▼"}</span>
+                            {varieties.length > 0 ? "⚙️" : "＋ Tilføj"}
                           </button>
-
-                          {contentVarietyPickerOpen ? (
-                            <div className="mt-2 space-y-1 max-h-52 overflow-y-auto">
-                              {/* Unspecified option */}
-                              <button
-                                type="button"
-                                className={`flex w-full items-center gap-1.5 rounded px-2 py-1.5 text-left text-[11px] transition-colors ${!currentVarietyId ? "bg-accent/10 font-semibold text-accent" : "text-foreground/70 hover:bg-foreground/5"}`}
-                                onClick={() => {
-                                  updateSelectedProperty({ varietyId: "", varietyName: "", planted: linkedSpecies.name });
-                                  setContentVarietyPickerOpen(false);
-                                }}
-                              >
-                                <span className="text-sm leading-none">🌱</span>
-                                <span className="flex-1 truncate">{linkedSpecies.name} (uspecificeret sort)</span>
-                                {!currentVarietyId ? <span className="text-[9px]">✓</span> : null}
-                              </button>
-
-                              {varieties.map((v) => (
-                                <div key={v.id} className="rounded border border-transparent hover:border-foreground/10">
-                                  <button
-                                    type="button"
-                                    className={`flex w-full items-center gap-1.5 rounded px-2 py-1.5 text-left text-[11px] transition-colors ${currentVarietyId === v.id ? "bg-accent/10 font-semibold text-accent" : "text-foreground/70 hover:bg-foreground/5"}`}
-                                    onClick={() => {
-                                      updateSelectedProperty({ varietyId: v.id, varietyName: v.name, planted: v.name });
-                                      setContentVarietyPickerOpen(false);
-                                    }}
-                                  >
-                                    <span className="text-sm leading-none">🏷️</span>
-                                    <div className="flex-1 min-w-0">
-                                      <span className="truncate block">{v.name}</span>
-                                      {/* Variety quick-info */}
-                                      <span className="text-[9px] text-foreground/40 block">
-                                        {[v.taste, v.color, v.daysToHarvest ? `${v.daysToHarvest} dage` : "", v.storageQuality ? `Lagring: ${v.storageQuality}` : ""].filter(Boolean).join(" · ") || "Ingen detaljer"}
-                                      </span>
-                                    </div>
-                                    {currentVarietyId === v.id ? <span className="text-[9px] shrink-0">✓</span> : null}
-                                  </button>
-                                  {/* Expanded detail when this is the active variety */}
-                                  {currentVarietyId === v.id && (v.description || v.resistances?.length || v.seedSource || v.notes || v.sowStart || v.harvestStart || v.heightCm || v.yieldInfo) ? (
-                                    <div className="px-2 pb-1.5 pt-0.5 text-[10px] text-foreground/50 space-y-0.5">
-                                      {v.description ? <p>{v.description}</p> : null}
-                                      {v.heightCm ? <p>📏 Højde: {v.heightCm} cm</p> : null}
-                                      {v.spacingCm ? <p>↔️ Afstand: {v.spacingCm} cm</p> : null}
-                                      {v.daysToHarvest ? <p>📅 Dage til høst: {v.daysToHarvest}</p> : null}
-                                      {v.sowStart && v.sowEnd ? <p>🌱 Såning: mnd. {v.sowStart}–{v.sowEnd}</p> : null}
-                                      {v.harvestStart && v.harvestEnd ? <p>🥕 Høst: mnd. {v.harvestStart}–{v.harvestEnd}</p> : null}
-                                      {v.yieldInfo ? <p>📦 Udbytte: {v.yieldInfo}</p> : null}
-                                      {v.resistances?.length ? <p>🛡️ Resistens: {v.resistances.join(", ")}</p> : null}
-                                      {v.seedSource ? <p>🏪 Frøkilde: {v.seedSource}</p> : null}
-                                      {v.notes ? <p className="italic">💬 {v.notes}</p> : null}
-                                    </div>
-                                  ) : null}
-                                </div>
-                              ))}
-
-                              <button
-                                type="button"
-                                className="flex w-full items-center justify-center gap-1 rounded px-2 py-1.5 text-[10px] text-accent hover:bg-accent/5 transition-colors"
-                                onClick={() => {
-                                  setVarietyManagerSpeciesId(linkedSpecies.id);
-                                  setShowVarietyManager(true);
-                                }}
-                              >
-                                ＋ Administrér sorter
-                              </button>
-                            </div>
-                          ) : currentVariety ? (
-                            /* Show selected variety details inline when picker is closed */
-                            <div className="mt-1.5 text-[10px] text-foreground/50 space-y-0.5">
-                              {currentVariety.description ? <p>{currentVariety.description}</p> : null}
-                              {(currentVariety.taste || currentVariety.color || currentVariety.daysToHarvest || currentVariety.storageQuality) ? (
-                                <p>
-                                  {[currentVariety.taste, currentVariety.color, currentVariety.daysToHarvest ? `${currentVariety.daysToHarvest} dage til høst` : "", currentVariety.storageQuality ? `Lagring: ${currentVariety.storageQuality}` : ""].filter(Boolean).join(" · ")}
-                                </p>
-                              ) : null}
-                            </div>
-                          ) : null}
                         </div>
-                      ) : null}
+
+                        {/* Variety info card (when a specific variety is selected) */}
+                        {currentVariety ? (
+                          <div className="rounded-md border border-accent/10 bg-accent-light/10 p-2 space-y-1 text-[10px] text-foreground/60">
+                            {currentVariety.description ? <p>{currentVariety.description}</p> : null}
+                            {/* Key data chips */}
+                            <div className="flex flex-wrap gap-1">
+                              {currentVariety.color ? <span className="inline-flex items-center gap-0.5 rounded-full bg-foreground/5 px-1.5 py-0.5 text-[9px]">🎨 {currentVariety.color}</span> : null}
+                              {currentVariety.taste ? <span className="inline-flex items-center gap-0.5 rounded-full bg-foreground/5 px-1.5 py-0.5 text-[9px]">👅 {currentVariety.taste}</span> : null}
+                              {currentVariety.daysToHarvest ? <span className="inline-flex items-center gap-0.5 rounded-full bg-foreground/5 px-1.5 py-0.5 text-[9px]">📅 {currentVariety.daysToHarvest} dage</span> : null}
+                              {currentVariety.spacingCm ? <span className="inline-flex items-center gap-0.5 rounded-full bg-foreground/5 px-1.5 py-0.5 text-[9px]">↔️ {currentVariety.spacingCm} cm</span> : null}
+                              {currentVariety.heightCm ? <span className="inline-flex items-center gap-0.5 rounded-full bg-foreground/5 px-1.5 py-0.5 text-[9px]">📏 {currentVariety.heightCm} cm</span> : null}
+                              {currentVariety.storageQuality ? <span className="inline-flex items-center gap-0.5 rounded-full bg-foreground/5 px-1.5 py-0.5 text-[9px]">📦 {currentVariety.storageQuality}</span> : null}
+                              {currentVariety.resistances?.length ? <span className="inline-flex items-center gap-0.5 rounded-full bg-green-50 text-green-700 px-1.5 py-0.5 text-[9px]">🛡️ {currentVariety.resistances.join(", ")}</span> : null}
+                              {currentVariety.seedSource ? <span className="inline-flex items-center gap-0.5 rounded-full bg-foreground/5 px-1.5 py-0.5 text-[9px]">🏪 {currentVariety.seedSource}</span> : null}
+                            </div>
+                            {/* Season windows */}
+                            {(currentVariety.sowStart || currentVariety.harvestStart) ? (
+                              <div className="flex gap-3 pt-0.5">
+                                {currentVariety.sowStart && currentVariety.sowEnd ? <span className="text-[9px] text-foreground/50">🌱 Så: mnd {currentVariety.sowStart}–{currentVariety.sowEnd}</span> : null}
+                                {currentVariety.harvestStart && currentVariety.harvestEnd ? <span className="text-[9px] text-foreground/50">🥕 Høst: mnd {currentVariety.harvestStart}–{currentVariety.harvestEnd}</span> : null}
+                              </div>
+                            ) : null}
+                            {currentVariety.yieldInfo ? <p className="text-[9px] text-foreground/50">📦 {currentVariety.yieldInfo}</p> : null}
+                            {currentVariety.notes ? <p className="text-[9px] text-foreground/40 italic">💬 {currentVariety.notes}</p> : null}
+                          </div>
+                        ) : null}
+                      </div>
 
                       {/* ── Collapsible species details ── */}
                       <div className="border-t border-accent/10">
@@ -9316,7 +9966,84 @@ export function GardenMapClient() {
                           <span className="text-foreground/30">{contentPlantDetailsOpen ? "▲" : "▼"}</span>
                         </button>
                         {contentPlantDetailsOpen ? (
-                          <div className="px-2.5 pb-2.5 space-y-1.5 text-[10px] text-foreground/60">
+                          <div className="px-2.5 pb-2.5 space-y-2 text-[10px] text-foreground/60">
+                            {/* ── Plantedato (inside collapsible) ── */}
+                            <div>
+                              <label className="block text-[10px] font-semibold text-foreground/50 uppercase tracking-wide">📅 Plantedato</label>
+                              {(() => {
+                                const sp = selected.feature.properties;
+                                const species = sp?.speciesId ? getPlantById(sp.speciesId) : undefined;
+                                const variety = sp?.speciesId && sp?.varietyId ? getVarietiesForSpecies(sp.speciesId).find((v) => v.id === sp.varietyId) : undefined;
+                                const sowS = variety?.sowStart ?? (species?.sowOutdoor?.[0] || species?.sowIndoor?.[0]);
+                                const sowE = variety?.sowEnd ?? (species?.sowOutdoor?.[1] || species?.sowIndoor?.[1]);
+                                const harS = variety?.harvestStart ?? species?.harvest?.[0];
+                                const harE = variety?.harvestEnd ?? species?.harvest?.[1];
+                                const hints: string[] = [];
+                                if (sowS && sowE) hints.push(`🌱 Så mnd ${sowS}–${sowE}`);
+                                if (harS && harE) hints.push(`🥕 Høst mnd ${harS}–${harE}`);
+                                if (variety?.daysToHarvest) hints.push(`📅 ${variety.daysToHarvest} dage til høst`);
+                                else if (species && 'daysToHarvest' in species && (species as Record<string, unknown>).daysToHarvest) hints.push(`📅 ${(species as Record<string, unknown>).daysToHarvest} dage til høst`);
+                                return hints.length > 0 ? (
+                                  <p className="text-[9px] text-accent/70 mt-0.5 mb-1">{hints.join(" · ")}</p>
+                                ) : (
+                                  <p className="text-[9px] text-foreground/35 mt-0.5 mb-1">Hvornår planten blev sat / forventes sat</p>
+                                );
+                              })()}
+                              <input
+                                type="date"
+                                className="w-full rounded-md border border-foreground/15 bg-background px-2.5 py-1.5 text-xs shadow-sm"
+                                value={selected.feature.properties?.plantedAt ?? ""}
+                                onChange={(e) => updateSelectedProperty({ plantedAt: e.target.value })}
+                              />
+                            </div>
+                            {/* ── Ikon (point markers only) ── */}
+                            {selectedIsPoint ? (() => {
+                              const sameKindCount = selectedKind ? (() => {
+                                let count = 0;
+                                featureGroupRef.current?.eachLayer((layer) => {
+                                  const lf = (layer as L.Layer & { feature?: GardenFeature }).feature;
+                                  if (lf?.properties?.kind === selectedKind && layer instanceof L.Marker) count++;
+                                });
+                                return count;
+                              })() : 0;
+                              return (
+                                <div>
+                                  <label className="block text-[10px] font-semibold text-foreground/50 uppercase tracking-wide mb-1">🎨 Ikon</label>
+                                  <IconPicker
+                                    value={selected.feature.properties?.customIcon ?? ""}
+                                    onChange={(emoji) => {
+                                      updateSelectedProperty({ customIcon: emoji });
+                                    }}
+                                    kindLabel={selectedKindDef?.label}
+                                    kindCount={sameKindCount}
+                                    onSetKindDefault={selectedKind ? (emoji) => {
+                                      pushUndoSnapshot();
+                                      setKindDefaultIcon(selectedKind!, emoji);
+                                      const group = featureGroupRef.current;
+                                      if (group) {
+                                        group.eachLayer((layer) => {
+                                          const layerWithFeature = layer as L.Layer & { feature?: GardenFeature };
+                                          const lf = layerWithFeature.feature;
+                                          if (lf?.properties?.kind === selectedKind && layer instanceof L.Marker) {
+                                            lf.properties.customIcon = emoji;
+                                          }
+                                        });
+                                      }
+                                      if (selected.feature.properties?.kind === selectedKind) {
+                                        setSelected({
+                                          gardenosId: selected.gardenosId,
+                                          feature: ensureDefaultProperties({
+                                            ...selected.feature,
+                                            properties: { ...selected.feature.properties, customIcon: emoji },
+                                          }),
+                                        });
+                                      }
+                                      rebuildFromGroupAndUpdateSelection();
+                                    } : undefined}
+                                  />
+                                </div>
+                              );
+                            })() : null}
                             {/* Growing info */}
                             <div className="grid grid-cols-2 gap-x-3 gap-y-1">
                               {linkedSpecies.lifecycle ? (
@@ -9342,6 +10069,24 @@ export function GardenMapClient() {
                               ) : null}
                               {linkedSpecies.minTempC != null ? (
                                 <div><span className="text-foreground/40">Min. temp:</span> {linkedSpecies.minTempC}°C</div>
+                              ) : null}
+                              {linkedSpecies.seasonType ? (
+                                <div><span className="text-foreground/40">Sæsontype:</span> {linkedSpecies.seasonType === "cool" ? "Kold-sæson" : "Varm-sæson"}</div>
+                              ) : null}
+                              {linkedSpecies.sowDepthCm != null ? (
+                                <div><span className="text-foreground/40">Sådybde:</span> {linkedSpecies.sowDepthCm} cm</div>
+                              ) : null}
+                              {linkedSpecies.daysToHarvest ? (
+                                <div><span className="text-foreground/40">Dage til høst:</span> ~{linkedSpecies.daysToHarvest} dage</div>
+                              ) : null}
+                              {linkedSpecies.phRange ? (
+                                <div><span className="text-foreground/40">Jord-pH:</span> {linkedSpecies.phRange.min}–{linkedSpecies.phRange.max}</div>
+                              ) : null}
+                              {linkedSpecies.germinationDays ? (
+                                <div><span className="text-foreground/40">Spiretid:</span> {linkedSpecies.germinationDays.min}–{linkedSpecies.germinationDays.max} dage</div>
+                              ) : null}
+                              {linkedSpecies.germinationTempC ? (
+                                <div><span className="text-foreground/40">Spiretemperatur:</span> {linkedSpecies.germinationTempC.min}–{linkedSpecies.germinationTempC.max}°C</div>
                               ) : null}
                             </div>
 
@@ -9416,95 +10161,121 @@ export function GardenMapClient() {
                   );
                 })() : null}
 
-                {/* ── Konflikter for dette element ── */}
+                {/* ── Konflikter for dette element (struktureret hæmmer/hæmmes af) ── */}
                 {selected.feature.properties?.speciesId && selected.feature.geometry?.type === "Point" ? (() => {
                   const myId = selected.gardenosId;
-                  const allConflicts = detectPlantConflicts(layoutForContainment.features);
+                  const mySpecies = getPlantById(selected.feature.properties!.speciesId!);
                   const myConflicts = allConflicts.filter((c) => c.featureIdA === myId || c.featureIdB === myId);
-                  if (myConflicts.length === 0) return null;
+                  if (myConflicts.length === 0) return (
+                    <div className="rounded-lg border border-green-200 bg-green-50/50 p-2.5">
+                      <p className="text-[10px] text-green-700 font-medium">✅ Ingen konflikter — denne plante er godt placeret</p>
+                    </div>
+                  );
+
+                  // Split: "denne plante hæmmes af andre" vs "denne plante hæmmer andre"
+                  const hæmmesAf: { conflict: PlantConflict; other: PlantSpecies; otherId: string }[] = [];
+                  const hæmmerAndre: { conflict: PlantConflict; other: PlantSpecies; otherId: string }[] = [];
+                  for (const c of myConflicts) {
+                    const iAmA = c.featureIdA === myId;
+                    const otherId = iAmA ? c.featureIdB : c.featureIdA;
+                    const other = iAmA ? c.speciesB : c.speciesA;
+                    // For shade: featureIdA = the shading tree, featureIdB = the shaded plant
+                    if (c.type === "shade") {
+                      if (c.featureIdB === myId) hæmmesAf.push({ conflict: c, other, otherId });
+                      else hæmmerAndre.push({ conflict: c, other, otherId });
+                    } else {
+                      // Symmetric conflicts (spacing, companion, layer) — show in both
+                      hæmmesAf.push({ conflict: c, other, otherId });
+                    }
+                  }
+
                   const worstSeverity = Math.max(...myConflicts.map((c) => c.severity));
-                  const borderColor = worstSeverity === 3 ? "border-red-400" : worstSeverity === 2 ? "border-orange-400" : "border-yellow-400";
-                  const bgColor = worstSeverity === 3 ? "bg-red-50/60" : worstSeverity === 2 ? "bg-orange-50/60" : "bg-yellow-50/60";
+                  const borderColor = worstSeverity === 3 ? "border-red-400" : worstSeverity === 2 ? "border-orange-300" : "border-yellow-300";
+                  const bgColor = worstSeverity === 3 ? "bg-red-50/60" : worstSeverity === 2 ? "bg-orange-50/50" : "bg-yellow-50/50";
+
+                  const renderConflictMini = (item: { conflict: PlantConflict; other: PlantSpecies; otherId: string }, idx: number) => {
+                    const c = item.conflict;
+                    const icon = c.type === "spacing" ? "📏" : c.type === "bad-companion" ? "⛔" : c.type === "shade" ? "☀️" : "⚠️";
+                    const shadeMatch = c.type === "shade" ? c.message.match(/~(\d+\.?\d*)\s*t(?:imer)?\/dag/) : null;
+                    const shadeHrs = shadeMatch ? parseFloat(shadeMatch[1]) : 0;
+                    return (
+                      <div key={idx} className="flex items-start gap-1.5 rounded-md bg-white/60 border border-foreground/8 px-2 py-1.5">
+                        <span className="text-xs mt-0.5">{icon}</span>
+                        <div className="flex-1 min-w-0 space-y-0.5">
+                          <div className="flex items-center gap-1">
+                            <button
+                              type="button"
+                              className="text-[10px] font-medium text-foreground/70 hover:underline truncate"
+                              onClick={() => selectFeatureById(item.otherId)}
+                            >{item.other.icon ?? "🌱"} {item.other.name}</button>
+                            <span className={`text-[8px] px-1 rounded-full font-semibold ${c.severity === 3 ? "bg-red-100 text-red-600" : c.severity === 2 ? "bg-orange-100 text-orange-600" : "bg-yellow-100 text-yellow-700"}`}>
+                              {c.severity === 3 ? "alvorlig" : c.severity === 2 ? "moderat" : "mild"}
+                            </span>
+                          </div>
+                          <p className="text-[9px] text-foreground/50 leading-tight">{c.suggestion}</p>
+                          {c.type === "shade" && shadeHrs > 0 ? (
+                            <div className="flex items-center gap-1.5">
+                              <span className="text-[8px] text-foreground/35">☀️</span>
+                              <div className="flex-1 h-1.5 rounded-full bg-yellow-100 overflow-hidden">
+                                <div className="h-full bg-gray-400 rounded-full" style={{ width: `${Math.min(100, (shadeHrs / GROWING_SEASON_SUN_HOURS) * 100)}%`, marginLeft: `${Math.max(0, 100 - (shadeHrs / GROWING_SEASON_SUN_HOURS) * 100)}%` }} />
+                              </div>
+                              <span className="text-[8px] text-foreground/35">{shadeHrs.toFixed(1)}t</span>
+                            </div>
+                          ) : null}
+                          {c.type === "spacing" ? (
+                            <div className="flex items-center gap-1.5">
+                              <div className="flex-1 h-1 rounded-full bg-foreground/8 overflow-hidden">
+                                <div className={`h-full rounded-full ${c.severity === 3 ? "bg-red-400" : c.severity === 2 ? "bg-orange-400" : "bg-yellow-400"}`} style={{ width: `${Math.min(100, (c.distanceM / c.requiredM) * 100)}%` }} />
+                              </div>
+                              <span className="text-[8px] text-foreground/30">{c.distanceM.toFixed(1)}m/{c.requiredM.toFixed(1)}m</span>
+                            </div>
+                          ) : null}
+                        </div>
+                      </div>
+                    );
+                  };
+
                   return (
                     <div className={`rounded-lg border-2 ${borderColor} ${bgColor} p-2.5 space-y-2`}>
-                      <p className="text-[10px] font-bold text-foreground/70">
-                        {worstSeverity === 3 ? "🔴" : worstSeverity === 2 ? "🟠" : "🟡"} {myConflicts.length} konflikt{myConflicts.length > 1 ? "er" : ""} fundet
-                      </p>
-                      {myConflicts.map((c, idx) => {
-                        const other = c.featureIdA === myId ? c.speciesB : c.speciesA;
-                        const icon = c.type === "spacing" ? "📏" : c.type === "bad-companion" ? "⛔" : "⚠️";
-                        const typeLabel = c.type === "spacing" ? "Afstand" : c.type === "bad-companion" ? "Dårlig nabo" : "Lag-konkurrence";
-                        return (
-                          <div key={idx} className="rounded-md bg-white/60 border border-foreground/10 p-2 space-y-1">
-                            <div className="flex items-center gap-1.5">
-                              <span className="text-sm">{icon}</span>
-                              <span className="text-[10px] font-semibold text-foreground/70">{typeLabel}</span>
-                              <span className="text-[10px] text-foreground/40 ml-auto">{other.icon ?? "🌱"} {other.name}</span>
-                            </div>
-                            <p className="text-[10px] text-foreground/60">{c.message}</p>
-                            <p className="text-[10px] text-foreground/40 italic">💡 {c.suggestion}</p>
-                            {c.type === "spacing" ? (
-                              <div className="flex items-center gap-2 mt-1">
-                                <div className="flex-1 h-1.5 rounded-full bg-foreground/10 overflow-hidden">
-                                  <div
-                                    className={`h-full rounded-full ${c.severity === 3 ? "bg-red-500" : c.severity === 2 ? "bg-orange-400" : "bg-yellow-400"}`}
-                                    style={{ width: `${Math.min(100, (c.distanceM / c.requiredM) * 100)}%` }}
-                                  />
-                                </div>
-                                <span className="text-[9px] text-foreground/40 shrink-0">{c.distanceM.toFixed(1)}m / {c.requiredM.toFixed(1)}m</span>
-                              </div>
-                            ) : null}
+                      <div className="flex items-center justify-between">
+                        <p className="text-[10px] font-bold text-foreground/70">
+                          {worstSeverity === 3 ? "🔴" : worstSeverity === 2 ? "🟠" : "🟡"} {myConflicts.length} konflikt{myConflicts.length > 1 ? "er" : ""}
+                        </p>
+                        <button
+                          type="button"
+                          className="text-[9px] text-accent hover:underline"
+                          onClick={() => setSidebarTab("conflicts")}
+                        >Se alle konflikter →</button>
+                      </div>
+
+                      {/* Section: Hæmmes af (what's hurting THIS plant) */}
+                      {hæmmesAf.length > 0 ? (
+                        <div>
+                          <p className="text-[9px] font-semibold text-foreground/50 uppercase tracking-wide mb-1">
+                            🔽 Hæmmes af ({hæmmesAf.length})
+                          </p>
+                          <div className="space-y-1">
+                            {hæmmesAf.map((item, idx) => renderConflictMini(item, idx))}
                           </div>
-                        );
-                      })}
+                        </div>
+                      ) : null}
+
+                      {/* Section: Hæmmer andre (where THIS plant causes problems) */}
+                      {hæmmerAndre.length > 0 ? (
+                        <div>
+                          <p className="text-[9px] font-semibold text-foreground/50 uppercase tracking-wide mb-1">
+                            🔼 Hæmmer andre ({hæmmerAndre.length})
+                          </p>
+                          <div className="space-y-1">
+                            {hæmmerAndre.map((item, idx) => renderConflictMini(item, idx))}
+                          </div>
+                        </div>
+                      ) : null}
                     </div>
                   );
                 })() : null}
 
-                <div>
-                  <label className="block text-[11px] font-semibold text-foreground/60 uppercase tracking-wide">Hvad plantes / sort</label>
-                  <input
-                    className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm shadow-sm"
-                    value={selected.feature.properties?.planted ?? ""}
-                    onChange={(e) => updateSelectedProperty({ planted: e.target.value })}
-                    placeholder="Fx kartofler / gulerødder / sort"
-                  />
-                </div>
-                <div>
-                  <label className="block text-[11px] font-semibold text-foreground/60 uppercase tracking-wide">Plantningsdato</label>
-                  <input
-                    type="date"
-                    className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm shadow-sm"
-                    value={selected.feature.properties?.plantedAt ?? ""}
-                    onChange={(e) => updateSelectedProperty({ plantedAt: e.target.value })}
-                  />
-                </div>
-                <div>
-                  <label className="block text-[11px] font-semibold text-foreground/60 uppercase tracking-wide">Solbehov</label>
-                  <select
-                    className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm shadow-sm"
-                    value={selected.feature.properties?.sunNeed ?? ""}
-                    onChange={(e) => updateSelectedProperty({ sunNeed: e.target.value })}
-                  >
-                    <option value="">Ikke angivet</option>
-                    <option value="sol">Sol</option>
-                    <option value="halvskygge">Halvskygge</option>
-                    <option value="skygge">Skygge</option>
-                  </select>
-                </div>
-                <div>
-                  <label className="block text-[11px] font-semibold text-foreground/60 uppercase tracking-wide">Vandbehov</label>
-                  <select
-                    className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm shadow-sm"
-                    value={selected.feature.properties?.waterNeed ?? ""}
-                    onChange={(e) => updateSelectedProperty({ waterNeed: e.target.value })}
-                  >
-                    <option value="">Ikke angivet</option>
-                    <option value="lav">Lav</option>
-                    <option value="middel">Middel</option>
-                    <option value="høj">Høj</option>
-                  </select>
-                </div>
+
               </>
             ) : null}
 
@@ -9634,7 +10405,7 @@ export function GardenMapClient() {
             {/* ══════════════════════════════════════════════════════════ */}
             {/* ── PLANTNINGER I DETTE BED ── plant instances section ── */}
             {/* ══════════════════════════════════════════════════════════ */}
-            {(selectedCategory === "seedbed" || selectedCategory === "container" || selectedCategory === "area" || selectedCategory === "row" || (selectedCategory === "element" && !selectedIsInfra)) ? (
+            {(selectedCategory === "seedbed" || selectedCategory === "container" || selectedCategory === "area" || selectedCategory === "row") ? (
               <div className="rounded-md border border-foreground/20 p-2.5 space-y-2">
                 <p className="text-[10px] font-medium uppercase tracking-wide text-foreground/50">
                   🌱 Plantninger ({selectedFeatureInstances.length})
@@ -9990,93 +10761,114 @@ export function GardenMapClient() {
               </div>
             ) : null}
 
-            <div>
-              <label className="block text-[11px] font-semibold text-foreground/60 uppercase tracking-wide">
-                {selectedIsInfra ? "Tekst" : "Noter"}
-              </label>
-              <div className="mt-1 relative">
-                <textarea
-                  className={`min-h-[80px] w-full resize-y rounded-lg border bg-background px-3 py-2 text-sm shadow-sm ${draftNotesDirty ? "border-amber-400" : "border-border"}`}
-                  value={draftNotes}
-                  onChange={(e) => setDraftNotes(e.target.value)}
-                  onBlur={() => commitDraftNotes()}
-                  placeholder={selectedIsInfra ? "Fx dybde/placering/kommentar" : "Fx gødes i april / skal beskæres"}
-                />
-                {draftNotesDirty && (
-                  <button
-                    type="button"
-                    className="absolute top-1.5 right-1.5 rounded-md bg-accent px-2.5 py-1 text-xs font-semibold text-white shadow-sm hover:bg-accent/80 transition-colors"
-                    onClick={() => commitDraftNotes()}
-                  >
-                    Gem
-                  </button>
-                )}
-              </div>
-            </div>
-
-            {/* ── Foto ── */}
-            <div>
-              <label className="block text-[11px] font-semibold text-foreground/60 uppercase tracking-wide">📷 Foto</label>
-              {selected.feature.properties?.photoUrl ? (
-                <div className="mt-1 space-y-1.5">
-                  <div className="relative rounded-lg overflow-hidden border border-border">
-                    {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img
-                      src={selected.feature.properties.photoUrl}
-                      alt="Vedhæftet foto"
-                      className="w-full max-h-48 object-cover"
-                    />
-                    <button
-                      type="button"
-                      className="absolute top-1 right-1 rounded-full bg-black/50 px-1.5 py-0.5 text-[10px] text-white hover:bg-red-600 transition-colors"
-                      onClick={() => updateSelectedProperty({ photoUrl: "" })}
-                      title="Fjern foto"
-                    >
-                      ✕
-                    </button>
+            {/* ── Egne noter (collapsible: Tekst-noter + Foto) ── */}
+            <div className="rounded-lg border border-foreground/10 overflow-hidden">
+              <button
+                type="button"
+                className="flex w-full items-center gap-1.5 px-3 py-2 text-left hover:bg-foreground/5 transition-colors"
+                onClick={() => setContentNotesOpen(!contentNotesOpen)}
+              >
+                <span className="text-sm">📝</span>
+                <span className="flex-1 text-[11px] font-semibold text-foreground/60 uppercase tracking-wide">Egne noter</span>
+                {/* Badge: show indicator if notes or photo exist */}
+                {(draftNotes.trim() || selected.feature.properties?.photoUrl) ? (
+                  <span className="w-1.5 h-1.5 rounded-full bg-accent shrink-0" />
+                ) : null}
+                <span className="text-[10px] text-foreground/30">{contentNotesOpen ? "▲" : "▼"}</span>
+              </button>
+              {contentNotesOpen ? (
+                <div className="border-t border-foreground/10 px-3 py-2.5 space-y-3">
+                  {/* Tekst-noter */}
+                  <div>
+                    <label className="block text-[10px] font-semibold text-foreground/50 uppercase tracking-wide">
+                      {selectedIsInfra ? "Tekst" : "Tekst-noter"}
+                    </label>
+                    <div className="mt-1 relative">
+                      <textarea
+                        className={`min-h-[80px] w-full resize-y rounded-lg border bg-background px-3 py-2 text-sm shadow-sm ${draftNotesDirty ? "border-amber-400" : "border-border"}`}
+                        value={draftNotes}
+                        onChange={(e) => setDraftNotes(e.target.value)}
+                        onBlur={() => commitDraftNotes()}
+                        placeholder={selectedIsInfra ? "Fx dybde/placering/kommentar" : "Fx gødes i april / skal beskæres"}
+                      />
+                      {draftNotesDirty && (
+                        <button
+                          type="button"
+                          className="absolute top-1.5 right-1.5 rounded-md bg-accent px-2.5 py-1 text-xs font-semibold text-white shadow-sm hover:bg-accent/80 transition-colors"
+                          onClick={() => commitDraftNotes()}
+                        >
+                          Gem
+                        </button>
+                      )}
+                    </div>
                   </div>
-                  <label className="block">
-                    <span className="inline-block cursor-pointer rounded border border-border bg-background px-2 py-1 text-[11px] text-foreground/60 hover:bg-foreground/5 transition-colors">
-                      📷 Skift foto
-                    </span>
-                    <input
-                      type="file"
-                      accept="image/*"
-                      className="hidden"
-                      onChange={(e) => {
-                        const file = e.target.files?.[0];
-                        if (!file) return;
-                        if (file.size > 2 * 1024 * 1024) { alert("Foto må max være 2 MB"); return; }
-                        const reader = new FileReader();
-                        reader.onload = () => {
-                          if (typeof reader.result === "string") updateSelectedProperty({ photoUrl: reader.result });
-                        };
-                        reader.readAsDataURL(file);
-                      }}
-                    />
-                  </label>
+
+                  {/* Foto */}
+                  <div>
+                    <label className="block text-[10px] font-semibold text-foreground/50 uppercase tracking-wide">📷 Foto</label>
+                    {selected.feature.properties?.photoUrl ? (
+                      <div className="mt-1 space-y-1.5">
+                        <div className="relative rounded-lg overflow-hidden border border-border">
+                          {/* eslint-disable-next-line @next/next/no-img-element */}
+                          <img
+                            src={selected.feature.properties.photoUrl}
+                            alt="Vedhæftet foto"
+                            className="w-full max-h-48 object-cover"
+                          />
+                          <button
+                            type="button"
+                            className="absolute top-1 right-1 rounded-full bg-black/50 px-1.5 py-0.5 text-[10px] text-white hover:bg-red-600 transition-colors"
+                            onClick={() => updateSelectedProperty({ photoUrl: "" })}
+                            title="Fjern foto"
+                          >
+                            ✕
+                          </button>
+                        </div>
+                        <label className="block">
+                          <span className="inline-block cursor-pointer rounded border border-border bg-background px-2 py-1 text-[11px] text-foreground/60 hover:bg-foreground/5 transition-colors">
+                            📷 Skift foto
+                          </span>
+                          <input
+                            type="file"
+                            accept="image/*"
+                            className="hidden"
+                            onChange={(e) => {
+                              const file = e.target.files?.[0];
+                              if (!file) return;
+                              if (file.size > 2 * 1024 * 1024) { alert("Foto må max være 2 MB"); return; }
+                              const reader = new FileReader();
+                              reader.onload = () => {
+                                if (typeof reader.result === "string") updateSelectedProperty({ photoUrl: reader.result });
+                              };
+                              reader.readAsDataURL(file);
+                            }}
+                          />
+                        </label>
+                      </div>
+                    ) : (
+                      <label className="mt-1 flex items-center justify-center gap-2 rounded-lg border-2 border-dashed border-foreground/15 bg-foreground/[0.02] px-3 py-3 cursor-pointer hover:border-accent/40 hover:bg-accent-light/10 transition-colors">
+                        <span className="text-base">📷</span>
+                        <span className="text-xs text-foreground/50">Tilføj foto (max 2 MB)</span>
+                        <input
+                          type="file"
+                          accept="image/*"
+                          className="hidden"
+                          onChange={(e) => {
+                            const file = e.target.files?.[0];
+                            if (!file) return;
+                            if (file.size > 2 * 1024 * 1024) { alert("Foto må max være 2 MB"); return; }
+                            const reader = new FileReader();
+                            reader.onload = () => {
+                              if (typeof reader.result === "string") updateSelectedProperty({ photoUrl: reader.result });
+                            };
+                            reader.readAsDataURL(file);
+                          }}
+                        />
+                      </label>
+                    )}
+                  </div>
                 </div>
-              ) : (
-                <label className="mt-1 flex items-center justify-center gap-2 rounded-lg border-2 border-dashed border-foreground/15 bg-foreground/[0.02] px-3 py-4 cursor-pointer hover:border-accent/40 hover:bg-accent-light/10 transition-colors">
-                  <span className="text-lg">📷</span>
-                  <span className="text-xs text-foreground/50">Tilføj foto (max 2 MB)</span>
-                  <input
-                    type="file"
-                    accept="image/*"
-                    className="hidden"
-                    onChange={(e) => {
-                      const file = e.target.files?.[0];
-                      if (!file) return;
-                      if (file.size > 2 * 1024 * 1024) { alert("Foto må max være 2 MB"); return; }
-                      const reader = new FileReader();
-                      reader.onload = () => {
-                        if (typeof reader.result === "string") updateSelectedProperty({ photoUrl: reader.result });
-                      };
-                      reader.readAsDataURL(file);
-                    }}
-                  />
-                </label>
-              )}
+              ) : null}
             </div>
 
             {selectedIsPoint ? (
@@ -10087,37 +10879,10 @@ export function GardenMapClient() {
               <p className="text-xs text-foreground/60">Tip: linjer kan flyttes/redigeres i “Redigér/flyt”.</p>
             ) : null}
 
-            <div className="grid grid-cols-2 gap-2 pt-2 border-t border-border-light mt-2">
+            <div className="pt-2 border-t border-border-light mt-2">
               <button
                 type="button"
-                className="rounded-lg border border-border bg-background px-3 py-2 text-xs font-medium text-foreground/70 hover:bg-foreground/5 transition-colors disabled:opacity-40"
-                onClick={duplicateSelected}
-                disabled={!selected}
-                title="Lav en kopi med nyt navn"
-              >
-                📋 Kopiér
-              </button>
-              <button
-                type="button"
-                className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs font-medium text-red-600 hover:bg-red-100 transition-colors disabled:opacity-40 dark:border-red-900/40 dark:bg-red-900/20 dark:text-red-400 dark:hover:bg-red-900/30"
-                onClick={deleteSelected}
-                disabled={!selected}
-                title="Du kan også bruge Delete/Backspace"
-              >
-                🗑️ Slet valgt
-              </button>
-              <button
-                type="button"
-                className="rounded-lg border border-border bg-background px-3 py-2 text-xs text-foreground/60 hover:bg-foreground/5 transition-colors disabled:opacity-40"
-                onClick={undo}
-                disabled={undoStack.length === 0}
-                title="Cmd/Ctrl+Z (uden for felter)"
-              >
-                ↩ Fortryd
-              </button>
-              <button
-                type="button"
-                className="rounded-lg border border-red-300 bg-red-50 px-3 py-2 text-xs font-medium text-red-700 hover:bg-red-100 transition-colors dark:border-red-900/50 dark:bg-red-900/20 dark:text-red-400 dark:hover:bg-red-900/30"
+                className="w-full rounded-lg border border-red-300 bg-red-50 px-3 py-2 text-xs font-medium text-red-700 hover:bg-red-100 transition-colors dark:border-red-900/50 dark:bg-red-900/20 dark:text-red-400 dark:hover:bg-red-900/30"
                 onClick={deleteAll}
               >
                 ⚠️ Slet alt
@@ -11515,6 +12280,205 @@ export function GardenMapClient() {
         ) : null}
 
         {/* ── Year Wheel / Årshjul Tab ── */}
+        {/* ── Konflikter / Conflict Resolution Tab ── */}
+        {sidebarTab === "conflicts" ? (() => {
+          const conflictKey = (c: PlantConflict) => `${c.featureIdA}:${c.featureIdB}:${c.type}`;
+          const unresolvedConflicts = allConflicts.filter((c) => !conflictResolvedIds.has(conflictKey(c)));
+          const resolvedConflicts = allConflicts.filter((c) => conflictResolvedIds.has(conflictKey(c)));
+          let displayConflicts = conflictShowResolved ? allConflicts : unresolvedConflicts;
+          if (conflictFilter !== "all") displayConflicts = displayConflicts.filter((c) => c.type === conflictFilter);
+          displayConflicts = [...displayConflicts].sort((a, b) => {
+            if (conflictSortBy === "severity") return b.severity - a.severity || a.type.localeCompare(b.type);
+            if (conflictSortBy === "type") return a.type.localeCompare(b.type) || b.severity - a.severity;
+            return a.distanceM - b.distanceM;
+          });
+          const countByType = { spacing: 0, "bad-companion": 0, "layer-competition": 0, shade: 0 };
+          for (const c of unresolvedConflicts) countByType[c.type]++;
+
+          const toggleResolved = (c: PlantConflict) => {
+            const key = conflictKey(c);
+            setConflictResolvedIds((prev) => {
+              const next = new Set(prev);
+              if (next.has(key)) next.delete(key); else next.add(key);
+              try { localStorage.setItem(userKey("gardenos:conflicts:resolved:v1"), JSON.stringify([...next])); markDirty("gardenos:conflicts:resolved:v1"); } catch {}
+              return next;
+            });
+          };
+
+          return (
+            <div className="mt-3 space-y-3">
+              {/* Summary header */}
+              <div className="flex items-center gap-2">
+                <span className="text-lg">⚡</span>
+                <div>
+                  <h3 className="text-sm font-bold text-foreground/80">Konfliktløsning</h3>
+                  <p className="text-[10px] text-foreground/50">
+                    {unresolvedConflicts.length === 0
+                      ? "✅ Ingen uløste konflikter — haven ser godt ud!"
+                      : `${unresolvedConflicts.length} uløst${unresolvedConflicts.length > 1 ? "e" : ""} konflikt${unresolvedConflicts.length > 1 ? "er" : ""}`
+                    }
+                    {resolvedConflicts.length > 0 ? ` · ${resolvedConflicts.length} markeret løst` : ""}
+                  </p>
+                </div>
+              </div>
+
+              {/* Type filter pills */}
+              <div className="flex flex-wrap gap-1">
+                {([
+                  { val: "all" as const, icon: "🔎", label: "Alle", count: unresolvedConflicts.length },
+                  { val: "shade" as const, icon: "☀️", label: "Skygge", count: countByType.shade },
+                  { val: "spacing" as const, icon: "📏", label: "Afstand", count: countByType.spacing },
+                  { val: "bad-companion" as const, icon: "⛔", label: "Nabo", count: countByType["bad-companion"] },
+                  { val: "layer-competition" as const, icon: "⚠️", label: "Lag", count: countByType["layer-competition"] },
+                ] as const).map((f) => (
+                  <button
+                    key={f.val}
+                    type="button"
+                    className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium transition-all ${
+                      conflictFilter === f.val
+                        ? "bg-accent text-white shadow-sm"
+                        : "bg-foreground/5 text-foreground/60 hover:bg-foreground/10"
+                    }`}
+                    onClick={() => setConflictFilter(f.val)}
+                  >
+                    <span>{f.icon}</span>
+                    <span>{f.label}</span>
+                    {f.count > 0 ? <span className="bg-white/20 rounded-full px-1 text-[8px]">{f.count}</span> : null}
+                  </button>
+                ))}
+              </div>
+
+              {/* Sort + show resolved */}
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-1">
+                  <span className="text-[9px] text-foreground/40">Sortér:</span>
+                  {([
+                    { val: "severity" as const, label: "Alvorlighed" },
+                    { val: "type" as const, label: "Type" },
+                    { val: "distance" as const, label: "Afstand" },
+                  ] as const).map((s) => (
+                    <button
+                      key={s.val}
+                      type="button"
+                      className={`text-[9px] px-1.5 py-0.5 rounded ${conflictSortBy === s.val ? "bg-foreground/10 font-semibold text-foreground/70" : "text-foreground/40 hover:text-foreground/60"}`}
+                      onClick={() => setConflictSortBy(s.val)}
+                    >{s.label}</button>
+                  ))}
+                </div>
+                <label className="flex items-center gap-1 text-[9px] text-foreground/40 cursor-pointer">
+                  <input type="checkbox" checked={conflictShowResolved} onChange={(e) => setConflictShowResolved(e.target.checked)} className="w-3 h-3 rounded" />
+                  Vis løste
+                </label>
+              </div>
+
+              {/* Conflict cards */}
+              {displayConflicts.length === 0 ? (
+                <div className="text-center py-8 text-foreground/30">
+                  <p className="text-2xl mb-1">🌿</p>
+                  <p className="text-xs">
+                    {conflictFilter !== "all" ? "Ingen konflikter af denne type" : "Ingen konflikter at vise"}
+                  </p>
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  {displayConflicts.map((c, idx) => {
+                    const key = conflictKey(c);
+                    const isResolved = conflictResolvedIds.has(key);
+                    const borderColor = isResolved ? "border-green-300" : c.severity === 3 ? "border-red-400" : c.severity === 2 ? "border-orange-300" : "border-yellow-300";
+                    const bgColor = isResolved ? "bg-green-50/40" : c.severity === 3 ? "bg-red-50/50" : c.severity === 2 ? "bg-orange-50/50" : "bg-yellow-50/50";
+                    const icon = c.type === "spacing" ? "📏" : c.type === "bad-companion" ? "⛔" : c.type === "shade" ? "☀️" : "⚠️";
+                    const typeLabel = c.type === "spacing" ? "Afstand" : c.type === "bad-companion" ? "Dårlig nabo" : c.type === "shade" ? "Skygge" : "Lag-konkurrence";
+                    const sevLabel = c.severity === 3 ? "Alvorlig" : c.severity === 2 ? "Moderat" : "Mild";
+                    const sevColor = c.severity === 3 ? "text-red-600" : c.severity === 2 ? "text-orange-600" : "text-yellow-600";
+
+                    return (
+                      <div key={idx} className={`rounded-lg border ${borderColor} ${bgColor} p-2.5 space-y-1.5 ${isResolved ? "opacity-60" : ""} transition-all`}>
+                        {/* Header row */}
+                        <div className="flex items-center gap-1.5">
+                          <span className="text-sm">{icon}</span>
+                          <span className="text-[10px] font-bold text-foreground/70">{typeLabel}</span>
+                          <span className={`text-[9px] font-semibold ${sevColor} ml-1`}>{sevLabel}</span>
+                          <span className="text-[9px] text-foreground/30 ml-auto">{c.distanceM.toFixed(1)}m</span>
+                        </div>
+
+                        {/* Plants involved */}
+                        <div className="flex items-center gap-3 text-[10px]">
+                          <button
+                            type="button"
+                            className="flex items-center gap-1 hover:underline text-foreground/70"
+                            onClick={() => { selectFeatureById(c.featureIdA); setSidebarTab("content"); }}
+                          >
+                            <span>{c.speciesA.icon ?? "🌱"}</span>
+                            <span className="font-medium">{c.speciesA.name}</span>
+                          </button>
+                          <span className="text-foreground/30">↔</span>
+                          <button
+                            type="button"
+                            className="flex items-center gap-1 hover:underline text-foreground/70"
+                            onClick={() => { selectFeatureById(c.featureIdB); setSidebarTab("content"); }}
+                          >
+                            <span>{c.speciesB.icon ?? "🌱"}</span>
+                            <span className="font-medium">{c.speciesB.name}</span>
+                          </button>
+                        </div>
+
+                        {/* Message + suggestion */}
+                        <p className="text-[10px] text-foreground/60">{c.message}</p>
+                        <p className="text-[10px] text-foreground/40 italic">💡 {c.suggestion}</p>
+
+                        {/* Progress bars */}
+                        {c.type === "spacing" ? (
+                          <div className="flex items-center gap-2 mt-0.5">
+                            <div className="flex-1 h-1.5 rounded-full bg-foreground/10 overflow-hidden">
+                              <div
+                                className={`h-full rounded-full ${c.severity === 3 ? "bg-red-500" : c.severity === 2 ? "bg-orange-400" : "bg-yellow-400"}`}
+                                style={{ width: `${Math.min(100, (c.distanceM / c.requiredM) * 100)}%` }}
+                              />
+                            </div>
+                            <span className="text-[9px] text-foreground/40 shrink-0">{c.distanceM.toFixed(1)}m / {c.requiredM.toFixed(1)}m</span>
+                          </div>
+                        ) : null}
+                        {c.type === "shade" ? (() => {
+                          const shadeMatch = c.message.match(/~(\d+\.?\d*)\s*t(?:imer)?\/dag/);
+                          const shadeHrs = shadeMatch ? parseFloat(shadeMatch[1]) : 0;
+                          const shadePercent = Math.min(100, (shadeHrs / GROWING_SEASON_SUN_HOURS) * 100);
+                          return (
+                            <div className="flex items-center gap-2">
+                              <span className="text-[9px] text-foreground/40">☀️</span>
+                              <div className="flex-1 h-2 rounded-full bg-yellow-100 overflow-hidden border border-yellow-200">
+                                <div className="h-full rounded-full bg-gray-400" style={{ width: `${shadePercent}%`, marginLeft: `${100 - shadePercent}%` }} />
+                              </div>
+                              <span className="text-[9px] text-foreground/40">🌑 {shadeHrs.toFixed(1)}t</span>
+                            </div>
+                          );
+                        })() : null}
+
+                        {/* Action buttons */}
+                        <div className="flex items-center gap-2 mt-1">
+                          <button
+                            type="button"
+                            className="flex items-center gap-1 text-[9px] px-2 py-0.5 rounded bg-foreground/5 hover:bg-foreground/10 text-foreground/50 transition-colors"
+                            onClick={() => { flashFeatureIds([c.featureIdA, c.featureIdB]); }}
+                          >📍 Vis på kort</button>
+                          <button
+                            type="button"
+                            className={`flex items-center gap-1 text-[9px] px-2 py-0.5 rounded transition-colors ${
+                              isResolved
+                                ? "bg-green-100 text-green-700 hover:bg-green-200"
+                                : "bg-foreground/5 hover:bg-green-50 text-foreground/50 hover:text-green-600"
+                            }`}
+                            onClick={() => toggleResolved(c)}
+                          >{isResolved ? "↩️ Genåbn" : "✅ Markér løst"}</button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          );
+        })() : null}
+
         {sidebarTab === "calendar" ? (
           <YearWheel plantDataVersion={plantDataVersion} plantInstancesVersion={plantInstancesVersion} flashFeatureIds={flashFeatureIds} />
         ) : null}
@@ -12398,7 +13362,7 @@ export function GardenMapClient() {
                       const v = e.target.value;
                       setDfUser(v);
                       setDfTestStatus("idle");
-                      window.localStorage.setItem("gardenos:df:user", v);
+                      window.localStorage.setItem(userKey("gardenos:df:user"), v);
                     }}
                     className="w-full rounded border border-foreground/20 bg-background px-2 py-1 text-[11px] text-foreground/80 placeholder:text-foreground/30 focus:outline-none focus:border-foreground/40"
                   />
@@ -12410,7 +13374,7 @@ export function GardenMapClient() {
                       const v = e.target.value;
                       setDfPass(v);
                       setDfTestStatus("idle");
-                      window.localStorage.setItem("gardenos:df:pass", v);
+                      window.localStorage.setItem(userKey("gardenos:df:pass"), v);
                     }}
                     className="w-full rounded border border-foreground/20 bg-background px-2 py-1 text-[11px] text-foreground/80 placeholder:text-foreground/30 focus:outline-none focus:border-foreground/40"
                   />
@@ -12446,8 +13410,8 @@ export function GardenMapClient() {
                           setDfUser("RNIOENOTLD");
                           setDfPass("LaKage!7562Hesten");
                           setDfTestStatus("idle");
-                          window.localStorage.setItem("gardenos:df:user", "RNIOENOTLD");
-                          window.localStorage.setItem("gardenos:df:pass", "LaKage!7562Hesten");
+                          window.localStorage.setItem(userKey("gardenos:df:user"), "RNIOENOTLD");
+                          window.localStorage.setItem(userKey("gardenos:df:pass"), "LaKage!7562Hesten");
                         }}
                       >
                         Prøv med demo-credentials i stedet

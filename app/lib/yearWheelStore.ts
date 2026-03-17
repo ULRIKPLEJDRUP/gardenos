@@ -7,6 +7,7 @@
 
 import { getAllPlants } from "./plantStore";
 import type { PlantSpecies } from "./plantTypes";
+import { userKey, markDirty } from "./userStorage";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -209,7 +210,7 @@ const STORAGE_COMPLETED_KEY = "gardenos:yearwheel:completed:v1";
 export function loadCustomTasks(): YearWheelTask[] {
   if (typeof window === "undefined") return [];
   try {
-    const raw = localStorage.getItem(STORAGE_CUSTOM_TASKS_KEY);
+    const raw = localStorage.getItem(userKey(STORAGE_CUSTOM_TASKS_KEY));
     if (!raw) return [];
     return JSON.parse(raw);
   } catch { return []; }
@@ -217,13 +218,14 @@ export function loadCustomTasks(): YearWheelTask[] {
 
 export function saveCustomTasks(tasks: YearWheelTask[]): void {
   if (typeof window === "undefined") return;
-  localStorage.setItem(STORAGE_CUSTOM_TASKS_KEY, JSON.stringify(tasks));
+  localStorage.setItem(userKey(STORAGE_CUSTOM_TASKS_KEY), JSON.stringify(tasks));
+  markDirty(STORAGE_CUSTOM_TASKS_KEY);
 }
 
 export function loadCompletedIds(): Set<string> {
   if (typeof window === "undefined") return new Set();
   try {
-    const raw = localStorage.getItem(STORAGE_COMPLETED_KEY);
+    const raw = localStorage.getItem(userKey(STORAGE_COMPLETED_KEY));
     if (!raw) return new Set();
     const parsed = JSON.parse(raw);
     return new Set(Array.isArray(parsed) ? parsed : []);
@@ -232,7 +234,8 @@ export function loadCompletedIds(): Set<string> {
 
 export function saveCompletedIds(ids: Set<string>): void {
   if (typeof window === "undefined") return;
-  localStorage.setItem(STORAGE_COMPLETED_KEY, JSON.stringify([...ids]));
+  localStorage.setItem(userKey(STORAGE_COMPLETED_KEY), JSON.stringify([...ids]));
+  markDirty(STORAGE_COMPLETED_KEY);
 }
 
 // ---------------------------------------------------------------------------

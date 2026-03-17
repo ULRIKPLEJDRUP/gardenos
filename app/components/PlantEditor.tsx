@@ -459,7 +459,7 @@ export default function PlantEditor({ isOpen, onClose, editSpeciesId, onDataChan
               </div>
 
               {/* Spacing */}
-              <div className="grid grid-cols-3 gap-2">
+              <div className="grid grid-cols-2 gap-2">
                 <div>
                   <label className="vm-label">Planteafstand (cm)</label>
                   <input
@@ -480,6 +480,8 @@ export default function PlantEditor({ isOpen, onClose, editSpeciesId, onDataChan
                     onChange={(e) => updateField("rowSpacingCm", e.target.value ? Number(e.target.value) : undefined)}
                   />
                 </div>
+              </div>
+              <div className="grid grid-cols-3 gap-2">
                 <div>
                   <label className="vm-label">Roddybde (cm)</label>
                   <input
@@ -488,6 +490,27 @@ export default function PlantEditor({ isOpen, onClose, editSpeciesId, onDataChan
                     placeholder="f.eks. 30"
                     value={form.rootDepthCm ?? ""}
                     onChange={(e) => updateField("rootDepthCm", e.target.value ? Number(e.target.value) : undefined)}
+                  />
+                </div>
+                <div>
+                  <label className="vm-label">Kronediameter (cm)</label>
+                  <input
+                    type="number"
+                    className="vm-input"
+                    placeholder="f.eks. 500"
+                    value={form.spreadDiameterCm ?? ""}
+                    onChange={(e) => updateField("spreadDiameterCm", e.target.value ? Number(e.target.value) : undefined)}
+                  />
+                </div>
+                <div>
+                  <label className="vm-label">Moden højde (m)</label>
+                  <input
+                    type="number"
+                    step="0.5"
+                    className="vm-input"
+                    placeholder="f.eks. 15"
+                    value={form.matureHeightM ?? ""}
+                    onChange={(e) => updateField("matureHeightM", e.target.value ? Number(e.target.value) : undefined)}
                   />
                 </div>
               </div>

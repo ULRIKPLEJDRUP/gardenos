@@ -35,6 +35,8 @@ export type WeatherData = {
 const WEATHER_CACHE_KEY = "gardenos:weather:cache:v1";
 const WEATHER_HISTORY_KEY = "gardenos:weather:history:v1";
 
+import { userKey } from "./userStorage";
+
 // ---------------------------------------------------------------------------
 // WMO Weather code → emoji + Danish label
 // ---------------------------------------------------------------------------
@@ -140,14 +142,14 @@ export async function fetchWeather(lat: number, lng: number): Promise<WeatherDat
 function saveWeatherCache(data: WeatherData): void {
   if (typeof window === "undefined") return;
   try {
-    localStorage.setItem(WEATHER_CACHE_KEY, JSON.stringify(data));
+    localStorage.setItem(userKey(WEATHER_CACHE_KEY), JSON.stringify(data));
   } catch { /* quota */ }
 }
 
 export function loadWeatherCache(): WeatherData | null {
   if (typeof window === "undefined") return null;
   try {
-    const raw = localStorage.getItem(WEATHER_CACHE_KEY);
+    const raw = localStorage.getItem(userKey(WEATHER_CACHE_KEY));
     if (!raw) return null;
     return JSON.parse(raw) as WeatherData;
   } catch {
@@ -173,14 +175,14 @@ function accumulateHistory(days: WeatherDay[]): void {
     for (const d of days) byDate.set(d.date, d);
     const all = Array.from(byDate.values()).sort((a, b) => a.date.localeCompare(b.date));
     const trimmed = all.slice(-365);
-    localStorage.setItem(WEATHER_HISTORY_KEY, JSON.stringify(trimmed));
+    localStorage.setItem(userKey(WEATHER_HISTORY_KEY), JSON.stringify(trimmed));
   } catch { /* ignore */ }
 }
 
 export function loadWeatherHistory(): WeatherDay[] {
   if (typeof window === "undefined") return [];
   try {
-    const raw = localStorage.getItem(WEATHER_HISTORY_KEY);
+    const raw = localStorage.getItem(userKey(WEATHER_HISTORY_KEY));
     if (!raw) return [];
     return JSON.parse(raw) as WeatherDay[];
   } catch {

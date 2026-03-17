@@ -7,6 +7,7 @@
 import { BUILTIN_PLANTS } from "./plantData";
 import type { PlantInstance, PlantSpecies, PlantVariety, PlantCategory, PlantFamily, ForestGardenLayer } from "./plantTypes";
 import { canLayersCoexist, FOREST_GARDEN_LAYER_LABELS, PLANT_FAMILY_LABELS, PLANT_CATEGORY_LABELS } from "./plantTypes";
+import { userKey, markDirty } from "./userStorage";
 
 const STORAGE_CUSTOM_PLANTS_KEY = "gardenos:plants:custom:v1";
 const STORAGE_PLANT_INSTANCES_KEY = "gardenos:plants:instances:v1";
@@ -18,7 +19,7 @@ const STORAGE_PLANT_INSTANCES_KEY = "gardenos:plants:instances:v1";
 export function loadCustomPlants(): PlantSpecies[] {
   if (typeof window === "undefined") return [];
   try {
-    const raw = localStorage.getItem(STORAGE_CUSTOM_PLANTS_KEY);
+    const raw = localStorage.getItem(userKey(STORAGE_CUSTOM_PLANTS_KEY));
     if (!raw) return [];
     const parsed = JSON.parse(raw);
     return Array.isArray(parsed) ? parsed : [];
@@ -29,7 +30,8 @@ export function loadCustomPlants(): PlantSpecies[] {
 
 export function saveCustomPlants(plants: PlantSpecies[]): void {
   if (typeof window === "undefined") return;
-  localStorage.setItem(STORAGE_CUSTOM_PLANTS_KEY, JSON.stringify(plants));
+  localStorage.setItem(userKey(STORAGE_CUSTOM_PLANTS_KEY), JSON.stringify(plants));
+  markDirty(STORAGE_CUSTOM_PLANTS_KEY);
 }
 
 /** All plants = builtin + custom. Custom can override builtin by same id. */
@@ -82,7 +84,7 @@ export function getVarietiesForSpecies(speciesId: string): PlantVariety[] {
 export function loadPlantInstances(): PlantInstance[] {
   if (typeof window === "undefined") return [];
   try {
-    const raw = localStorage.getItem(STORAGE_PLANT_INSTANCES_KEY);
+    const raw = localStorage.getItem(userKey(STORAGE_PLANT_INSTANCES_KEY));
     if (!raw) return [];
     const parsed = JSON.parse(raw);
     return Array.isArray(parsed) ? parsed : [];
@@ -93,7 +95,8 @@ export function loadPlantInstances(): PlantInstance[] {
 
 export function savePlantInstances(instances: PlantInstance[]): void {
   if (typeof window === "undefined") return;
-  localStorage.setItem(STORAGE_PLANT_INSTANCES_KEY, JSON.stringify(instances));
+  localStorage.setItem(userKey(STORAGE_PLANT_INSTANCES_KEY), JSON.stringify(instances));
+  markDirty(STORAGE_PLANT_INSTANCES_KEY);
 }
 
 export function getInstancesForFeature(featureId: string): PlantInstance[] {
