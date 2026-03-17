@@ -53,6 +53,17 @@ export async function GET() {
     select: { key: true, value: true, updatedAt: true },
   });
 
+  // Check for _reset marker (set by admin when resetting a user's account)
+  const resetRow = rows.find((r: { key: string }) => r.key === "_reset");
+  if (resetRow) {
+    // Delete the marker so it only fires once
+    await db.userData.delete({
+      where: { userId_key: { userId: session.user.id, key: "_reset" } },
+    });
+    // Return empty data with reset flag — client will wipe localStorage
+    return NextResponse.json({ data: {}, _reset: true });
+  }
+
   const data: Record<string, { value: string; updatedAt: string }> = {};
   for (const row of rows) {
     data[row.key] = { value: row.value, updatedAt: row.updatedAt.toISOString() };

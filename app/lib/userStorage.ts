@@ -115,11 +115,20 @@ const SYNCABLE_BASE_KEYS = [
 const SYNCABLE_SHORT_KEYS = new Set(SYNCABLE_BASE_KEYS.map(toSyncKey));
 
 // ---------------------------------------------------------------------------
-// Anonymous → user-scoped migration (localStorage only, runs once)
+// Anonymous → user-scoped migration (localStorage only, runs once EVER)
 // ---------------------------------------------------------------------------
+// Only the FIRST user to log in on this browser claims the old unscoped data.
+// After migration, the unscoped keys are deleted so subsequent new users
+// start completely fresh (empty map, no addresses, no plants).
+// ---------------------------------------------------------------------------
+const GLOBAL_MIGRATION_FLAG = "gardenos:_anonymous_claimed";
+
 function migrateAnonymousData(userId: string): void {
-  const flag = `gardenos:u:${userId}:_migrated`;
-  if (localStorage.getItem(flag)) return;
+  // If anonymous data was already claimed by another user, skip entirely
+  if (localStorage.getItem(GLOBAL_MIGRATION_FLAG)) return;
+
+  const userFlag = `gardenos:u:${userId}:_migrated`;
+  if (localStorage.getItem(userFlag)) return;
 
   let migrated = 0;
   for (const base of MIGRATABLE_KEYS) {
@@ -133,7 +142,16 @@ function migrateAnonymousData(userId: string): void {
     }
   }
 
-  localStorage.setItem(flag, new Date().toISOString());
+  // Mark this user as migrated
+  localStorage.setItem(userFlag, new Date().toISOString());
+
+  // Mark globally that anonymous data has been claimed — no other user gets it
+  localStorage.setItem(GLOBAL_MIGRATION_FLAG, userId);
+
+  // Delete the old unscoped keys so new users start fresh
+  for (const base of MIGRATABLE_KEYS) {
+    localStorage.removeItem(base);
+  }
 
   if (migrated > 0) {
     // eslint-disable-next-line no-console
@@ -173,7 +191,24 @@ export function pullFromServer(): Promise<void> {
       }
       const json = await res.json() as {
         data: Record<string, { value: string; updatedAt: string }>;
+        _reset?: boolean;
       };
+
+      // Admin reset: server tells us to wipe all local data and start fresh
+      if (json._reset) {
+        for (const baseKey of SYNCABLE_BASE_KEYS) {
+          localStorage.removeItem(userKey(baseKey));
+        }
+        // Also clear non-syncable user keys that should reset
+        for (const baseKey of MIGRATABLE_KEYS) {
+          localStorage.removeItem(userKey(baseKey));
+        }
+        // eslint-disable-next-line no-console
+        console.log("[GardenOS] Konto nulstillet af admin – lokal data ryddet");
+        // Reload the page so the app starts completely fresh
+        window.location.reload();
+        return;
+      }
 
       let pulled = 0;
       const localDirtyKeys = new Set<string>();
