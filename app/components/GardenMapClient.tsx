@@ -2254,7 +2254,6 @@ function MapDrawControls({
   bumpPlantInstances,
 }: MapDrawControlsProps) {
   const map = useMap();
-  const scaleControlRef = useRef<L.Control.Scale | null>(null);
 
   // -----------------------------------------------------------------------
   // Store all callback props in refs so the main useEffect doesn't re-run
@@ -2291,16 +2290,6 @@ function MapDrawControls({
 
   useEffect(() => {
     mapRef.current = map;
-
-    if (!scaleControlRef.current) {
-      scaleControlRef.current = L.control.scale({
-        imperial: false,
-        metric: true,
-        maxWidth: 200,         // wider bar = finer resolution at high zoom
-        position: "topleft",
-      });
-      scaleControlRef.current.addTo(map);
-    }
 
     if (!featureGroupRef.current) {
       featureGroupRef.current = new L.FeatureGroup();
@@ -2409,11 +2398,6 @@ function MapDrawControls({
     return () => {
       map.off(L.Draw.Event.CREATED, onCreated);
       map.removeControl(drawControl);
-
-      if (scaleControlRef.current) {
-        scaleControlRef.current.remove();
-        scaleControlRef.current = null;
-      }
     };
     // Only re-run when the map instance changes (effectively once).
     // Callbacks are accessed via cbRef so their identity changes don't matter.
@@ -2421,6 +2405,246 @@ function MapDrawControls({
   }, [map, featureGroupRef, mapRef, createKindRef]);
 
   return null;
+}
+
+// ---------------------------------------------------------------------------
+// MapToolbar – Custom zoom + scale + ruler in one sleek panel (topleft)
+// ---------------------------------------------------------------------------
+function MapToolbar() {
+  const map = useMap();
+  const [scaleText, setScaleText] = useState("");
+  const [measuring, setMeasuring] = useState(false);
+
+  // Compute a human-readable scale whenever the map moves/zooms
+  useEffect(() => {
+    const update = () => {
+      // Compute metres per screen-pixel at center of map
+      const center = map.getCenter();
+      const size = map.getSize();
+      const p1 = map.containerPointToLatLng(L.point(size.x / 2 - 50, size.y / 2));
+      const p2 = map.containerPointToLatLng(L.point(size.x / 2 + 50, size.y / 2));
+      const dist = p1.distanceTo(p2); // metres across 100px
+      // Pick a nice round scale value
+      const niceValues = [0.1, 0.2, 0.5, 1, 2, 5, 10, 20, 50, 100, 200, 500, 1000, 2000, 5000];
+      const mPerPx = dist / 100;
+      const targetM = mPerPx * 80; // ~80px bar
+      let best = niceValues[0];
+      for (const v of niceValues) {
+        if (v <= targetM * 1.2) best = v;
+      }
+      const label = best < 1 ? `${Math.round(best * 100)} cm` : best >= 1000 ? `${(best / 1000).toFixed(best >= 2000 ? 0 : 1)} km` : `${best} m`;
+      const barPx = Math.round(best / mPerPx);
+      setScaleText(`${label}|${barPx}`);
+    };
+    update();
+    map.on("zoomend moveend resize", update);
+    return () => { map.off("zoomend moveend resize", update); };
+  }, [map]);
+
+  const [label, barPxStr] = scaleText.split("|");
+  const barPx = parseInt(barPxStr) || 60;
+
+  return (
+    <div className="gardenos-map-toolbar" onClick={(e) => e.stopPropagation()}>
+      {/* Zoom buttons */}
+      <button type="button" title="Zoom ind" className="toolbar-btn" onClick={() => map.zoomIn()}>
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2"><line x1="8" y1="3" x2="8" y2="13"/><line x1="3" y1="8" x2="13" y2="8"/></svg>
+      </button>
+      <div className="toolbar-divider" />
+      <button type="button" title="Zoom ud" className="toolbar-btn" onClick={() => map.zoomOut()}>
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2"><line x1="3" y1="8" x2="13" y2="8"/></svg>
+      </button>
+      <div className="toolbar-divider" />
+      {/* Scale readout */}
+      <div className="toolbar-scale" title="Dynamisk skala">
+        <div className="scale-bar" style={{ width: `${Math.min(barPx, 100)}px` }} />
+        <span className="scale-label">{label}</span>
+      </div>
+      <div className="toolbar-divider" />
+      {/* Measure button */}
+      <button
+        type="button"
+        title={measuring ? "Afslut m\u00e5ling (Esc)" : "M\u00e5l afstand"}
+        className={`toolbar-btn ${measuring ? "toolbar-btn--active" : ""}`}
+        onClick={() => setMeasuring((v) => !v)}
+      >
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5">
+          <line x1="1" y1="14" x2="14" y2="1" strokeDasharray="2 2" />
+          <line x1="1" y1="14" x2="1" y2="10" />
+          <line x1="1" y1="14" x2="5" y2="14" />
+          <line x1="14" y1="1" x2="14" y2="5" />
+          <line x1="14" y1="1" x2="10" y2="1" />
+        </svg>
+      </button>
+      {measuring && <MeasureOverlay onClose={() => setMeasuring(false)} />}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// MeasureOverlay – click-to-place waypoints, shows segment + total distance
+// ---------------------------------------------------------------------------
+function MeasureOverlay({ onClose }: { onClose: () => void }) {
+  const map = useMap();
+  const pointsRef = useRef<L.LatLng[]>([]);
+  const layerGroupRef = useRef<L.LayerGroup | null>(null);
+  const ghostLineRef = useRef<L.Polyline | null>(null);
+  const ghostLabelRef = useRef<L.Marker | null>(null);
+  const [totalDist, setTotalDist] = useState(0);
+  const [segCount, setSegCount] = useState(0);
+
+  useEffect(() => {
+    const lg = L.layerGroup().addTo(map);
+    layerGroupRef.current = lg;
+    map.getContainer().style.cursor = "crosshair";
+
+    const onClick = (e: L.LeafletMouseEvent) => {
+      const pts = pointsRef.current;
+      pts.push(e.latlng);
+
+      // Dot marker
+      L.circleMarker(e.latlng, {
+        radius: 5, color: "#fff", fillColor: "#2d7a3a", fillOpacity: 1, weight: 2,
+      }).addTo(lg);
+
+      if (pts.length > 1) {
+        const prev = pts[pts.length - 2];
+        const segDist = prev.distanceTo(e.latlng);
+
+        // Segment line
+        L.polyline([prev, e.latlng], {
+          color: "#2d7a3a", weight: 2.5, opacity: 0.85, dashArray: "6,4",
+        }).addTo(lg);
+
+        // Segment label at midpoint
+        const mid = L.latLng((prev.lat + e.latlng.lat) / 2, (prev.lng + e.latlng.lng) / 2);
+        L.marker(mid, {
+          icon: L.divIcon({
+            className: "gardenos-measure-label",
+            html: `<span>${formatEdgeLength(segDist)}</span>`,
+            iconSize: [80, 22],
+            iconAnchor: [40, 11],
+          }),
+          interactive: false,
+        }).addTo(lg);
+      }
+
+      // Recalculate total
+      let total = 0;
+      for (let i = 1; i < pts.length; i++) total += pts[i - 1].distanceTo(pts[i]);
+      setTotalDist(total);
+      setSegCount(pts.length - 1);
+    };
+
+    const onMouseMove = (e: L.LeafletMouseEvent) => {
+      const pts = pointsRef.current;
+      if (pts.length === 0) return;
+      const last = pts[pts.length - 1];
+
+      // Ghost line
+      if (!ghostLineRef.current) {
+        ghostLineRef.current = L.polyline([last, e.latlng], {
+          color: "#2d7a3a", weight: 1.5, opacity: 0.5, dashArray: "4,6",
+        }).addTo(lg);
+      } else {
+        ghostLineRef.current.setLatLngs([last, e.latlng]);
+      }
+
+      // Ghost distance label
+      const dist = last.distanceTo(e.latlng);
+      const mid = L.latLng((last.lat + e.latlng.lat) / 2, (last.lng + e.latlng.lng) / 2);
+      if (!ghostLabelRef.current) {
+        ghostLabelRef.current = L.marker(mid, {
+          icon: L.divIcon({
+            className: "gardenos-measure-ghost-label",
+            html: `<span>${formatEdgeLength(dist)}</span>`,
+            iconSize: [80, 22],
+            iconAnchor: [40, 11],
+          }),
+          interactive: false,
+        }).addTo(lg);
+      } else {
+        ghostLabelRef.current.setLatLng(mid);
+        const icon = ghostLabelRef.current.getIcon() as L.DivIcon;
+        (icon.options as { html?: string }).html = `<span>${formatEdgeLength(dist)}</span>`;
+        // Force icon refresh
+        const el = (ghostLabelRef.current as unknown as { _icon?: HTMLElement })._icon;
+        if (el) el.innerHTML = `<span>${formatEdgeLength(dist)}</span>`;
+      }
+    };
+
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+      // Ctrl+Z / Cmd+Z to undo last point
+      if ((e.metaKey || e.ctrlKey) && e.key === "z") {
+        e.preventDefault();
+        // Rebuild: clear and re-add all but the last point
+        const pts = pointsRef.current;
+        if (pts.length === 0) return;
+        pts.pop();
+        lg.clearLayers();
+        ghostLineRef.current = null;
+        ghostLabelRef.current = null;
+        // Re-draw remaining
+        let total = 0;
+        for (let i = 0; i < pts.length; i++) {
+          L.circleMarker(pts[i], {
+            radius: 5, color: "#fff", fillColor: "#2d7a3a", fillOpacity: 1, weight: 2,
+          }).addTo(lg);
+          if (i > 0) {
+            const segDist = pts[i - 1].distanceTo(pts[i]);
+            total += segDist;
+            L.polyline([pts[i - 1], pts[i]], {
+              color: "#2d7a3a", weight: 2.5, opacity: 0.85, dashArray: "6,4",
+            }).addTo(lg);
+            const mid = L.latLng((pts[i - 1].lat + pts[i].lat) / 2, (pts[i - 1].lng + pts[i].lng) / 2);
+            L.marker(mid, {
+              icon: L.divIcon({
+                className: "gardenos-measure-label",
+                html: `<span>${formatEdgeLength(segDist)}</span>`,
+                iconSize: [80, 22],
+                iconAnchor: [40, 11],
+              }),
+              interactive: false,
+            }).addTo(lg);
+          }
+        }
+        setTotalDist(total);
+        setSegCount(Math.max(0, pts.length - 1));
+      }
+    };
+
+    map.on("click", onClick);
+    map.on("mousemove", onMouseMove);
+    window.addEventListener("keydown", onKeyDown);
+
+    return () => {
+      map.off("click", onClick);
+      map.off("mousemove", onMouseMove);
+      window.removeEventListener("keydown", onKeyDown);
+      lg.remove();
+      map.getContainer().style.cursor = "";
+    };
+  }, [map, onClose]);
+
+  return (
+    <div className="gardenos-measure-hud">
+      <div className="measure-hud-inner">
+        {segCount === 0 ? (
+          <span className="measure-hint">Klik p\u00e5 kortet for at m\u00e5le</span>
+        ) : (
+          <>
+            <span className="measure-total">{formatEdgeLength(totalDist)}</span>
+            {segCount > 1 && <span className="measure-segs">{segCount} segmenter</span>}
+          </>
+        )}
+        <button type="button" className="measure-close" onClick={onClose} title="Luk (Esc)">✕</button>
+      </div>
+      <div className="measure-tip">
+        Klik = tilf\u00f8j punkt &nbsp;·&nbsp; ⌘Z = fortryd &nbsp;·&nbsp; Esc = luk
+      </div>
+    </div>
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -6581,23 +6805,175 @@ export function GardenMapClient() {
           border-top-color: var(--foreground);
         }
 
-        /* ── Scale bar styling ── */
-        .leaflet-control-scale {
-          margin-top: 6px !important;       /* just below the zoom buttons */
-          margin-left: 12px !important;
-          z-index: 800 !important;          /* above map tiles, below UI overlays */
+        /* ── Hide default Leaflet zoom (we use custom toolbar) ── */
+        .leaflet-control-zoom { display: none !important; }
+
+        /* ── Map Toolbar (zoom + scale + ruler) ── */
+        .gardenos-map-toolbar {
+          position: absolute;
+          top: 12px;
+          left: 12px;
+          z-index: 1000;
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+          background: rgba(255, 255, 255, 0.72);
+          backdrop-filter: blur(12px) saturate(1.4);
+          -webkit-backdrop-filter: blur(12px) saturate(1.4);
+          border-radius: 14px;
+          box-shadow: 0 2px 12px rgba(0,0,0,0.10), 0 0 0 1px rgba(0,0,0,0.06);
+          padding: 4px;
+          gap: 0px;
+          pointer-events: auto;
         }
-        .leaflet-control-scale-line {
-          background: rgba(255, 255, 255, 0.85) !important;
-          border: 2px solid #333 !important;
-          border-top: none !important;
-          padding: 2px 8px 3px !important;
-          font-size: 12px !important;
-          font-weight: 600 !important;
-          color: #333 !important;
-          text-shadow: 0 0 3px rgba(255,255,255,0.9) !important;
-          line-height: 1.3 !important;
-          white-space: nowrap !important;
+        .toolbar-btn {
+          width: 36px;
+          height: 36px;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          background: none;
+          border: none;
+          color: #374151;
+          border-radius: 10px;
+          cursor: pointer;
+          transition: all 0.15s;
+        }
+        .toolbar-btn:hover {
+          background: rgba(0,0,0,0.06);
+        }
+        .toolbar-btn:active {
+          background: rgba(0,0,0,0.10);
+          transform: scale(0.95);
+        }
+        .toolbar-btn--active {
+          background: rgba(45, 122, 58, 0.15) !important;
+          color: #2d7a3a !important;
+        }
+        .toolbar-divider {
+          width: 24px;
+          height: 1px;
+          background: rgba(0,0,0,0.10);
+          margin: 1px 0;
+        }
+        .toolbar-scale {
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+          padding: 6px 4px 4px;
+          gap: 3px;
+          min-width: 36px;
+        }
+        .scale-bar {
+          height: 3px;
+          background: #374151;
+          border-radius: 1.5px;
+          min-width: 20px;
+          transition: width 0.3s ease;
+        }
+        .scale-label {
+          font-size: 9px;
+          font-weight: 700;
+          color: #374151;
+          letter-spacing: 0.02em;
+          line-height: 1;
+          white-space: nowrap;
+        }
+
+        /* ── Measure HUD ── */
+        .gardenos-measure-hud {
+          position: absolute;
+          top: 12px;
+          left: 60px;
+          z-index: 1001;
+          display: flex;
+          flex-direction: column;
+          gap: 2px;
+          pointer-events: auto;
+        }
+        .measure-hud-inner {
+          display: flex;
+          align-items: center;
+          gap: 8px;
+          background: rgba(255, 255, 255, 0.80);
+          backdrop-filter: blur(12px) saturate(1.4);
+          -webkit-backdrop-filter: blur(12px) saturate(1.4);
+          border-radius: 12px;
+          box-shadow: 0 2px 12px rgba(0,0,0,0.10), 0 0 0 1px rgba(0,0,0,0.06);
+          padding: 8px 12px;
+        }
+        .measure-total {
+          font-size: 18px;
+          font-weight: 800;
+          color: #2d7a3a;
+          letter-spacing: -0.02em;
+        }
+        .measure-segs {
+          font-size: 11px;
+          color: #6b7280;
+          font-weight: 500;
+        }
+        .measure-hint {
+          font-size: 12px;
+          color: #6b7280;
+          font-weight: 500;
+        }
+        .measure-close {
+          width: 24px;
+          height: 24px;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          background: rgba(0,0,0,0.06);
+          border: none;
+          border-radius: 8px;
+          color: #6b7280;
+          cursor: pointer;
+          font-size: 12px;
+          transition: all 0.15s;
+          margin-left: 4px;
+        }
+        .measure-close:hover { background: rgba(0,0,0,0.12); color: #374151; }
+        .measure-tip {
+          font-size: 9px;
+          color: #9ca3af;
+          text-align: center;
+          padding: 0 4px;
+        }
+
+        /* ── Measure labels on map ── */
+        .gardenos-measure-label {
+          background: none !important;
+          border: none !important;
+          box-shadow: none !important;
+        }
+        .gardenos-measure-label span {
+          display: inline-block;
+          background: rgba(255,255,255,0.85);
+          backdrop-filter: blur(6px);
+          -webkit-backdrop-filter: blur(6px);
+          color: #2d7a3a;
+          font-size: 11px;
+          font-weight: 700;
+          padding: 2px 6px;
+          border-radius: 6px;
+          box-shadow: 0 1px 4px rgba(0,0,0,0.12);
+          white-space: nowrap;
+        }
+        .gardenos-measure-ghost-label {
+          background: none !important;
+          border: none !important;
+          box-shadow: none !important;
+        }
+        .gardenos-measure-ghost-label span {
+          display: inline-block;
+          background: rgba(255,255,255,0.6);
+          color: #6b7280;
+          font-size: 10px;
+          font-weight: 600;
+          padding: 1px 5px;
+          border-radius: 5px;
+          white-space: nowrap;
         }
 
         .leaflet-tooltip.gardenos-row-emoji-label {
@@ -6676,9 +7052,11 @@ export function GardenMapClient() {
           maxZoom={22}
           zoomSnap={0.25}
           zoomDelta={0.25}
+          zoomControl={false}
           className="absolute inset-0"
           renderer={L.svg({ tolerance: 12 })}
         >
+          <MapToolbar />
           <TileLayer
             attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
             url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
