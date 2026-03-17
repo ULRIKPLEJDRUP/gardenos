@@ -1,6 +1,7 @@
 // ---------------------------------------------------------------------------
-// GardenOS – Middleware: Protect all routes except auth + public assets
+// GardenOS – Proxy: Protect all routes except auth + public assets
 // ---------------------------------------------------------------------------
+// Next.js 16 renamed middleware → proxy.
 // Uses getToken() from next-auth/jwt instead of the full auth() wrapper so
 // that Prisma is NOT imported in the Edge Runtime.
 // Auth.js v5 uses "authjs.session-token" as cookie name (not "next-auth.*").
@@ -13,7 +14,7 @@ import { getToken } from "next-auth/jwt";
 const COOKIE_NAME_HTTP = "authjs.session-token";
 const COOKIE_NAME_HTTPS = "__Secure-authjs.session-token";
 
-export async function middleware(req: NextRequest) {
+export async function proxy(req: NextRequest) {
   const { pathname } = req.nextUrl;
 
   // Allow auth-related routes

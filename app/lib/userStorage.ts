@@ -146,6 +146,7 @@ function migrateAnonymousData(userId: string): void {
 // ---------------------------------------------------------------------------
 let _pullDone = false;
 let _pullPromise: Promise<void> | null = null;
+let _syncDisabled = false;
 
 /**
  * Pull all synced data from the server and merge into localStorage.
@@ -161,7 +162,15 @@ export function pullFromServer(): Promise<void> {
   _pullPromise = (async () => {
     try {
       const res = await fetch("/api/sync", { credentials: "include" });
-      if (!res.ok) return;
+      if (!res.ok) {
+        // eslint-disable-next-line no-console
+        console.warn("[GardenOS] Pull fejlede:", res.status);
+        // 401/404 = session is stale (user deleted after DB reset) → skip sync
+        if (res.status === 401 || res.status === 404) {
+          _syncDisabled = true;
+        }
+        return;
+      }
       const json = await res.json() as {
         data: Record<string, { value: string; updatedAt: string }>;
       };
@@ -231,6 +240,7 @@ const PUSH_DEBOUNCE_MS = 2_000;
  * Accepts either the full "gardenos:layout:v1" or short "layout:v1".
  */
 export function markDirty(key: string): void {
+  if (_syncDisabled) return;
   const short = key.startsWith("gardenos:") ? toSyncKey(key) : key;
   if (!SYNCABLE_SHORT_KEYS.has(short)) return; // not a syncable key
   _dirtyKeys.add(short);
@@ -247,6 +257,7 @@ function schedulePush(): void {
 export async function flushDirty(): Promise<void> {
   if (_dirtyKeys.size === 0) return;
   if (!_userId) return;
+  if (_syncDisabled) { _dirtyKeys.clear(); return; }
 
   const entries: Array<{ key: string; value: string }> = [];
   for (const shortKey of _dirtyKeys) {
@@ -271,11 +282,17 @@ export async function flushDirty(): Promise<void> {
     if (!res.ok) {
       // eslint-disable-next-line no-console
       console.warn("[GardenOS] Push fejlede:", res.status);
-      // Re-add to dirty so we retry
-      for (const e of entries) _dirtyKeys.add(e.key);
+      if (res.status >= 500) {
+        // Server error — retry later
+        for (const e of entries) _dirtyKeys.add(e.key);
+        schedulePush();
+      } else {
+        // 4xx errors (401, 404) → session is stale, disable sync
+        _syncDisabled = true;
+      }
     }
   } catch {
-    // Offline — re-add to dirty so we retry later
+    // Network error / offline — retry later
     for (const e of entries) _dirtyKeys.add(e.key);
     // eslint-disable-next-line no-console
     console.warn("[GardenOS] Push fejlede (offline?) — prøver igen senere");
