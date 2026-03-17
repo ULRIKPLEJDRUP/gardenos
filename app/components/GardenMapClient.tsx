@@ -7,7 +7,7 @@ import "leaflet-path-drag";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { MapContainer, Marker, Popup, TileLayer, WMSTileLayer, useMap, useMapEvents } from "react-leaflet";
 import { setCurrentUser, userKey, pullFromServer, markDirty } from "../lib/userStorage";
-import { signOut } from "next-auth/react";
+import { signOut, useSession } from "next-auth/react";
 import {
   getAllPlants,
   getPlantById,
@@ -3064,6 +3064,9 @@ function BoxSelectOverlay({ featureGroupRef, setMultiSelectedIds }: BoxSelectPro
 export function GardenMapClient({ userId }: { userId: string }) {
   // ── Scope all localStorage keys to the authenticated user ──
   setCurrentUser(userId);
+
+  const { data: sessionData } = useSession();
+  const isAdmin = (sessionData?.user as { role?: string })?.role === "admin";
 
   const featureGroupRef = useRef<L.FeatureGroup | null>(null);
   const mapRef = useRef<L.Map | null>(null);
@@ -7874,6 +7877,18 @@ export function GardenMapClient({ userId }: { userId: string }) {
               <span className="text-[13px] leading-none">⚙️</span>
               <span className="text-[7px] font-semibold mt-0.5 text-foreground/30">Tilpas</span>
             </button>
+
+            {/* ── 🛡️ Admin shortcut (only for admins) ── */}
+            {isAdmin && (
+              <a
+                href="/admin"
+                className="flex flex-col items-center justify-center rounded-xl px-1.5 py-1.5 min-w-[32px] transition-all flex-shrink-0 text-foreground/30 hover:bg-amber-500/10 hover:text-amber-600"
+                title="Åbn Admin panel"
+              >
+                <span className="text-[13px] leading-none">🛡️</span>
+                <span className="text-[7px] font-semibold mt-0.5 text-amber-600/70">Admin</span>
+              </a>
+            )}
           </nav>
 
           {/* ── ▾ All-tabs dropdown ── */}
@@ -7912,8 +7927,17 @@ export function GardenMapClient({ userId }: { userId: string }) {
                     );
                   })}
                 </div>
-                {/* ── Log ud ── */}
-                <div className="border-t border-foreground/10 px-2 pt-1.5 pb-2">
+                {/* ── Admin + Log ud ── */}
+                <div className="border-t border-foreground/10 px-2 pt-1.5 pb-2 space-y-1">
+                  {isAdmin && (
+                    <a
+                      href="/admin"
+                      className="flex w-full items-center gap-1.5 rounded-lg px-2.5 py-2 text-left text-[11px] bg-foreground/[0.04] text-foreground/60 hover:bg-accent/10 hover:text-accent transition-all"
+                    >
+                      <span className="text-sm leading-none">🛡️</span>
+                      <span className="flex-1">Admin panel</span>
+                    </a>
+                  )}
                   <button
                     type="button"
                     className="flex w-full items-center gap-1.5 rounded-lg px-2.5 py-2 text-left text-[11px] bg-foreground/[0.04] text-foreground/60 hover:bg-red-500/10 hover:text-red-600 transition-all"
