@@ -56,6 +56,7 @@ import IconPicker from "./IconPicker";
 import YearWheel from "./YearWheel";
 import TaskList from "./TaskList";
 import FeedbackPanel from "./FeedbackPanel";
+import GuidedTour from "./GuidedTour";
 import { createTask, parseAiResponse } from "../lib/taskStore";
 import {
   getInfraElementById,
@@ -3197,6 +3198,7 @@ export function GardenMapClient({ userId }: { userId: string }) {
   }, []);
   const [sidebarTabPickerOpen, setSidebarTabPickerOpen] = useState(false);
   const [sidebarDropdownOpen, setSidebarDropdownOpen] = useState(false);
+  const [forceStartTour, setForceStartTour] = useState(false);
   // Drag-and-drop reorder state for the picker
   const [dragIdx, setDragIdx] = useState<number | null>(null);
   const [dragOverIdx, setDragOverIdx] = useState<number | null>(null);
@@ -7000,7 +7002,7 @@ export function GardenMapClient({ userId }: { userId: string }) {
 
   return (
     <div className="grid h-[calc(100dvh)] w-full grid-cols-1 grid-rows-[auto_1fr] md:grid-cols-[1fr_340px]">
-      <div className="gardenos-toolbar col-span-1 row-start-1 flex items-center justify-between gap-1 md:gap-2 border-b border-border bg-toolbar-bg px-2 md:px-3 py-1.5 md:py-2 md:col-span-2 shadow-sm">
+      <div data-tour="toolbar" className="gardenos-toolbar col-span-1 row-start-1 flex items-center justify-between gap-1 md:gap-2 border-b border-border bg-toolbar-bg px-2 md:px-3 py-1.5 md:py-2 md:col-span-2 shadow-sm">
         <div className="flex items-center gap-1 md:gap-3">
           <div className="flex items-center gap-1.5 mr-1">
             <span className="text-lg leading-none">🌿</span>
@@ -7049,7 +7051,7 @@ export function GardenMapClient({ userId }: { userId: string }) {
             >
               ↩ <span className="hidden md:inline">Fortryd</span>
             </button>
-            <FeedbackPanel />
+            <span data-tour="feedback-btn"><FeedbackPanel /></span>
             {multiSelectedIds.size >= 2 ? (
               <button
                 type="button"
@@ -7072,8 +7074,13 @@ export function GardenMapClient({ userId }: { userId: string }) {
             ) : null}
           </div>
         </div>
-        <div className="hidden md:flex items-center gap-2 overflow-hidden min-w-0">
-          {/* ── Favorite bookmark pills ── */}
+        {/* ── Brugernavn ── */}
+        <div className="flex items-center text-xs text-foreground/50 truncate max-w-[100px] md:max-w-none">
+          👤 {sessionData?.user?.name || sessionData?.user?.email || ""}
+        </div>
+        <div className="flex items-center gap-2">
+          <div className="hidden md:flex items-center gap-2 overflow-hidden min-w-0">
+            {/* ── Favorite bookmark pills ── */}
           {bookmarks.some((b) => b.favorite) ? (
             <div className="flex items-center gap-1 overflow-x-auto scrollbar-none min-w-0">
               <span className="text-[10px] text-foreground/40 shrink-0">⭐</span>
@@ -7100,7 +7107,7 @@ export function GardenMapClient({ userId }: { userId: string }) {
           ) : null}
           {bookmarks.some((b) => b.favorite) ? <div className="h-5 w-px bg-border shrink-0" /> : null}
           {/* ── Address search ── */}
-          <div className="relative shrink-0">
+          <div data-tour="address-search" className="relative shrink-0">
             {showAddressSearch ? (
               <div className="flex items-center gap-1 rounded-md border border-border bg-white px-2 py-1 shadow-sm">
                 <span className="text-xs">🔍</span>
@@ -7161,6 +7168,15 @@ export function GardenMapClient({ userId }: { userId: string }) {
               </div>
             ) : null}
           </div>
+          </div>
+          <button
+            type="button"
+            className="shrink-0 rounded-md px-2 md:px-2.5 py-1.5 text-xs text-foreground/60 hover:bg-red-50 hover:text-red-600 transition-colors whitespace-nowrap"
+            onClick={() => signOut({ callbackUrl: "/login" })}
+            title="Log ud"
+          >
+            🚪 <span className="hidden md:inline">Log ud</span>
+          </button>
         </div>
       </div>
       <style>{`
@@ -7541,7 +7557,7 @@ export function GardenMapClient({ userId }: { userId: string }) {
         }
       `}</style>
 
-      <div className="gardenos-map-area relative row-start-2">
+      <div data-tour="map-area" className="gardenos-map-area relative row-start-2">
         <MapContainer
           center={initialCenter}
           zoom={initialZoom}
@@ -7712,7 +7728,7 @@ export function GardenMapClient({ userId }: { userId: string }) {
       </div>
 
       {/* ── Mobile Bottom Navigation (customisable) ── */}
-      <div className="mobile-bottom-nav hidden max-md:flex">
+      <div data-tour="mobile-nav" className="mobile-bottom-nav hidden max-md:flex">
         {pinnedMobileTabs.map((tabId) => {
           const def = ALL_SIDEBAR_TABS.find((t) => t.id === tabId);
           if (!def) return null;
@@ -7823,6 +7839,7 @@ export function GardenMapClient({ userId }: { userId: string }) {
                   <button
                     key={tabId}
                     type="button"
+                    data-tour={`tab-${tabId}`}
                     disabled={!!isDisabled}
                     className={`flex flex-col items-center justify-center rounded-xl px-2 py-1.5 min-w-[46px] transition-all ${
                       isActive
@@ -7851,6 +7868,7 @@ export function GardenMapClient({ userId }: { userId: string }) {
             {/* ── ▾ Dropdown: alle tabs ── */}
             <button
               type="button"
+              data-tour="sidebar-dropdown"
               className={`flex flex-col items-center justify-center rounded-xl px-1.5 py-1.5 min-w-[32px] transition-all flex-shrink-0 ${
                 sidebarDropdownOpen
                   ? "bg-foreground/10 text-foreground/80"
@@ -7866,6 +7884,7 @@ export function GardenMapClient({ userId }: { userId: string }) {
             {/* ── ⚙️ Tilpas ── */}
             <button
               type="button"
+              data-tour="sidebar-settings"
               className={`flex flex-col items-center justify-center rounded-xl px-1.5 py-1.5 min-w-[32px] transition-all flex-shrink-0 ${
                 sidebarTabPickerOpen
                   ? "bg-foreground/10 text-foreground/80"
@@ -7948,6 +7967,14 @@ export function GardenMapClient({ userId }: { userId: string }) {
                       <span className="flex-1">Admin panel</span>
                     </a>
                   )}
+                  <button
+                    type="button"
+                    className="flex w-full items-center gap-1.5 rounded-lg px-2.5 py-2 text-left text-[11px] bg-foreground/[0.04] text-foreground/60 hover:bg-accent/10 hover:text-accent transition-all"
+                    onClick={() => { setForceStartTour(true); setSidebarDropdownOpen(false); }}
+                  >
+                    <span className="text-sm leading-none">🎓</span>
+                    <span className="flex-1">Rundvisning</span>
+                  </button>
                   <button
                     type="button"
                     className="flex w-full items-center gap-1.5 rounded-lg px-2.5 py-2 text-left text-[11px] bg-foreground/[0.04] text-foreground/60 hover:bg-red-500/10 hover:text-red-600 transition-all"
@@ -13701,6 +13728,13 @@ export function GardenMapClient({ userId }: { userId: string }) {
           </div>
         </div>
       ) : null}
+
+      {/* ── Guided Tour ── */}
+      <GuidedTour
+        storageKey={userKey("gardenos:tour")}
+        forceStart={forceStartTour}
+        onClose={() => setForceStartTour(false)}
+      />
     </div>
   );
 }

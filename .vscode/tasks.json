@@ -27,6 +27,22 @@
 			"isBackground": true,
 			"problemMatcher": [],
 			"group": "build"
+		},
+		{
+			"label": "Restart dev server",
+			"type": "shell",
+			"command": "lsof -ti:3000 | xargs kill -9 2>/dev/null; npm run dev",
+			"isBackground": true,
+			"problemMatcher": []
+		},
+		{
+			"label": "dev",
+			"type": "shell",
+			"command": "lsof -ti:3000 | xargs kill -9 2>/dev/null; npm run dev",
+			"isBackground": true,
+			"problemMatcher": [
+				"$tsc-watch"
+			]
 		}
 	]
 }
