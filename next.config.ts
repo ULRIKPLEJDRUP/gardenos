@@ -8,7 +8,7 @@ const nextConfig: NextConfig = {
         source: "/sw.js",
         headers: [
           { key: "Service-Worker-Allowed", value: "/" },
-          { key: "Cache-Control", value: "no-cache" },
+          { key: "Cache-Control", value: "no-store, no-cache, must-revalidate, max-age=0" },
         ],
       },
     ];

@@ -55,39 +55,56 @@ export default function RootLayout({
           dangerouslySetInnerHTML={{
             __html: `
               if ('serviceWorker' in navigator) {
-                // Listen for SW_UPDATED from the service worker (works even with OLD layout code)
-                navigator.serviceWorker.addEventListener('message', function(evt) {
-                  if (evt.data && evt.data.type === 'SW_UPDATED') {
-                    console.log('[GardenOS] SW updated to', evt.data.version, '- reloading…');
-                    window.location.reload();
-                  }
-                });
+                var isDev = location.hostname === 'localhost' || location.hostname === '127.0.0.1';
 
-                window.addEventListener('load', async () => {
-                  try {
-                    var reg = await navigator.serviceWorker.register('/sw.js');
-                    reg.update();
-
-                    if (reg.waiting) {
-                      reg.waiting.postMessage({ type: 'SKIP_WAITING' });
-                    }
-
-                    reg.addEventListener('updatefound', function() {
-                      var newSW = reg.installing;
-                      if (!newSW) return;
-                      newSW.addEventListener('statechange', function() {
-                        if (newSW.state === 'installed' && navigator.serviceWorker.controller) {
-                          newSW.postMessage({ type: 'SKIP_WAITING' });
-                        }
+                if (isDev) {
+                  // ── DEV MODE: nuke all SWs + caches so every reload is fresh ──
+                  navigator.serviceWorker.getRegistrations().then(function(regs) {
+                    regs.forEach(function(r) {
+                      r.unregister().then(function() {
+                        console.log('[GardenOS] SW unregistered (dev mode)');
                       });
                     });
+                  });
+                  caches.keys().then(function(keys) {
+                    keys.forEach(function(k) { caches.delete(k); });
+                    if (keys.length) console.log('[GardenOS] Cleared', keys.length, 'caches (dev mode)');
+                  });
+                } else {
+                  // ── PRODUCTION: register SW with aggressive update ──
+                  navigator.serviceWorker.addEventListener('message', function(evt) {
+                    if (evt.data && evt.data.type === 'SW_UPDATED') {
+                      console.log('[GardenOS] SW updated to', evt.data.version, '- reloading…');
+                      window.location.reload();
+                    }
+                  });
 
-                    var refreshing = false;
-                    navigator.serviceWorker.addEventListener('controllerchange', function() {
-                      if (!refreshing) { refreshing = true; window.location.reload(); }
-                    });
-                  } catch (e) {}
-                });
+                  window.addEventListener('load', async () => {
+                    try {
+                      var reg = await navigator.serviceWorker.register('/sw.js', { updateViaCache: 'none' });
+                      reg.update();
+
+                      if (reg.waiting) {
+                        reg.waiting.postMessage({ type: 'SKIP_WAITING' });
+                      }
+
+                      reg.addEventListener('updatefound', function() {
+                        var newSW = reg.installing;
+                        if (!newSW) return;
+                        newSW.addEventListener('statechange', function() {
+                          if (newSW.state === 'installed' && navigator.serviceWorker.controller) {
+                            newSW.postMessage({ type: 'SKIP_WAITING' });
+                          }
+                        });
+                      });
+
+                      var refreshing = false;
+                      navigator.serviceWorker.addEventListener('controllerchange', function() {
+                        if (!refreshing) { refreshing = true; window.location.reload(); }
+                      });
+                    } catch (e) {}
+                  });
+                }
               }
             `,
           }}

@@ -1,7 +1,30 @@
 // ---------------------------------------------------------------------------
 // GardenOS – Service Worker (minimal offline-capable PWA shell)
 // ---------------------------------------------------------------------------
-const CACHE_NAME = "gardenos-v10";
+
+// ── Dev-mode self-destruct: on localhost the SW should never run ──
+if (
+  self.location.hostname === "localhost" ||
+  self.location.hostname === "127.0.0.1"
+) {
+  self.addEventListener("install", () => self.skipWaiting());
+  self.addEventListener("activate", (event) => {
+    event.waitUntil(
+      caches.keys().then((keys) => Promise.all(keys.map((k) => caches.delete(k))))
+        .then(() => self.clients.claim())
+        .then(() => self.registration.unregister())
+        .then(() =>
+          self.clients.matchAll({ type: "window" }).then((clients) => {
+            for (const c of clients) c.postMessage({ type: "SW_REMOVED" });
+          })
+        )
+    );
+  });
+  // No fetch handlers – everything goes straight to the dev server
+  return;
+}
+
+const CACHE_NAME = "gardenos-v11";
 const PRECACHE_URLS = [
   "/",
   "/login",
