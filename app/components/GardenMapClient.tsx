@@ -96,6 +96,7 @@ import {
 
 type KnownGardenFeatureKind =
   | "bed" | "row" | "pot" | "raised-bed"
+  | "planter-box" | "balcony-box" | "grow-bag" | "barrel-planter" | "hanging-basket" | "trough" | "window-box"
   | "tree" | "bush" | "flower" | "plant"
   | "greenhouse" | "kitchen-garden" | "slope" | "production-garden"
   | "water" | "electric" | "lamp"
@@ -137,7 +138,7 @@ const CATEGORY_DESCRIPTIONS: Record<GardenFeatureCategory, string> = {
   element: "Planter, træer, buske, ledninger, lamper",
   row: "Rækker – indeholder elementer",
   seedbed: "Såbede – indeholder rækker, containere, elementer",
-  container: "Bed, krukker, højbede – indeholder elementer",
+  container: "Krukker, kasser, højbede, ampler – indeholder elementer",
   area: "Område – indeholder såbede, containere, rækker, elementer",
   condition: "Skygge, fugtig jord, sandjord, vind",
 };
@@ -183,6 +184,12 @@ type GardenFeatureProperties = {
   soilType?: string;      // jordtype i containeren / såbedet
   fertilizer?: string;    // gødningsplan
   bedType?: string;       // kept for backward compat
+  wateringNeed?: string;  // vandingsbehov (lav/middel/høj/selvvandende)
+  drainage?: string;      // drænforhold (ingen/huller/drænlag)
+  volume?: string;        // volumen/størrelse (liter)
+  material?: string;      // materiale (keramik/plast/træ/metal/stof)
+  placement?: string;     // placering (sol/halvskygge/skygge)
+  winterProtection?: string; // vinterbeskyttelse (ingen/indendørs/isoleret)
 
   // ── Area-specific ──
   shelter?: string;       // læforhold
@@ -486,9 +493,16 @@ const KNOWN_KIND_DEFS: KindDef[] = [
   { kind: "seedbed-raised", label: "Højt såbed", category: "seedbed", geometry: "polygon", subGroup: "default" },
 
   // ── Containere ──
-  { kind: "bed", label: "Bed", category: "container", geometry: "polygon", subGroup: "default" },
   { kind: "pot", label: "Krukke", category: "container", geometry: "polygon", subGroup: "default" },
+  { kind: "planter-box", label: "Plantekasse", category: "container", geometry: "polygon", subGroup: "default" },
   { kind: "raised-bed", label: "Højbed", category: "container", geometry: "polygon", subGroup: "default" },
+  { kind: "balcony-box", label: "Altankasse", category: "container", geometry: "polygon", subGroup: "default" },
+  { kind: "grow-bag", label: "Dyrkningspose", category: "container", geometry: "polygon", subGroup: "default" },
+  { kind: "barrel-planter", label: "Tønde/Kar", category: "container", geometry: "polygon", subGroup: "default" },
+  { kind: "hanging-basket", label: "Ampler/Hængekurv", category: "container", geometry: "polygon", subGroup: "default" },
+  { kind: "trough", label: "Trug/Plantebakke", category: "container", geometry: "polygon", subGroup: "default" },
+  { kind: "window-box", label: "Vindueskarme-kasse", category: "container", geometry: "polygon", subGroup: "default" },
+  { kind: "bed", label: "Bed (jord)", category: "container", geometry: "polygon", subGroup: "default" },
 
   // ── Områder ──
   { kind: "greenhouse", label: "Drivhus", category: "area", geometry: "polygon", subGroup: "default" },
@@ -10469,23 +10483,130 @@ export function GardenMapClient({ userId }: { userId: string }) {
             {/* ── Container-specific fields ── */}
             {selectedCategory === "container" ? (
               <>
-                <div>
-                  <label className="block text-[11px] font-semibold text-foreground/60 uppercase tracking-wide">Jordtype</label>
-                  <input
-                    className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm shadow-sm"
-                    value={selected.feature.properties?.soilType ?? ""}
-                    onChange={(e) => updateSelectedProperty({ soilType: e.target.value })}
-                    placeholder="Fx muld, sandjord, lerjord"
-                  />
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <label className="block text-[11px] font-semibold text-foreground/60 uppercase tracking-wide">Jordtype</label>
+                    <select
+                      className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm shadow-sm"
+                      value={selected.feature.properties?.soilType ?? ""}
+                      onChange={(e) => updateSelectedProperty({ soilType: e.target.value })}
+                    >
+                      <option value="">Vælg jordtype…</option>
+                      <option value="muld">Muld/kompost</option>
+                      <option value="pottejord">Pottejord</option>
+                      <option value="kokosfiber">Kokosfiber</option>
+                      <option value="perlit-blanding">Perlit-blanding</option>
+                      <option value="ler">Lerjord</option>
+                      <option value="sand">Sandjord</option>
+                      <option value="sphagnum">Sphagnum</option>
+                      <option value="hydrokultur">Hydrokultur/lecakugler</option>
+                      <option value="blandet">Blandet</option>
+                      <option value="anden">Anden</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-[11px] font-semibold text-foreground/60 uppercase tracking-wide">Vandingsbehov</label>
+                    <select
+                      className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm shadow-sm"
+                      value={selected.feature.properties?.wateringNeed ?? ""}
+                      onChange={(e) => updateSelectedProperty({ wateringNeed: e.target.value })}
+                    >
+                      <option value="">Vælg…</option>
+                      <option value="lav">Lav (1–2x/uge)</option>
+                      <option value="middel">Middel (3–4x/uge)</option>
+                      <option value="høj">Høj (dagligt)</option>
+                      <option value="selvvandende">Selvvandende</option>
+                      <option value="dryp">Drypvanding</option>
+                    </select>
+                  </div>
                 </div>
-                <div>
-                  <label className="block text-[11px] font-semibold text-foreground/60 uppercase tracking-wide">Gødning</label>
-                  <input
-                    className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm shadow-sm"
-                    value={selected.feature.properties?.fertilizer ?? ""}
-                    onChange={(e) => updateSelectedProperty({ fertilizer: e.target.value })}
-                    placeholder="Fx kompost april, NPK maj"
-                  />
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <label className="block text-[11px] font-semibold text-foreground/60 uppercase tracking-wide">Dræn</label>
+                    <select
+                      className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm shadow-sm"
+                      value={selected.feature.properties?.drainage ?? ""}
+                      onChange={(e) => updateSelectedProperty({ drainage: e.target.value })}
+                    >
+                      <option value="">Vælg…</option>
+                      <option value="huller">Drænhuller i bund</option>
+                      <option value="drænlag">Drænlag (ler/sten)</option>
+                      <option value="ingen">Ingen dræn</option>
+                      <option value="selvdrænende">Selvdrænende</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-[11px] font-semibold text-foreground/60 uppercase tracking-wide">Materiale</label>
+                    <select
+                      className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm shadow-sm"
+                      value={selected.feature.properties?.material ?? ""}
+                      onChange={(e) => updateSelectedProperty({ material: e.target.value })}
+                    >
+                      <option value="">Vælg…</option>
+                      <option value="keramik">Keramik/ler</option>
+                      <option value="plast">Plast</option>
+                      <option value="træ">Træ</option>
+                      <option value="metal">Metal/zink</option>
+                      <option value="beton">Beton/fibercement</option>
+                      <option value="stof">Stof/dyrkningspose</option>
+                      <option value="flettet">Flettet/rattan</option>
+                      <option value="sten">Natursten</option>
+                      <option value="anden">Anden</option>
+                    </select>
+                  </div>
+                </div>
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <label className="block text-[11px] font-semibold text-foreground/60 uppercase tracking-wide">Volumen (liter)</label>
+                    <input
+                      className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm shadow-sm"
+                      type="number"
+                      min="0"
+                      value={selected.feature.properties?.volume ?? ""}
+                      onChange={(e) => updateSelectedProperty({ volume: e.target.value })}
+                      placeholder="Fx 25, 50, 200"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[11px] font-semibold text-foreground/60 uppercase tracking-wide">Placering</label>
+                    <select
+                      className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm shadow-sm"
+                      value={selected.feature.properties?.placement ?? ""}
+                      onChange={(e) => updateSelectedProperty({ placement: e.target.value })}
+                    >
+                      <option value="">Vælg…</option>
+                      <option value="fuld-sol">Fuld sol (6+ timer)</option>
+                      <option value="halvskygge">Halvskygge (3–6 timer)</option>
+                      <option value="skygge">Skygge (&lt;3 timer)</option>
+                      <option value="indendørs">Indendørs</option>
+                      <option value="overdækket">Overdækket/altan</option>
+                    </select>
+                  </div>
+                </div>
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <label className="block text-[11px] font-semibold text-foreground/60 uppercase tracking-wide">Gødning</label>
+                    <input
+                      className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm shadow-sm"
+                      value={selected.feature.properties?.fertilizer ?? ""}
+                      onChange={(e) => updateSelectedProperty({ fertilizer: e.target.value })}
+                      placeholder="Fx kompost april, NPK maj"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[11px] font-semibold text-foreground/60 uppercase tracking-wide">Vinterbeskyttelse</label>
+                    <select
+                      className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm shadow-sm"
+                      value={selected.feature.properties?.winterProtection ?? ""}
+                      onChange={(e) => updateSelectedProperty({ winterProtection: e.target.value })}
+                    >
+                      <option value="">Vælg…</option>
+                      <option value="ingen">Ingen/hårdfør</option>
+                      <option value="indendørs">Flyttes indendørs</option>
+                      <option value="isoleret">Isoleres/dækkes</option>
+                      <option value="uopvarmet">Uopvarmet rum/garage</option>
+                    </select>
+                  </div>
                 </div>
               </>
             ) : null}
@@ -10554,7 +10675,7 @@ export function GardenMapClient({ userId }: { userId: string }) {
                   <p className="text-[9px] text-foreground/40 leading-snug">
                     {selectedCategory === "row" && "Række: Planter i rækker – rodfrugter, løg, bønner, kål"}
                     {selectedCategory === "seedbed" && "Såbed: Bredsåede planter – radiser, salat, urter"}
-                    {selectedCategory === "container" && "Container: Krukker, højbede – tomater, urter, salat"}
+                    {selectedCategory === "container" && "Container: Krukker, kasser, højbede – tomater, urter, salat"}
                   </p>
                 ) : null}
 
