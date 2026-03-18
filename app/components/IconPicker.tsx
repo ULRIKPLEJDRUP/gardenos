@@ -633,7 +633,7 @@ export default function IconPicker({
               </>
             )}
           </>
-        ) : (
+        ) : tab === "online" ? (
           /* ── Online search tab ── */
           <>
             <div className="relative">
