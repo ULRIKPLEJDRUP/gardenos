@@ -491,6 +491,7 @@ const KNOWN_KIND_DEFS: KindDef[] = [
   // ── Såbede ──
   { kind: "seedbed", label: "Såbed", category: "seedbed", geometry: "polygon", subGroup: "default" },
   { kind: "seedbed-raised", label: "Højt såbed", category: "seedbed", geometry: "polygon", subGroup: "default" },
+  { kind: "bed", label: "Bed", category: "seedbed", geometry: "polygon", subGroup: "default" },
 
   // ── Containere ──
   { kind: "pot", label: "Krukke", category: "container", geometry: "polygon", subGroup: "default" },
@@ -502,7 +503,6 @@ const KNOWN_KIND_DEFS: KindDef[] = [
   { kind: "hanging-basket", label: "Ampler/Hængekurv", category: "container", geometry: "polygon", subGroup: "default" },
   { kind: "trough", label: "Trug/Plantebakke", category: "container", geometry: "polygon", subGroup: "default" },
   { kind: "window-box", label: "Vindueskarme-kasse", category: "container", geometry: "polygon", subGroup: "default" },
-  { kind: "bed", label: "Bed (jord)", category: "container", geometry: "polygon", subGroup: "default" },
 
   // ── Områder ──
   { kind: "greenhouse", label: "Drivhus", category: "area", geometry: "polygon", subGroup: "default" },
