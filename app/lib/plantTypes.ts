@@ -224,6 +224,10 @@ export type PlantFamily =
   | "taxaceae"
   | "tiliaceae"
   | "juglandaceae"
+  | "polygonaceae"
+  | "elaeagnaceae"
+  | "adoxaceae"
+  | "moraceae"
   | "other";
 
 export const PLANT_FAMILY_LABELS: Record<PlantFamily, string> = {
@@ -263,6 +267,10 @@ export const PLANT_FAMILY_LABELS: Record<PlantFamily, string> = {
   taxaceae: "Taksfamilien",
   tiliaceae: "Lindefamilien",
   juglandaceae: "Valndødfamilien",
+  polygonaceae: "Skedeknæfamilien",
+  elaeagnaceae: "Sølvbladfamilien",
+  adoxaceae: "Desmerfamilien",
+  moraceae: "Morbærfamilien",
   other: "Anden",
 };
 

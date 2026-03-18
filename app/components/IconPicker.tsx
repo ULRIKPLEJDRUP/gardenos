@@ -198,6 +198,60 @@ const ICON_CATEGORIES: IconCategory[] = [
     ],
   },
   {
+    label: "Krydderurter",
+    emoji: "🌿",
+    items: [
+      { emoji: "🌿", keywords: "persille dild urt herb" },
+      { emoji: "🫚", keywords: "ingefær ginger" },
+      { emoji: "🫂", keywords: "oliven olive" },
+      { emoji: "🌶️", keywords: "chili pepper" },
+      { emoji: "🧂", keywords: "salt krydderi" },
+      { emoji: "🦫", keywords: "timian oregano" },
+      { emoji: "🥬", keywords: "basilikum spinat grøn" },
+      { emoji: "☕", keywords: "te kaffe mint" },
+      { emoji: "🍵", keywords: "te urtete kamillete" },
+      { emoji: "🌾", keywords: "korn kommen karve" },
+      { emoji: "🍋", keywords: "citronmelisse citrongræs" },
+      { emoji: "💜", keywords: "lavendel violet" },
+    ],
+  },
+  {
+    label: "Have-redskaber",
+    emoji: "🪓",
+    items: [
+      { emoji: "🪓", keywords: "skovl shovel" },
+      { emoji: "🧹", keywords: "kost rive broom" },
+      { emoji: "✂️", keywords: "saks beskæringssaks" },
+      { emoji: "🪜", keywords: "stige ladder" },
+      { emoji: "🪣", keywords: "spand bucket" },
+      { emoji: "🛠️", keywords: "værktøj tools" },
+      { emoji: "🔧", keywords: "skruenøgle wrench" },
+      { emoji: "🧴", keywords: "handske glove" },
+      { emoji: "👢", keywords: "støvle boot" },
+      { emoji: "🧱", keywords: "mursten sten brick" },
+      { emoji: "🛋️", keywords: "bænk sofa" },
+      { emoji: "🅿️", keywords: "parkering skilt" },
+    ],
+  },
+  {
+    label: "Vejr & klima",
+    emoji: "☀️",
+    items: [
+      { emoji: "☀️", keywords: "sol sun" },
+      { emoji: "⛅", keywords: "delvist skyet partly cloudy" },
+      { emoji: "☁️", keywords: "sky cloud" },
+      { emoji: "🌧️", keywords: "regn rain" },
+      { emoji: "⛈️", keywords: "tordenvejr storm" },
+      { emoji: "❄️", keywords: "sne frost snow" },
+      { emoji: "🌬️", keywords: "vind wind" },
+      { emoji: "🌡️", keywords: "termometer temperatur" },
+      { emoji: "🌈", keywords: "regnbue rainbow" },
+      { emoji: "🌞", keywords: "solskin sunshine" },
+      { emoji: "💧", keywords: "regndråbe vanddråbe" },
+      { emoji: "🌫️", keywords: "tåge fog" },
+    ],
+  },
+  {
     label: "Dyr & insekter",
     emoji: "🐝",
     items: [
@@ -282,7 +336,7 @@ export default function IconPicker({
   compact,
 }: IconPickerProps) {
   const [open, setOpen] = useState(false);
-  const [tab, setTab] = useState<"local" | "online">("local");
+  const [tab, setTab] = useState<"local" | "online" | "generate">("local");
   const [search, setSearch] = useState("");
   const [activeCategory, setActiveCategory] = useState(0);
   const [customInput, setCustomInput] = useState("");
@@ -294,6 +348,53 @@ export default function IconPicker({
   const [onlineLoading, setOnlineLoading] = useState(false);
   const [onlineError, setOnlineError] = useState("");
   const onlineTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // AI icon generator
+  const [genPrompt, setGenPrompt] = useState("");
+  const [genImage, setGenImage] = useState<string | null>(null);
+  const [genImagePreview, setGenImagePreview] = useState<string | null>(null);
+  const [genLoading, setGenLoading] = useState(false);
+  const [genResult, setGenResult] = useState<string | null>(null);
+  const [genError, setGenError] = useState("");
+  const genFileRef = useRef<HTMLInputElement>(null);
+
+  const handleGenImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      const result = reader.result as string;
+      setGenImage(result);
+      setGenImagePreview(result);
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const generateIcon = async () => {
+    if (!genPrompt.trim() && !genImage) return;
+    setGenLoading(true);
+    setGenError("");
+    setGenResult(null);
+    try {
+      const res = await fetch("/api/generate-icon", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          prompt: genPrompt.trim(),
+          image: genImage || undefined,
+        }),
+      });
+      const data = await res.json();
+      if (res.ok && data.icon) {
+        setGenResult(data.icon);
+      } else {
+        setGenError(data.error || "Kunne ikke generere ikon");
+      }
+    } catch {
+      setGenError("Netv\u00e6rksfejl \u2013 pr\u00f8v igen");
+    }
+    setGenLoading(false);
+  };
 
   // Debounced online search
   useEffect(() => {
@@ -353,13 +454,21 @@ export default function IconPicker({
         onClick={() => setOpen(true)}
         title="Vælg ikon"
       >
-        <span
-          className={`leading-none transition-transform group-hover:scale-110 ${
-            value ? "text-2xl" : "text-xl opacity-30"
-          }`}
-        >
-          {value || "⬜"}
-        </span>
+        {value?.startsWith("data:image/") ? (
+          <img
+            src={value}
+            alt="ikon"
+            className="w-7 h-7 rounded object-contain transition-transform group-hover:scale-110"
+          />
+        ) : (
+          <span
+            className={`leading-none transition-transform group-hover:scale-110 ${
+              value ? "text-2xl" : "text-xl opacity-30"
+            }`}
+          >
+            {value || "⬜"}
+          </span>
+        )}
         <span className="text-xs text-foreground/50 group-hover:text-foreground/70 transition-colors">
           {value ? "Skift ikon" : "Vælg ikon"}
         </span>
@@ -373,7 +482,11 @@ export default function IconPicker({
     <div className="rounded-xl border border-border bg-background shadow-xl overflow-hidden max-w-[340px]">
       {/* ── Header with current icon + tabs ── */}
       <div className="flex items-center gap-2 border-b border-border bg-foreground/[0.02] px-3 py-2">
-        <span className="text-3xl leading-none">{value || "⬜"}</span>
+        {value?.startsWith("data:image/") ? (
+          <img src={value} alt="ikon" className="w-8 h-8 rounded object-contain" />
+        ) : (
+          <span className="text-3xl leading-none">{value || "⬜"}</span>
+        )}
         <div className="flex-1 min-w-0">
           <p className="text-xs font-medium text-foreground/70 truncate">
             {value ? "Valgt ikon" : "Intet ikon valgt"}
@@ -420,6 +533,20 @@ export default function IconPicker({
         >
           🔎 Søg alle emoji
           {tab === "online" ? (
+            <span className="absolute bottom-0 left-2 right-2 h-[2px] bg-accent rounded-full" />
+          ) : null}
+        </button>
+        <button
+          type="button"
+          className={`flex-1 px-3 py-2 text-xs font-medium transition-colors relative ${
+            tab === "generate"
+              ? "text-accent"
+              : "text-foreground/40 hover:text-foreground/60"
+          }`}
+          onClick={() => setTab("generate")}
+        >
+          🎨 Generér
+          {tab === "generate" ? (
             <span className="absolute bottom-0 left-2 right-2 h-[2px] bg-accent rounded-full" />
           ) : null}
         </button>
@@ -556,6 +683,127 @@ export default function IconPicker({
                   <p className="text-[10px] text-foreground/30 mt-1.5">Søg i 600+ emoji</p>
                   <p className="text-[10px] text-foreground/20">Brug engelske søgeord for bedste resultater</p>
                 </div>
+              )}
+            </div>
+          </>
+        ) : (
+          /* ── AI Generator tab ── */
+          <>
+            <div className="space-y-2.5">
+              <div>
+                <label className="block text-[11px] font-medium text-foreground/50 mb-1">
+                  Beskriv ikonet du vil lave:
+                </label>
+                <input
+                  className="w-full rounded-lg border border-border bg-foreground/[0.02] px-3 py-2 text-sm placeholder:text-foreground/30 focus:outline-none focus:ring-2 focus:ring-accent/20 focus:border-accent/40 transition-colors"
+                  placeholder="Fx 'Rød tomat', 'Lavendel busk', 'Grøn skovhave'..."
+                  value={genPrompt}
+                  onChange={(e) => setGenPrompt(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" && !genLoading) generateIcon();
+                  }}
+                  autoFocus
+                />
+              </div>
+
+              <div>
+                <label className="block text-[11px] font-medium text-foreground/50 mb-1">
+                  Upload foto (valgfrit):
+                </label>
+                <div className="flex items-center gap-2">
+                  <input
+                    ref={genFileRef}
+                    type="file"
+                    accept="image/*"
+                    capture="environment"
+                    className="hidden"
+                    onChange={handleGenImageUpload}
+                  />
+                  <button
+                    type="button"
+                    className="flex-1 rounded-lg border border-dashed border-border px-3 py-2 text-xs text-foreground/40 hover:border-accent/40 hover:text-foreground/60 hover:bg-foreground/[0.02] transition-colors text-center"
+                    onClick={() => genFileRef.current?.click()}
+                  >
+                    {genImagePreview ? "📷 Skift foto" : "📷 Vælg foto / tag billede"}
+                  </button>
+                  {genImagePreview && (
+                    <button
+                      type="button"
+                      className="shrink-0 rounded-md px-2 py-1.5 text-[10px] text-foreground/30 hover:text-red-500 hover:bg-red-50 transition-colors"
+                      onClick={() => { setGenImage(null); setGenImagePreview(null); }}
+                    >
+                      ✕
+                    </button>
+                  )}
+                </div>
+                {genImagePreview && (
+                  <div className="mt-1.5 rounded-lg border border-border overflow-hidden">
+                    <img
+                      src={genImagePreview}
+                      alt="Uploaded"
+                      className="w-full h-20 object-cover"
+                    />
+                  </div>
+                )}
+              </div>
+
+              <button
+                type="button"
+                disabled={genLoading || (!genPrompt.trim() && !genImage)}
+                className="w-full rounded-lg bg-accent px-3 py-2.5 text-sm font-semibold text-white shadow-sm hover:brightness-110 disabled:opacity-40 disabled:shadow-none transition-all flex items-center justify-center gap-2"
+                onClick={generateIcon}
+              >
+                {genLoading ? (
+                  <><span className="animate-spin">⏳</span> Genererer ikon…</>
+                ) : (
+                  <>🎨 Generér ikon med AI</>
+                )}
+              </button>
+
+              {genError && (
+                <p className="text-xs text-red-500 text-center">{genError}</p>
+              )}
+
+              {genResult && (
+                <div className="rounded-lg border border-green-200 bg-green-50/50 p-3 space-y-2">
+                  <p className="text-[11px] font-medium text-green-700 text-center">
+                    ✅ Ikon genereret!
+                  </p>
+                  <div className="flex justify-center">
+                    <img
+                      src={genResult}
+                      alt="Genereret ikon"
+                      className="w-16 h-16 rounded-lg border border-green-200 object-contain bg-white shadow-sm"
+                    />
+                  </div>
+                  <button
+                    type="button"
+                    className="w-full rounded-lg bg-green-600 px-3 py-2 text-xs font-semibold text-white hover:bg-green-700 transition-colors"
+                    onClick={() => {
+                      pick(genResult!);
+                      setGenPrompt("");
+                      setGenImage(null);
+                      setGenImagePreview(null);
+                      setGenResult(null);
+                    }}
+                  >
+                    ✓ Brug dette ikon
+                  </button>
+                  <button
+                    type="button"
+                    className="w-full rounded-md border border-border bg-background px-3 py-1.5 text-[11px] text-foreground/50 hover:bg-foreground/5 transition-colors"
+                    onClick={() => setGenResult(null)}
+                  >
+                    Prøv igen
+                  </button>
+                </div>
+              )}
+
+              {!genResult && !genLoading && (
+                <p className="text-[10px] text-foreground/25 text-center leading-relaxed">
+                  AI genererer et unikt ikon baseret på din beskrivelse.
+                  Du kan også uploade et foto af planten for bedre resultat.
+                </p>
               )}
             </div>
           </>

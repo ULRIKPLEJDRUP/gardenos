@@ -38,6 +38,26 @@ export default function AdminPage() {
   const [passwordEditId, setPasswordEditId] = useState<string | null>(null);
   const [newPassword, setNewPassword] = useState("");
 
+  // Invite user state
+  const [inviteEmail, setInviteEmail] = useState("");
+  const [inviteName, setInviteName] = useState("");
+  const [inviting, setInviting] = useState(false);
+  const [inviteResult, setInviteResult] = useState<{
+    email: string;
+    password: string;
+    name: string;
+    emailSent: boolean;
+  } | null>(null);
+  const [inviteCopied, setInviteCopied] = useState(false);
+  const [inviteMessage, setInviteMessage] = useState("");
+
+  const PRODUCTION_URL = "https://gardenos-nu.vercel.app";
+
+  const buildInviteMessage = (name: string, email: string, password: string) => {
+    const greeting = name ? `Hej ${name}!` : "Hej!";
+    return `${greeting}\n\nDu er blevet inviteret til GardenOS 🌱 – din digitale haveplanlægger, hvor du kan kortlægge din have, holde styr på dine planter og få overblik over sæsonens opgaver.\n\nLog ind med:\n📧 Email: ${email}\n🔑 Adgangskode: ${password}\n\n👉 Log ind her: ${PRODUCTION_URL}/login\n\nVi anbefaler at ændre din adgangskode efter første login.`;
+  };
+
   // Feedback state
   type AdminFeedback = {
     id: string;
@@ -133,6 +153,49 @@ export default function AdminPage() {
   const revokeCode = async (id: string) => {
     await fetch(`/api/admin/invite-codes?id=${id}`, { method: "DELETE" });
     await fetchCodes();
+  };
+
+  const inviteUser = async () => {
+    if (!inviteEmail.trim()) return;
+    setInviting(true);
+    setInviteResult(null);
+    setInviteCopied(false);
+    try {
+      const res = await fetch("/api/admin/invite-user", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          email: inviteEmail.trim(),
+          name: inviteName.trim() || undefined,
+        }),
+      });
+      const data = await res.json();
+      if (res.ok) {
+        const resultName = inviteName.trim();
+        setInviteResult({
+          email: data.email,
+          password: data.password,
+          name: resultName,
+          emailSent: data.emailSent,
+        });
+        setInviteMessage(buildInviteMessage(resultName, data.email, data.password));
+        setInviteEmail("");
+        setInviteName("");
+        await fetchUsers();
+      } else {
+        alert(data.error || "Kunne ikke oprette brugeren");
+      }
+    } catch {
+      alert("Netværksfejl – prøv igen");
+    }
+    setInviting(false);
+  };
+
+  const copyInviteDetails = () => {
+    if (!inviteMessage) return;
+    navigator.clipboard.writeText(inviteMessage);
+    setInviteCopied(true);
+    setTimeout(() => setInviteCopied(false), 3000);
   };
 
   const deleteUser = async (user: AdminUser) => {
@@ -306,6 +369,120 @@ export default function AdminPage() {
           >
             ← Tilbage til kort
           </Link>
+        </div>
+
+        {/* ── Invite user section ── */}
+        <div className="rounded-xl border-2 border-green-200 bg-gradient-to-br from-green-50 to-white p-6 shadow-sm">
+          <h2 className="text-lg font-semibold text-gray-900">
+            📧 Invitér ny bruger
+          </h2>
+          <p className="mt-1 text-sm text-gray-500">
+            Opret en bruger og send login-detaljer direkte via email.
+          </p>
+          <div className="mt-4 flex flex-wrap items-end gap-3">
+            <div className="flex-1 min-w-[200px]">
+              <label className="block text-xs font-medium text-gray-600">
+                Email *
+              </label>
+              <input
+                type="email"
+                className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-green-400 focus:outline-none focus:ring-1 focus:ring-green-400"
+                placeholder="bruger@email.dk"
+                value={inviteEmail}
+                onChange={(e) => setInviteEmail(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") inviteUser();
+                }}
+              />
+            </div>
+            <div className="min-w-[140px]">
+              <label className="block text-xs font-medium text-gray-600">
+                Navn (valgfrit)
+              </label>
+              <input
+                type="text"
+                className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-green-400 focus:outline-none focus:ring-1 focus:ring-green-400"
+                placeholder="Fornavn"
+                value={inviteName}
+                onChange={(e) => setInviteName(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") inviteUser();
+                }}
+              />
+            </div>
+            <button
+              type="button"
+              onClick={inviteUser}
+              disabled={inviting || !inviteEmail.trim()}
+              className="rounded-lg bg-green-600 px-5 py-2 text-sm font-semibold text-white hover:bg-green-700 disabled:opacity-50 transition-colors"
+            >
+              {inviting ? "Opretter…" : "✉️ Invitér"}
+            </button>
+          </div>
+
+          {/* Invite result card */}
+          {inviteResult && (
+            <div className="mt-4 rounded-lg border border-green-200 bg-white p-4">
+              <div className="flex items-start gap-3">
+                <span className="text-2xl">{inviteResult.emailSent ? "✅" : "⚠️"}</span>
+                <div className="flex-1">
+                  <p className="text-sm font-medium text-gray-900">
+                    Bruger oprettet: {inviteResult.email}
+                  </p>
+                  {inviteResult.emailSent ? (
+                    <p className="text-xs text-green-600 mt-1">
+                      📨 Invitation sendt via email!
+                    </p>
+                  ) : (
+                    <p className="text-xs text-amber-600 mt-1">
+                      Email ikke konfigureret – rediger beskeden nedenfor og kopiér den til SMS, mail el. besked.
+                    </p>
+                  )}
+
+                  {/* Redigerbar besked */}
+                  <div className="mt-3">
+                    <label className="block text-xs font-medium text-gray-500 mb-1">
+                      ✏️ Rediger besked inden du kopierer:
+                    </label>
+                    <textarea
+                      className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm font-mono leading-relaxed text-gray-700 focus:border-green-400 focus:outline-none focus:ring-1 focus:ring-green-400 resize-y"
+                      rows={10}
+                      value={inviteMessage}
+                      onChange={(e) => setInviteMessage(e.target.value)}
+                    />
+                  </div>
+
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      className={`rounded-md px-3 py-1.5 text-xs font-medium transition-all ${
+                        inviteCopied
+                          ? "bg-green-100 text-green-700 border border-green-300"
+                          : "bg-green-600 text-white hover:bg-green-700"
+                      }`}
+                      onClick={copyInviteDetails}
+                    >
+                      {inviteCopied ? "✓ Kopieret!" : "📋 Kopiér besked"}
+                    </button>
+                    <button
+                      type="button"
+                      className="rounded-md border border-gray-200 bg-white px-3 py-1.5 text-xs text-gray-500 hover:bg-gray-50"
+                      onClick={() => setInviteMessage(buildInviteMessage(inviteResult.name, inviteResult.email, inviteResult.password))}
+                    >
+                      ↺ Nulstil tekst
+                    </button>
+                    <button
+                      type="button"
+                      className="rounded-md border border-gray-200 bg-white px-3 py-1.5 text-xs text-gray-400 hover:bg-gray-50"
+                      onClick={() => { setInviteResult(null); setInviteMessage(""); }}
+                    >
+                      Luk
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
         </div>
 
         {/* Generate section */}

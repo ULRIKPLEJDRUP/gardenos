@@ -2334,19 +2334,25 @@ function resolveFeatureIcon(props: GardenFeatureProperties | undefined): string 
 }
 
 // ---------------------------------------------------------------------------
-// Marker icon – supports optional emoji rendering
+// Marker icon – supports optional emoji rendering + custom image icons
 // ---------------------------------------------------------------------------
 function markerIcon(kind: GardenFeatureKind | undefined, selected: boolean, groupHighlight?: boolean, emoji?: string): L.DivIcon {
-  // If there's an emoji, render it as an HTML div icon
+  // If there's an emoji or custom icon, render it as an HTML div icon
   if (emoji) {
+    const isImageIcon = emoji.startsWith("data:image/");
     const emojiSize = selected ? 22 : 18;
+    const imgSize = selected ? 28 : 24;
+    const size = isImageIcon ? imgSize : emojiSize;
     const selectedClass = selected ? "gardenos-emoji-marker--selected" : "";
     const groupClass = groupHighlight ? "gardenos-emoji-marker--group" : "";
+    const html = isImageIcon
+      ? `<img src="${emoji}" style="width:${imgSize}px;height:${imgSize}px;object-fit:contain;border-radius:4px;display:block;" />`
+      : `<span style="font-size:${emojiSize}px;line-height:1;display:flex;align-items:center;justify-content:center;width:100%;height:100%">${emoji}</span>`;
     return L.divIcon({
       className: `gardenos-emoji-marker ${selectedClass} ${groupClass}`.trim(),
-      html: `<span style="font-size:${emojiSize}px;line-height:1;display:flex;align-items:center;justify-content:center;width:100%;height:100%">${emoji}</span>`,
-      iconSize: [emojiSize + 8, emojiSize + 8],
-      iconAnchor: [Math.round((emojiSize + 8) / 2), Math.round((emojiSize + 8) / 2)],
+      html,
+      iconSize: [size + 8, size + 8],
+      iconAnchor: [Math.round((size + 8) / 2), Math.round((size + 8) / 2)],
     });
   }
 
@@ -4463,9 +4469,12 @@ export function GardenMapClient({ userId }: { userId: string }) {
       if (!rowIcon) rowIcon = "🌱";
 
       // Create marker — identical pattern to edge labels (iconSize [0,0], anchor [0,0])
+      const isImg = rowIcon.startsWith("data:image/");
       const icon = L.divIcon({
         className: "gardenos-row-emoji-overlay",
-        html: `<span>${rowIcon}</span>`,
+        html: isImg
+          ? `<img src="${rowIcon}" style="width:20px;height:20px;object-fit:contain;border-radius:3px;" />`
+          : `<span>${rowIcon}</span>`,
         iconSize: [0, 0],
         iconAnchor: [0, 0],
       });
@@ -8085,7 +8094,7 @@ export function GardenMapClient({ userId }: { userId: string }) {
           <div className="mt-3 grid grid-cols-2 gap-2">
             <div className="col-span-2">
               <label className="block text-[11px] font-semibold text-foreground/60 uppercase tracking-wide">Kategori</label>
-              <div className="mt-1.5 grid grid-cols-3 gap-1">
+              <div className="mt-1.5 grid grid-cols-3 gap-1" data-tour="create-categories">
                 {(["area", "seedbed", "row", "container", "element", "condition"] as const).map((cat) => (
                   <button
                     key={cat}
@@ -8136,6 +8145,7 @@ export function GardenMapClient({ userId }: { userId: string }) {
                       <button
                         key={opt.mode}
                         type="button"
+                        data-tour={opt.mode === "planter" ? "create-element-plants" : opt.mode === "el" ? "create-element-infra" : undefined}
                         className={`rounded-lg border px-3 py-2 text-xs text-left transition-all ${
                           elementMode === opt.mode
                             ? "border-accent/40 bg-accent-light text-accent-dark font-semibold shadow-sm"
@@ -8459,6 +8469,7 @@ export function GardenMapClient({ userId }: { userId: string }) {
               type="button"
               className="col-span-2 rounded-lg bg-accent px-3 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-accent-dark transition-colors"
               onClick={beginDrawSelectedType}
+              data-tour="create-draw-btn"
             >
               {createPalette === "element"
                 ? elementMode === "planter"
@@ -11149,11 +11160,12 @@ export function GardenMapClient({ userId }: { userId: string }) {
 
             {/* Plant list */}
             <div className="max-h-[60vh] space-y-1.5 overflow-y-auto sidebar-scroll">
-              {filteredPlants.map((plant) => {
+              {filteredPlants.map((plant, _plantIdx) => {
                 const isExpanded = expandedPlantId === plant.id;
                 return (
                   <div
                     key={plant.id}
+                    {...(_plantIdx === 0 ? { "data-tour": "plant-card" } : {})}
                     className={`rounded-lg border transition-all ${
                       isExpanded
                         ? "border-accent/30 bg-accent-light/50 shadow-sm"
@@ -11748,6 +11760,7 @@ export function GardenMapClient({ userId }: { userId: string }) {
                     <button
                       type="button"
                       className="mt-2 w-full rounded-lg bg-accent px-3 py-2.5 text-xs text-white font-semibold hover:bg-accent/90 transition-colors shadow-sm"
+                      data-tour="scan-save"
                       onClick={() => {
                         const speciesName = String(scanResult.speciesName || scanResult.name || "Ukendt plante");
                         const speciesId = speciesName.toLowerCase().replace(/[^a-zæøåü0-9]+/g, "-").replace(/-+$/, "");
@@ -12561,7 +12574,7 @@ export function GardenMapClient({ userId }: { userId: string }) {
 
             {/* ── Weather card ── */}
             {weatherData ? (
-              <div className="mb-2 rounded-lg border border-sky-200/60 bg-gradient-to-r from-sky-50 to-blue-50 overflow-hidden">
+              <div className="mb-2 rounded-lg border border-sky-200/60 bg-gradient-to-r from-sky-50 to-blue-50 overflow-hidden" data-tour="weather-card">
                 <button
                   type="button"
                   className="w-full flex items-center justify-between px-2.5 py-1.5 text-left hover:bg-sky-100/30 transition-colors"
@@ -12665,7 +12678,7 @@ export function GardenMapClient({ userId }: { userId: string }) {
             ) : null}
 
             {/* Persona selector */}
-            <div className="mb-2">
+            <div className="mb-2" data-tour="chat-personas">
               <label className="block text-[10px] font-semibold text-foreground/50 uppercase tracking-wide mb-1">
                 Vælg rådgiver
               </label>
@@ -12751,6 +12764,7 @@ export function GardenMapClient({ userId }: { userId: string }) {
                       {msg.role === "assistant" && msg.content && !chatLoading && (
                         <button
                           type="button"
+                          data-tour="chat-save-task"
                           className="mt-0.5 text-[9px] text-foreground/30 hover:text-violet-500 transition-colors flex items-center gap-0.5"
                           onClick={() => {
                             // Parse AI response → clean title (first line), stripped description, auto-extracted month

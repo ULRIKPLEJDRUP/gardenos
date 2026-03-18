@@ -10,107 +10,180 @@ interface TourStep {
 }
 
 const STEPS: TourStep[] = [
+  // ── 1 · Velkommen ──────────────────────────────────────────
   {
     target: "map-area",
     title: "🌿 Velkommen til GardenOS!",
-    body: "Lad os vise dig rundt i appen. Dit interaktive havekort er i centrum — zoom, panorer og klik på elementer.",
+    body: "Dit interaktive havekort er i centrum — zoom, panorer og klik. Lad os vise dig rundt!",
     position: "bottom",
   },
+  // ── 2 · Toolbar ────────────────────────────────────────────
   {
     target: "toolbar",
     title: "🛠️ Værktøjslinjen",
-    body: "Her finder du Markér, Redigér og Fortryd — dine vigtigste redskaber til at arbejde med kortet.",
+    body: "Her finder du Markér, Redigér og Fortryd (Ctrl+Z). Markér lader dig vælge elementer, Redigér aktiverer flytning og formændring.",
     position: "bottom",
   },
+  // ── 3 · Adressesøgning ────────────────────────────────────
+  {
+    target: "address-search",
+    title: "🔍 Find din have",
+    body: "Skriv din adresse og zoom direkte til din grund. Gem den som bogmærke, så du hurtigt vender tilbage.",
+    position: "bottom",
+  },
+  // ── 4 · Opret-fanen ───────────────────────────────────────
   {
     target: "tab-create",
     title: "＋ Opret elementer",
-    body: "Tilføj bede, træer, hække, stier, bygninger og meget mere til dit havekort.",
+    body: "Her starter du med at tegne din have! Tryk for at åbne opret-panelet med alle elementtyper.",
     position: "top",
   },
+  // ── 5 · Opret: Kategorier ─────────────────────────────────
+  {
+    target: "create-categories",
+    title: "📐 Vælg en kategori",
+    body: "Vælg mellem Område (drivhus, køkkenhave), Såbed, Rækker, Container (krukke, højbed), Element (planter, el, vand, lys) og Særlige forhold (skygge, vind).",
+    position: "right",
+  },
+  // ── 6 · Opret: Tegn ───────────────────────────────────────
+  {
+    target: "create-draw-btn",
+    title: "✎ Tegn på kortet",
+    body: "Vælg en type og tryk 'Tegn område'. Klik på kortet for at sætte hjørner — dobbeltklik afslutter polygonen. Kortet udregner automatisk areal og dimensioner.",
+    position: "right",
+  },
+  // ── 7 · Opret: Planter ────────────────────────────────────
+  {
+    target: "create-element-plants",
+    title: "🌱 Tilføj planter",
+    body: "Under Element → Planter kan du søge i 180+ arter, vælge en sort og placere den på kortet. Planten arver automatisk dyrkningsdata, sæsonkalender og naboskab.",
+    position: "right",
+  },
+  // ── 8 · Opret: Infrastruktur ──────────────────────────────
+  {
+    target: "create-element-infra",
+    title: "⚡💧💡 Infrastruktur",
+    body: "Tegn el-ledninger, vandrør, haveslanger, sprinklere, lamper og solceller. Alt kan redigeres bagefter.",
+    position: "right",
+  },
+  // ── 9 · Indhold ───────────────────────────────────────────
   {
     target: "tab-content",
     title: "◉ Indhold & detaljer",
-    body: "Når du vælger et element på kortet, kan du se og redigere dets egenskaber her.",
+    body: "Vælg et element på kortet, og se alle dets egenskaber her — navn, type, mål, planter og konflikter. Redigér direkte i panelet.",
     position: "top",
   },
+  // ── 10 · Plantebibliotek ──────────────────────────────────
   {
     target: "tab-plants",
     title: "🌱 Plantebibliotek",
-    body: "Søg blandt hundredvis af planter med dyrkningsinfo, sæsonkalender og naboskabsdata.",
+    body: "Søg blandt 180+ arter og 500+ sorter — med sæsonkalender, næringsinfo, naboskab, sygdomme og dyrkningsråd. Du kan også oprette egne planter.",
     position: "top",
   },
+  // ── 11 · Plantebibliotek: Detaljer ────────────────────────
+  {
+    target: "plant-card",
+    title: "📋 Plantekort",
+    body: "Klik på en plante for at se ALT: familie, livscyklus, lys- og vandbehov, afstand, jordtype, såtid, høsttid, smag, ernæring, skadedyr og gode/dårlige naboer.",
+    position: "left",
+  },
+  // ── 12 · Scan & identificér ───────────────────────────────
   {
     target: "tab-scan",
     title: "📷 Scan & identificér",
-    body: "Tag et billede af en plante, og lad AI'en identificere arten og foreslå placering.",
+    body: "To tilstande: 🌱 Frøpose — tag foto af en frøpose og AI'en aflæser art, sort og dyrkningsdata. 🔍 Identificér — tag foto af en plante og få artsbestemmelse.",
     position: "top",
   },
+  // ── 13 · Scan: Gem resultat ───────────────────────────────
+  {
+    target: "scan-save",
+    title: "💾 Gem scanningsresultat",
+    body: "Når AI'en har identificeret en plante, kan du gemme den direkte i dit plantebibliotek — eller finde den eksisterende art og tilføje den til et bed.",
+    position: "left",
+  },
+  // ── 14 · AI-rådgiver ──────────────────────────────────────
+  {
+    target: "tab-chat",
+    title: "💬 AI-haverådgiver",
+    body: "Din personlige haverådgiver! Stil spørgsmål om din have og få skræddersyede svar. AI'en kender dit kort, dine planter og det aktuelle vejr.",
+    position: "top",
+  },
+  // ── 15 · AI: Personaer ────────────────────────────────────
+  {
+    target: "chat-personas",
+    title: "🎭 Vælg rådgiver-persona",
+    body: "Skift mellem 5 ekspertprofiler: 🌿 Have-ekspert, 🌳 Skovhave-specialist, 🚜 Traditionel, 🌱 Økologisk og 🧒 Børnevenlig — svarene tilpasses automatisk.",
+    position: "left",
+  },
+  // ── 16 · AI: Gem som opgave ───────────────────────────────
+  {
+    target: "chat-save-task",
+    title: "📋 Gem svar som opgave",
+    body: "Får du et godt råd? Tryk '📋 Gem som opgave' på svaret, og det havner direkte i din opgaveliste med dato og beskrivelse.",
+    position: "left",
+  },
+  // ── 17 · Opgaver ──────────────────────────────────────────
   {
     target: "tab-tasks",
-    title: "📋 Opgaver",
-    body: "Hold styr på haveopgaver — vanding, beskæring, såning, gødskning og mere.",
+    title: "📋 Opgavelisten",
+    body: "Alle haveopgaver samlet ét sted — vanding, beskæring, såning, gødskning. Opret manuelt eller gem fra AI-rådgiveren. Kryds af når du er færdig!",
     position: "top",
   },
+  // ── 18 · Årshjul ──────────────────────────────────────────
   {
     target: "tab-calendar",
     title: "📅 Årshjulet",
-    body: "Se hvornår du skal så, plante ud og høste — visualiseret måned for måned.",
+    body: "Et visuelt årshjul viser hvornår du skal forspire, så, plante ud og høste — måned for måned — baseret på planterne i din have.",
     position: "top",
   },
-  {
-    target: "tab-chat",
-    title: "💬 AI-rådgiver",
-    body: "Stil spørgsmål om din have og få skræddersyede råd fra AI'en baseret på dit kort.",
-    position: "top",
-  },
+  // ── 19 · Konflikter ───────────────────────────────────────
   {
     target: "tab-conflicts",
-    title: "⚡ Konflikter",
-    body: "GardenOS advarer dig automatisk, når planter ikke trives sammen — se dem her.",
+    title: "⚡ Automatisk konfliktdetektion",
+    body: "GardenOS overvåger din have i realtid: planter for tæt? Dårlige naboer? For meget skygge? Forkert lag? Du får advarsler og løsningsforslag.",
     position: "top",
   },
+  // ── 20 · Grupper ──────────────────────────────────────────
   {
     target: "tab-groups",
     title: "⊞ Grupper",
-    body: "Bind elementer sammen i grupper, så du kan flytte og administrere dem samlet.",
+    body: "Shift+klik på flere elementer, og tryk 'Gruppér' i toolbaren. Grupper kan flyttes, omdøbes og opløses samlet. Perfekt til bede med flere planter.",
     position: "top",
   },
+  // ── 21 · Visning & lag ────────────────────────────────────
   {
     target: "tab-view",
-    title: "👁 Visning",
-    body: "Skjul eller vis lag, bogmærker og steder — tilpas kortet til dit behov.",
+    title: "👁 Visning & kortlag",
+    body: "Fire faner: 📍 Steder (bogmærker), 🗺️ Baggrund (satellit, matrikel, jordart, terræn), 👁 Synlighed (vis/skjul elementtyper) og 📌 Ankre (GPS-positionering).",
     position: "top",
   },
+  // ── 22 · Vejr ─────────────────────────────────────────────
   {
-    target: "address-search",
-    title: "🔍 Adressesøgning",
-    body: "Find din adresse og zoom direkte dertil. Du kan også gemme steder som bogmærker.",
-    position: "bottom",
+    target: "weather-card",
+    title: "🌤️ Vejrdata",
+    body: "Aktuel temperatur, luftfugtighed, vind og frostvarsel — direkte i rådgiver-fanen. Plus 7-dages prognose og statistik over 30/90/365 dage.",
+    position: "left",
   },
-  {
-    target: "feedback-btn",
-    title: "💡 Feedback",
-    body: "Har du en idé, et spørgsmål eller fundet en fejl? Send det direkte til os herfra.",
-    position: "bottom",
-  },
+  // ── 23 · Alle faner & menu ────────────────────────────────
   {
     target: "sidebar-dropdown",
     title: "▾ Alle faner",
-    body: "Åbn menuen for at se alle faner, genstart rundvisningen eller logge ud.",
+    body: "Kan du ikke finde en fane? Åbn menuen her for at se alle 10 faner, genstart rundvisningen eller logge ud.",
     position: "top",
   },
+  // ── 24 · Tilpas genveje ───────────────────────────────────
   {
     target: "sidebar-settings",
-    title: "⚙️ Tilpas genveje",
-    body: "Vælg hvilke faner der vises i din genvejslinje — og ændr rækkefølgen med træk-og-slip.",
+    title: "⚙️ Tilpas din genvejslinje",
+    body: "Vælg hvilke faner der vises som genveje — og træk-og-slip for at ændre rækkefølgen. Din opsætning gemmes automatisk.",
     position: "top",
   },
+  // ── 25 · Feedback ─────────────────────────────────────────
   {
-    target: "mobile-nav",
-    title: "📱 Mobilnavigation",
-    body: "På mobil finder du dine genveje i bunden af skærmen. Tryk ☰ for at tilpasse dem.",
-    position: "top",
+    target: "feedback-btn",
+    title: "💡 Feedback — vi lytter!",
+    body: "Har du en idé, et spørgsmål eller fundet en fejl? Tryk her og send det direkte til os. Vi læser alt og svarer så hurtigt vi kan. Tak fordi du bruger GardenOS! 🌱",
+    position: "bottom",
   },
 ];
 
