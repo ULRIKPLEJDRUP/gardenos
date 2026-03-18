@@ -522,7 +522,10 @@ export default function IconPicker({
 
   // ── Open state: full picker ──
   return (
-    <div className="rounded-xl border border-border bg-background shadow-xl overflow-hidden max-w-[340px]">
+    <div className="relative">
+    {/* Click-outside overlay */}
+    <div className="fixed inset-0 z-40" onClick={() => { setOpen(false); setSearch(""); setOnlineQuery(""); setShowDefaultConfirm(false); }} />
+    <div className="absolute right-0 top-0 z-50 rounded-xl border border-border bg-background shadow-xl overflow-hidden w-[340px]">
       {/* ── Header with current icon + tabs ── */}
       <div className="flex items-center gap-2 border-b border-border bg-foreground/[0.02] px-3 py-2">
         {value?.startsWith("data:image/") ? (
@@ -1024,6 +1027,7 @@ export default function IconPicker({
           </button>
         </div>
       </div>
+    </div>
     </div>
   );
 }
