@@ -336,7 +336,7 @@ export default function IconPicker({
   compact,
 }: IconPickerProps) {
   const [open, setOpen] = useState(false);
-  const [tab, setTab] = useState<"local" | "online" | "generate">("local");
+  const [tab, setTab] = useState<"local" | "online" | "generate" | "bank">("local");
   const [search, setSearch] = useState("");
   const [activeCategory, setActiveCategory] = useState(0);
   const [customInput, setCustomInput] = useState("");
@@ -357,6 +357,13 @@ export default function IconPicker({
   const [genResult, setGenResult] = useState<string | null>(null);
   const [genError, setGenError] = useState("");
   const genFileRef = useRef<HTMLInputElement>(null);
+
+  // Icon bank
+  const [bankIcons, setBankIcons] = useState<{ id: string; imageData: string; prompt: string }[]>([]);
+  const [bankLoading, setBankLoading] = useState(false);
+  const [bankLoaded, setBankLoaded] = useState(false);
+  const [savingToBank, setSavingToBank] = useState(false);
+  const [savedToBank, setSavedToBank] = useState(false);
 
   const handleGenImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -394,6 +401,42 @@ export default function IconPicker({
       setGenError("Netv\u00e6rksfejl \u2013 pr\u00f8v igen");
     }
     setGenLoading(false);
+  };
+
+  // Load bank icons when bank tab is opened
+  useEffect(() => {
+    if (tab !== "bank" || bankLoaded) return;
+    setBankLoading(true);
+    fetch("/api/icon-bank")
+      .then((res) => res.json())
+      .then((data) => {
+        if (data.icons) setBankIcons(data.icons);
+        setBankLoaded(true);
+      })
+      .catch(() => {})
+      .finally(() => setBankLoading(false));
+  }, [tab, bankLoaded]);
+
+  // Save generated icon to the bank
+  const saveToBank = async (imageData: string, prompt: string) => {
+    setSavingToBank(true);
+    try {
+      const res = await fetch("/api/icon-bank", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ imageData, prompt }),
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setSavedToBank(true);
+        setTimeout(() => setSavedToBank(false), 3000);
+      } else {
+        setGenError(data.error || "Kunne ikke gemme ikon");
+      }
+    } catch {
+      setGenError("Netv\u00e6rksfejl ved gem");
+    }
+    setSavingToBank(false);
   };
 
   // Debounced online search
@@ -550,11 +593,25 @@ export default function IconPicker({
             <span className="absolute bottom-0 left-2 right-2 h-[2px] bg-accent rounded-full" />
           ) : null}
         </button>
+        <button
+          type="button"
+          className={`flex-1 px-3 py-2 text-xs font-medium transition-colors relative ${
+            tab === "bank"
+              ? "text-accent"
+              : "text-foreground/40 hover:text-foreground/60"
+          }`}
+          onClick={() => setTab("bank")}
+        >
+          🏛️ Bank
+          {tab === "bank" ? (
+            <span className="absolute bottom-0 left-2 right-2 h-[2px] bg-accent rounded-full" />
+          ) : null}
+        </button>
       </div>
 
       {/* ── Tab content ── */}
       <div className="p-2.5 space-y-2">
-        {tab === "local" ? (
+        {tab === "local" && (
           <>
             {/* Local search */}
             <div className="relative">
@@ -633,8 +690,9 @@ export default function IconPicker({
               </>
             )}
           </>
-        ) : tab === "online" ? (
-          /* ── Online search tab ── */
+        )}
+
+        {tab === "online" && (
           <>
             <div className="relative">
               <input
@@ -686,8 +744,9 @@ export default function IconPicker({
               )}
             </div>
           </>
-        ) : (
-          /* ── AI Generator tab ── */
+        )}
+
+        {tab === "generate" && (
           <>
             <div className="space-y-2.5">
               <div>
@@ -785,14 +844,27 @@ export default function IconPicker({
                       setGenImage(null);
                       setGenImagePreview(null);
                       setGenResult(null);
+                      setSavedToBank(false);
                     }}
                   >
                     ✓ Brug dette ikon
                   </button>
                   <button
                     type="button"
+                    disabled={savingToBank || savedToBank}
+                    className={`w-full rounded-md border px-3 py-1.5 text-[11px] font-medium transition-colors ${
+                      savedToBank
+                        ? "border-green-300 bg-green-50 text-green-600"
+                        : "border-amber-300 bg-amber-50 text-amber-700 hover:bg-amber-100"
+                    } disabled:opacity-60`}
+                    onClick={() => saveToBank(genResult!, genPrompt.trim() || "AI-genereret ikon")}
+                  >
+                    {savingToBank ? "⏳ Gemmer…" : savedToBank ? "✅ Indsendt til godkendelse" : "🏛️ Gem til ikon-bank"}
+                  </button>
+                  <button
+                    type="button"
                     className="w-full rounded-md border border-border bg-background px-3 py-1.5 text-[11px] text-foreground/50 hover:bg-foreground/5 transition-colors"
-                    onClick={() => setGenResult(null)}
+                    onClick={() => { setGenResult(null); setSavedToBank(false); }}
                   >
                     Prøv igen
                   </button>
@@ -806,6 +878,52 @@ export default function IconPicker({
                 </p>
               )}
             </div>
+          </>
+        )}
+
+        {tab === "bank" && (
+          <>
+            <div className="max-h-48 overflow-y-auto rounded-lg bg-foreground/[0.01] p-1 min-h-[80px]">
+              {bankLoading ? (
+                <div className="flex items-center justify-center py-6 gap-2">
+                  <span className="animate-spin text-sm">⏳</span>
+                  <span className="text-xs text-foreground/40">Henter ikoner…</span>
+                </div>
+              ) : bankIcons.length > 0 ? (
+                <div className="grid grid-cols-5 gap-1">
+                  {bankIcons.map((icon) => (
+                    <button
+                      key={icon.id}
+                      type="button"
+                      className={`flex items-center justify-center rounded-lg p-1 transition-all hover:bg-foreground/[0.08] hover:scale-105 active:scale-95 ${
+                        value === icon.imageData
+                          ? "bg-accent/15 ring-2 ring-accent shadow-sm scale-105"
+                          : ""
+                      }`}
+                      onClick={() => pick(icon.imageData)}
+                      title={icon.prompt}
+                    >
+                      <img
+                        src={icon.imageData}
+                        alt={icon.prompt}
+                        className="w-10 h-10 rounded object-contain"
+                      />
+                    </button>
+                  ))}
+                </div>
+              ) : (
+                <div className="text-center py-6">
+                  <p className="text-xl opacity-30">🏛️</p>
+                  <p className="text-[10px] text-foreground/30 mt-1.5">Ingen godkendte ikoner endnu</p>
+                  <p className="text-[10px] text-foreground/20">Generér et ikon og gem det — admin godkender det</p>
+                </div>
+              )}
+            </div>
+            {bankIcons.length > 0 && (
+              <p className="text-[9px] text-foreground/25 text-center">
+                {bankIcons.length} godkendt{bankIcons.length !== 1 ? "e" : ""} ikon{bankIcons.length !== 1 ? "er" : ""}
+              </p>
+            )}
           </>
         )}
 

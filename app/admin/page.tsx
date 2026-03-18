@@ -23,6 +23,7 @@ type AdminUser = {
   createdAt: string;
   dataKeys: number;
   feedbackEnabled: boolean;
+  maxDesigns: number;
 };
 
 export default function AdminPage() {
@@ -75,6 +76,19 @@ export default function AdminPage() {
   const [adminReplyText, setAdminReplyText] = useState("");
   const [adminReplying, setAdminReplying] = useState(false);
 
+  // Icon bank state
+  type BankIcon = {
+    id: string;
+    imageData: string;
+    prompt: string;
+    status: string;
+    createdAt: string;
+    reviewedAt: string | null;
+    user: { email: string; name: string | null };
+  };
+  const [bankIcons, setBankIcons] = useState<BankIcon[]>([]);
+  const [bankBusy, setBankBusy] = useState<string | null>(null);
+
   const fetchCodes = useCallback(async () => {
     try {
       const res = await fetch("/api/admin/invite-codes");
@@ -105,26 +119,39 @@ export default function AdminPage() {
     }
   }, []);
 
+  const fetchBankIcons = useCallback(async () => {
+    try {
+      const res = await fetch("/api/admin/icon-bank");
+      const data = await res.json();
+      if (data.icons) setBankIcons(data.icons);
+    } catch {
+      /* ignore */
+    }
+  }, []);
+
   useEffect(() => {
     if (status !== "authenticated") return;
     let cancelled = false;
     (async () => {
       setLoading(true);
       try {
-        const [codesRes, usersRes, feedbackRes] = await Promise.all([
+        const [codesRes, usersRes, feedbackRes, bankRes] = await Promise.all([
           fetch("/api/admin/invite-codes"),
           fetch("/api/admin/users"),
           fetch("/api/admin/feedback"),
+          fetch("/api/admin/icon-bank"),
         ]);
-        const [codesData, usersData, feedbackData] = await Promise.all([
+        const [codesData, usersData, feedbackData, bankData] = await Promise.all([
           codesRes.json(),
           usersRes.json(),
           feedbackRes.json(),
+          bankRes.json(),
         ]);
         if (!cancelled) {
           if (codesData.codes) setCodes(codesData.codes);
           if (usersData.users) setUsers(usersData.users);
           if (feedbackData.feedback) setFeedbackItems(feedbackData.feedback);
+          if (bankData.icons) setBankIcons(bankData.icons);
         }
       } catch { /* ignore */ }
       if (!cancelled) setLoading(false);
@@ -269,6 +296,19 @@ export default function AdminPage() {
     } catch {
       alert("Netværksfejl – prøv igen");
     }
+    setBusyUserId(null);
+  };
+
+  const updateMaxDesigns = async (user: AdminUser, newMax: number) => {
+    setBusyUserId(user.id);
+    try {
+      const res = await fetch("/api/admin/users", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: user.id, maxDesigns: newMax }),
+      });
+      if (res.ok) await fetchUsers();
+    } catch { /* ignore */ }
     setBusyUserId(null);
   };
 
@@ -638,6 +678,28 @@ export default function AdminPage() {
                         >
                           💬 {u.feedbackEnabled ? "On" : "Off"}
                         </button>
+                        <div className="flex items-center gap-0.5 rounded-md border border-purple-200 bg-white px-1.5 py-1 text-xs text-purple-600">
+                          <span className="text-[10px] mr-0.5">💾</span>
+                          <button
+                            type="button"
+                            disabled={busy || u.maxDesigns <= 1}
+                            className="w-5 h-5 rounded hover:bg-purple-100 disabled:opacity-30 disabled:cursor-not-allowed text-center leading-5 font-bold"
+                            onClick={() => updateMaxDesigns(u, u.maxDesigns - 1)}
+                            title="Færre designs"
+                          >
+                            −
+                          </button>
+                          <span className="w-5 text-center font-semibold text-[11px]">{u.maxDesigns}</span>
+                          <button
+                            type="button"
+                            disabled={busy || u.maxDesigns >= 20}
+                            className="w-5 h-5 rounded hover:bg-purple-100 disabled:opacity-30 disabled:cursor-not-allowed text-center leading-5 font-bold"
+                            onClick={() => updateMaxDesigns(u, u.maxDesigns + 1)}
+                            title="Flere designs"
+                          >
+                            +
+                          </button>
+                        </div>
                         <button
                           type="button"
                           disabled={busy}
@@ -845,6 +907,165 @@ export default function AdminPage() {
               })}
             </div>
           )}
+        </div>
+
+        {/* ── Icon Bank section ── */}
+        <div className="rounded-xl border border-gray-200 bg-white p-6 shadow-sm">
+          <h2 className="text-lg font-semibold text-gray-900">
+            🏛️ Ikon-bank
+          </h2>
+          <p className="mt-1 text-sm text-gray-500">
+            AI-genererede ikoner indsendt af brugere. Godkend dem for at gøre dem tilgængelige for alle.
+          </p>
+
+          {(() => {
+            const pending = bankIcons.filter((i) => i.status === "pending");
+            const approved = bankIcons.filter((i) => i.status === "approved");
+            const rejected = bankIcons.filter((i) => i.status === "rejected");
+
+            const updateStatus = async (id: string, status: string) => {
+              setBankBusy(id);
+              try {
+                await fetch("/api/admin/icon-bank", {
+                  method: "PATCH",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({ id, status }),
+                });
+                await fetchBankIcons();
+              } catch { /* ignore */ }
+              setBankBusy(null);
+            };
+
+            const deleteIcon = async (id: string) => {
+              setBankBusy(id);
+              try {
+                await fetch(`/api/admin/icon-bank?id=${id}`, { method: "DELETE" });
+                await fetchBankIcons();
+              } catch { /* ignore */ }
+              setBankBusy(null);
+            };
+
+            const renderIconCard = (icon: BankIcon) => (
+              <div
+                key={icon.id}
+                className={`rounded-lg border p-3 flex items-start gap-3 ${
+                  icon.status === "pending"
+                    ? "border-amber-200 bg-amber-50/50"
+                    : icon.status === "approved"
+                    ? "border-green-200 bg-green-50/50"
+                    : "border-red-200 bg-red-50/50"
+                }`}
+              >
+                <img
+                  src={icon.imageData}
+                  alt={icon.prompt}
+                  className="w-14 h-14 rounded-lg border border-gray-200 object-contain bg-white shadow-sm shrink-0"
+                />
+                <div className="flex-1 min-w-0">
+                  <p className="text-xs font-medium text-gray-700 truncate">{icon.prompt}</p>
+                  <p className="text-[10px] text-gray-400 mt-0.5">
+                    af {icon.user.name || icon.user.email} · {new Date(icon.createdAt).toLocaleDateString("da-DK")}
+                  </p>
+                  <div className="flex gap-1.5 mt-2">
+                    {icon.status === "pending" && (
+                      <>
+                        <button
+                          type="button"
+                          disabled={bankBusy === icon.id}
+                          className="rounded-md bg-green-600 px-2.5 py-1 text-[11px] font-semibold text-white hover:bg-green-700 disabled:opacity-50 transition-colors"
+                          onClick={() => updateStatus(icon.id, "approved")}
+                        >
+                          ✓ Godkend
+                        </button>
+                        <button
+                          type="button"
+                          disabled={bankBusy === icon.id}
+                          className="rounded-md bg-red-500 px-2.5 py-1 text-[11px] font-semibold text-white hover:bg-red-600 disabled:opacity-50 transition-colors"
+                          onClick={() => updateStatus(icon.id, "rejected")}
+                        >
+                          ✗ Afvis
+                        </button>
+                      </>
+                    )}
+                    {icon.status === "approved" && (
+                      <button
+                        type="button"
+                        disabled={bankBusy === icon.id}
+                        className="rounded-md border border-red-300 px-2.5 py-1 text-[11px] text-red-600 hover:bg-red-50 disabled:opacity-50 transition-colors"
+                        onClick={() => updateStatus(icon.id, "rejected")}
+                      >
+                        Træk tilbage
+                      </button>
+                    )}
+                    {icon.status === "rejected" && (
+                      <button
+                        type="button"
+                        disabled={bankBusy === icon.id}
+                        className="rounded-md border border-green-300 px-2.5 py-1 text-[11px] text-green-600 hover:bg-green-50 disabled:opacity-50 transition-colors"
+                        onClick={() => updateStatus(icon.id, "approved")}
+                      >
+                        Godkend alligevel
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      disabled={bankBusy === icon.id}
+                      className="rounded-md border border-gray-300 px-2.5 py-1 text-[11px] text-gray-500 hover:bg-gray-50 disabled:opacity-50 transition-colors"
+                      onClick={() => deleteIcon(icon.id)}
+                    >
+                      🗑 Slet
+                    </button>
+                  </div>
+                </div>
+              </div>
+            );
+
+            return (
+              <div className="mt-4 space-y-4">
+                {/* Pending */}
+                {pending.length > 0 && (
+                  <div>
+                    <h3 className="text-sm font-semibold text-amber-700 mb-2">
+                      ⏳ Afventer godkendelse ({pending.length})
+                    </h3>
+                    <div className="space-y-2">
+                      {pending.map(renderIconCard)}
+                    </div>
+                  </div>
+                )}
+
+                {/* Approved */}
+                {approved.length > 0 && (
+                  <div>
+                    <h3 className="text-sm font-semibold text-green-700 mb-2">
+                      ✅ Godkendte ({approved.length})
+                    </h3>
+                    <div className="space-y-2">
+                      {approved.map(renderIconCard)}
+                    </div>
+                  </div>
+                )}
+
+                {/* Rejected */}
+                {rejected.length > 0 && (
+                  <div>
+                    <h3 className="text-sm font-semibold text-red-600 mb-2">
+                      ❌ Afviste ({rejected.length})
+                    </h3>
+                    <div className="space-y-2">
+                      {rejected.map(renderIconCard)}
+                    </div>
+                  </div>
+                )}
+
+                {bankIcons.length === 0 && (
+                  <p className="text-sm text-gray-400 text-center py-6">
+                    Ingen ikoner indsendt endnu. Brugere kan generere og indsende ikoner fra ikonvælgeren.
+                  </p>
+                )}
+              </div>
+            );
+          })()}
         </div>
       </div>
     </div>

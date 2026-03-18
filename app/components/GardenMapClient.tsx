@@ -14,6 +14,7 @@ import {
   getVarietiesForSpecies,
   getInstancesForFeature,
   loadPlantInstances,
+  savePlantInstances,
   addPlantInstance,
   removePlantInstance,
   removeInstancesForFeature,
@@ -58,6 +59,14 @@ import TaskList from "./TaskList";
 import FeedbackPanel from "./FeedbackPanel";
 import GuidedTour from "./GuidedTour";
 import { createTask, parseAiResponse } from "../lib/taskStore";
+import {
+  fetchDesigns,
+  createDesign,
+  updateDesign,
+  deleteDesign,
+  DEFAULT_MAX_DESIGNS,
+  type SavedDesign,
+} from "../lib/designStore";
 import {
   getInfraElementById,
   getInfraElementsForMode,
@@ -3092,7 +3101,7 @@ export function GardenMapClient({ userId }: { userId: string }) {
   const [newKindText, setNewKindText] = useState("");
   const [newKindError, setNewKindError] = useState<string | null>(null);
   const [undoStack, setUndoStack] = useState<UndoSnapshot[]>([]);
-  const [sidebarTab, setSidebarTab] = useState<"create" | "content" | "groups" | "plants" | "view" | "scan" | "chat" | "calendar" | "tasks" | "conflicts">("create");
+  const [sidebarTab, setSidebarTab] = useState<"create" | "content" | "groups" | "plants" | "view" | "scan" | "chat" | "calendar" | "tasks" | "conflicts" | "designs">("create");
   const [conflictFilter, setConflictFilter] = useState<"all" | "spacing" | "bad-companion" | "layer-competition" | "shade">("all");
   const [conflictSortBy, setConflictSortBy] = useState<"severity" | "type" | "distance">("severity");
   const [conflictResolvedIds, setConflictResolvedIds] = useState<Set<string>>(() => {
@@ -3110,6 +3119,30 @@ export function GardenMapClient({ userId }: { userId: string }) {
   // ── Task list state ──
   const [taskVersion, setTaskVersion] = useState(0);
   const [taskSavedFlash, setTaskSavedFlash] = useState<string | false>(false);
+
+  // ── Saved Designs state ──
+  const [savedDesigns, setSavedDesigns] = useState<SavedDesign[]>([]);
+  const [designsLoading, setDesignsLoading] = useState(false);
+  const [designError, setDesignError] = useState<string | null>(null);
+  const [designNewName, setDesignNewName] = useState("");
+  const [designSaving, setDesignSaving] = useState(false);
+  const [designConfirmDelete, setDesignConfirmDelete] = useState<string | null>(null);
+  const [designRenamingId, setDesignRenamingId] = useState<string | null>(null);
+  const [designRenameText, setDesignRenameText] = useState("");
+  const [designLoadedFlash, setDesignLoadedFlash] = useState<string | false>(false);
+  const [userMaxDesigns, setUserMaxDesigns] = useState(DEFAULT_MAX_DESIGNS);
+  const designsLoadedOnce = useRef(false);
+
+  // Auto-load designs when tab first opened
+  useEffect(() => {
+    if (sidebarTab !== "designs" || designsLoadedOnce.current) return;
+    designsLoadedOnce.current = true;
+    setDesignsLoading(true);
+    fetchDesigns()
+      .then((resp) => { setSavedDesigns(resp.designs); setUserMaxDesigns(resp.maxDesigns); })
+      .catch(() => setDesignError("Kunne ikke hente designs"))
+      .finally(() => setDesignsLoading(false));
+  }, [sidebarTab]);
 
   // ── Scan / frøpose-genkendelse state ──
   const [scanMode, setScanMode] = useState<"seed-packet" | "identify">("seed-packet");
@@ -3153,6 +3186,7 @@ export function GardenMapClient({ userId }: { userId: string }) {
     { id: "tasks", icon: "📋", label: "Opgaver" },
     { id: "calendar", icon: "📅", label: "Årshjul" },
     { id: "chat", icon: "💬", label: "Rådgiver" },
+    { id: "designs", icon: "💾", label: "Designs" },
   ];
   const DEFAULT_PINNED: SidebarTabId[] = ["create", "scan", "plants", "content"];
   const PINNED_STORAGE_KEY = "gardenos:mobile:pinnedTabs:v1";
@@ -3750,12 +3784,14 @@ export function GardenMapClient({ userId }: { userId: string }) {
   const [triPlaced, setTriPlaced] = useState(false);
   const [showAnchorHelp, setShowAnchorHelp] = useState(false);
 
+  const addressDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   const searchAddress = useCallback(async (q: string) => {
-    if (!q.trim()) return;
+    if (!q.trim()) { setAddressResults([]); return; }
     setAddressSearching(true);
     try {
       const res = await fetch(
-        `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(q)}&limit=5&countrycodes=dk&addressdetails=1`,
+        `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(q)}&limit=6&countrycodes=dk&addressdetails=1`,
         { headers: { "Accept-Language": "da" } }
       );
       const data = await res.json();
@@ -3763,6 +3799,13 @@ export function GardenMapClient({ userId }: { userId: string }) {
     } catch { setAddressResults([]); }
     setAddressSearching(false);
   }, []);
+
+  // Debounced autocomplete – fires 400ms after the user stops typing
+  const searchAddressDebounced = useCallback((q: string) => {
+    if (addressDebounceRef.current) clearTimeout(addressDebounceRef.current);
+    if (!q.trim() || q.trim().length < 3) { setAddressResults([]); return; }
+    addressDebounceRef.current = setTimeout(() => searchAddress(q), 400);
+  }, [searchAddress]);
 
   const goToLocation = useCallback((lat: number, lon: number, zoom?: number) => {
     const map = mapRef.current;
@@ -3772,7 +3815,7 @@ export function GardenMapClient({ userId }: { userId: string }) {
     setAddressResults([]);
   }, []);
 
-  const addBookmark = useCallback((name: string, emoji?: string, coords?: { lat: number; lon: number; zoom?: number }) => {
+  const addBookmark = useCallback((name: string, emoji?: string, coords?: { lat: number; lon: number; zoom?: number }, favorite?: boolean) => {
     const map = mapRef.current;
     if (!map) return;
     const center: [number, number] = coords ? [coords.lat, coords.lon] : [map.getCenter().lat, map.getCenter().lng];
@@ -3783,7 +3826,7 @@ export function GardenMapClient({ userId }: { userId: string }) {
       center,
       zoom,
       emoji: emoji || "📍",
-      favorite: false,
+      favorite: favorite ?? false,
     };
     setBookmarks((prev) => { const next = [...prev, bm]; saveBookmarks(next); return next; });
   }, []);
@@ -7088,95 +7131,115 @@ export function GardenMapClient({ userId }: { userId: string }) {
           👤 {sessionData?.user?.name || sessionData?.user?.email || ""}
         </div>
         <div className="flex items-center gap-2">
+          {/* ── Favorite bookmark pills (desktop only) ── */}
           <div className="hidden md:flex items-center gap-2 overflow-hidden min-w-0">
-            {/* ── Favorite bookmark pills ── */}
-          {bookmarks.some((b) => b.favorite) ? (
-            <div className="flex items-center gap-1 overflow-x-auto scrollbar-none min-w-0">
-              <span className="text-[10px] text-foreground/40 shrink-0">⭐</span>
-              {bookmarks.filter((b) => b.favorite).map((bm) => (
+            {bookmarks.some((b) => b.favorite) ? (
+              <div className="flex items-center gap-1 overflow-x-auto scrollbar-none min-w-0">
+                <span className="text-[10px] text-foreground/40 shrink-0">⭐</span>
+                {bookmarks.filter((b) => b.favorite).map((bm) => (
+                  <button
+                    key={bm.id}
+                    type="button"
+                    className="shrink-0 rounded-full border border-border bg-white px-2 py-0.5 text-[10px] font-medium hover:bg-accent/10 hover:border-accent/30 transition-all shadow-sm whitespace-nowrap"
+                    onClick={() => goToLocation(bm.center[0], bm.center[1], bm.zoom)}
+                    title={`${bm.name} — zoom ${bm.zoom.toFixed(0)}`}
+                  >
+                    {bm.emoji || "📍"} {bm.name}
+                  </button>
+                ))}
                 <button
-                  key={bm.id}
                   type="button"
-                  className="shrink-0 rounded-full border border-border bg-white px-2 py-0.5 text-[10px] font-medium hover:bg-accent/10 hover:border-accent/30 transition-all shadow-sm whitespace-nowrap"
-                  onClick={() => goToLocation(bm.center[0], bm.center[1], bm.zoom)}
-                  title={`${bm.name} — zoom ${bm.zoom.toFixed(0)}`}
+                  className="shrink-0 rounded-full border border-dashed border-foreground/20 px-1.5 py-0.5 text-[10px] text-foreground/40 hover:border-accent/40 hover:text-accent transition-all"
+                  onClick={() => { setSidebarTab("view"); setViewSubTab("steder"); }}
+                  title="Administrer steder"
                 >
-                  {bm.emoji || "📍"} {bm.name}
+                  ＋
                 </button>
-              ))}
-              <button
-                type="button"
-                className="shrink-0 rounded-full border border-dashed border-foreground/20 px-1.5 py-0.5 text-[10px] text-foreground/40 hover:border-accent/40 hover:text-accent transition-all"
-                onClick={() => { setSidebarTab("view"); setViewSubTab("steder"); }}
-                title="Administrer steder"
-              >
-                ＋
-              </button>
-            </div>
-          ) : null}
-          {bookmarks.some((b) => b.favorite) ? <div className="h-5 w-px bg-border shrink-0" /> : null}
-          {/* ── Address search ── */}
+              </div>
+            ) : null}
+            {bookmarks.some((b) => b.favorite) ? <div className="h-5 w-px bg-border shrink-0" /> : null}
+          </div>
+          {/* ── Address search (visible on ALL devices) ── */}
           <div data-tour="address-search" className="relative shrink-0">
             {showAddressSearch ? (
               <div className="flex items-center gap-1 rounded-md border border-border bg-white px-2 py-1 shadow-sm">
                 <span className="text-xs">🔍</span>
                 <input
                   type="text"
-                  className="w-40 bg-transparent text-xs outline-none placeholder:text-foreground/40"
-                  placeholder="Søg adresse..."
+                  className="w-36 md:w-48 bg-transparent text-xs outline-none placeholder:text-foreground/40"
+                  placeholder="Adresse, by, sted…"
                   value={addressQuery}
-                  onChange={(e) => setAddressQuery(e.target.value)}
-                  onKeyDown={(e) => { if (e.key === "Enter") searchAddress(addressQuery); if (e.key === "Escape") { setShowAddressSearch(false); setAddressResults([]); } }}
+                  onChange={(e) => { setAddressQuery(e.target.value); searchAddressDebounced(e.target.value); }}
+                  onKeyDown={(e) => { if (e.key === "Enter") searchAddress(addressQuery); if (e.key === "Escape") { setShowAddressSearch(false); setAddressResults([]); setAddressQuery(""); } }}
                   autoFocus
                 />
+                {addressSearching && <span className="animate-spin text-[10px]">⏳</span>}
                 <button type="button" className="text-foreground/40 hover:text-foreground/70 text-xs px-0.5" onClick={() => { setShowAddressSearch(false); setAddressResults([]); setAddressQuery(""); }}>✕</button>
               </div>
             ) : (
               <button
                 type="button"
-                className="rounded-md px-2.5 py-1.5 text-xs text-foreground/60 hover:bg-foreground/5 transition-colors flex items-center gap-1"
+                className="rounded-md px-2 md:px-2.5 py-1.5 text-xs text-foreground/60 hover:bg-foreground/5 transition-colors flex items-center gap-1"
                 onClick={() => setShowAddressSearch(true)}
-                title="Søg adresse (Nominatim)"
+                title="Søg adresse"
               >
-                🔍 Søg
+                🔍 <span className="hidden md:inline">Søg</span>
               </button>
             )}
-            {/* Search results dropdown */}
+            {/* Autocomplete results dropdown */}
             {showAddressSearch && (addressSearching || addressResults.length > 0) ? (
-              <div className="absolute top-full right-0 mt-1 w-72 rounded-xl border border-border bg-white shadow-lg z-[9999]">
-                {addressSearching ? <div className="px-3 py-2 text-xs text-foreground/50">Søger…</div> : null}
+              <div className="absolute top-full right-0 mt-1 w-[85vw] md:w-80 max-w-sm rounded-xl border border-border bg-white shadow-xl z-[9999] overflow-hidden">
+                {addressSearching && addressResults.length === 0 ? (
+                  <div className="flex items-center gap-2 px-3 py-3 text-xs text-foreground/50">
+                    <span className="animate-spin">⏳</span> Søger adresser…
+                  </div>
+                ) : null}
                 {addressResults.map((r, i) => {
-                  const shortName = r.display_name.split(",")[0].trim();
+                  const parts = r.display_name.split(",");
+                  const mainName = parts[0].trim();
+                  const subText = parts.slice(1, 3).map(s => s.trim()).join(", ");
                   return (
-                    <div key={i} className="flex items-center gap-1 px-3 py-2 border-b border-border/50 last:border-b-0 hover:bg-accent/5 transition-colors">
+                    <div
+                      key={i}
+                      className="flex items-center gap-2 px-3 py-2.5 border-b border-border/30 last:border-b-0 hover:bg-accent/5 transition-colors cursor-pointer group"
+                    >
                       <button
                         type="button"
-                        className="flex-1 text-left text-xs truncate hover:text-accent transition-colors"
-                        onClick={() => goToLocation(parseFloat(r.lat), parseFloat(r.lon))}
+                        className="flex-1 text-left min-w-0"
+                        onClick={() => {
+                          goToLocation(parseFloat(r.lat), parseFloat(r.lon));
+                          setAddressQuery(mainName);
+                        }}
                       >
-                        📍 {r.display_name}
+                        <div className="text-xs font-medium text-foreground/80 truncate group-hover:text-accent transition-colors">📍 {mainName}</div>
+                        {subText && <div className="text-[10px] text-foreground/40 truncate">{subText}</div>}
                       </button>
                       <button
                         type="button"
-                        className="shrink-0 rounded border border-accent/30 bg-accent/10 px-1.5 py-0.5 text-[10px] text-accent-dark font-medium hover:bg-accent/20 transition-colors"
+                        className="shrink-0 rounded-md border border-accent/30 bg-accent/10 px-2 py-1 text-[10px] text-accent-dark font-semibold hover:bg-accent/20 transition-colors flex items-center gap-0.5"
                         onClick={() => {
                           const lat = parseFloat(r.lat);
                           const lon = parseFloat(r.lon);
                           goToLocation(lat, lon);
-                          addBookmark(shortName, "📍", { lat, lon, zoom: 18 });
+                          addBookmark(mainName, "📍", { lat, lon, zoom: 18 }, true);
                           setAddressResults([]);
                           setShowAddressSearch(false);
+                          setAddressQuery("");
                         }}
-                        title={`Gem "${shortName}"`}
+                        title={`Gem "${mainName}" som favorit i top-baren`}
                       >
-                        + Gem
+                        ⭐ Gem
                       </button>
                     </div>
                   );
                 })}
+                {addressResults.length > 0 && (
+                  <div className="px-3 py-1.5 bg-foreground/[0.02] border-t border-border/30">
+                    <p className="text-[9px] text-foreground/30 text-center">Klik adresse → flyt kort · ⭐ Gem → tilføj til top-bar</p>
+                  </div>
+                )}
               </div>
             ) : null}
-          </div>
           </div>
           <button
             type="button"
@@ -10028,6 +10091,57 @@ export function GardenMapClient({ userId }: { userId: string }) {
                         ) : null}
                       </div>
 
+                      {/* ── Ikon (always visible) ── */}
+                      <div className="border-t border-accent/10 px-2.5 py-2">
+                        {(() => {
+                          const sameKindCount = selectedKind ? (() => {
+                            let count = 0;
+                            featureGroupRef.current?.eachLayer((layer) => {
+                              const lf = (layer as L.Layer & { feature?: GardenFeature }).feature;
+                              if (lf?.properties?.kind === selectedKind) count++;
+                            });
+                            return count;
+                          })() : 0;
+                          return (
+                            <div>
+                              <label className="block text-[10px] font-semibold text-foreground/50 uppercase tracking-wide mb-1">🎨 Ikon</label>
+                              <IconPicker
+                                value={selected.feature.properties?.customIcon ?? ""}
+                                onChange={(emoji) => {
+                                  updateSelectedProperty({ customIcon: emoji });
+                                }}
+                                kindLabel={selectedKindDef?.label}
+                                kindCount={sameKindCount}
+                                onSetKindDefault={selectedKind ? (emoji) => {
+                                  pushUndoSnapshot();
+                                  setKindDefaultIcon(selectedKind!, emoji);
+                                  const group = featureGroupRef.current;
+                                  if (group) {
+                                    group.eachLayer((layer) => {
+                                      const layerWithFeature = layer as L.Layer & { feature?: GardenFeature };
+                                      const lf = layerWithFeature.feature;
+                                      if (lf?.properties?.kind === selectedKind) {
+                                        lf.properties.customIcon = emoji;
+                                      }
+                                    });
+                                  }
+                                  if (selected.feature.properties?.kind === selectedKind) {
+                                    setSelected({
+                                      gardenosId: selected.gardenosId,
+                                      feature: ensureDefaultProperties({
+                                        ...selected.feature,
+                                        properties: { ...selected.feature.properties, customIcon: emoji },
+                                      }),
+                                    });
+                                  }
+                                  rebuildFromGroupAndUpdateSelection();
+                                } : undefined}
+                              />
+                            </div>
+                          );
+                        })()}
+                      </div>
+
                       {/* ── Collapsible species details ── */}
                       <div className="border-t border-accent/10">
                         <button
@@ -10070,54 +10184,6 @@ export function GardenMapClient({ userId }: { userId: string }) {
                                 onChange={(e) => updateSelectedProperty({ plantedAt: e.target.value })}
                               />
                             </div>
-                            {/* ── Ikon (point markers only) ── */}
-                            {selectedIsPoint ? (() => {
-                              const sameKindCount = selectedKind ? (() => {
-                                let count = 0;
-                                featureGroupRef.current?.eachLayer((layer) => {
-                                  const lf = (layer as L.Layer & { feature?: GardenFeature }).feature;
-                                  if (lf?.properties?.kind === selectedKind && layer instanceof L.Marker) count++;
-                                });
-                                return count;
-                              })() : 0;
-                              return (
-                                <div>
-                                  <label className="block text-[10px] font-semibold text-foreground/50 uppercase tracking-wide mb-1">🎨 Ikon</label>
-                                  <IconPicker
-                                    value={selected.feature.properties?.customIcon ?? ""}
-                                    onChange={(emoji) => {
-                                      updateSelectedProperty({ customIcon: emoji });
-                                    }}
-                                    kindLabel={selectedKindDef?.label}
-                                    kindCount={sameKindCount}
-                                    onSetKindDefault={selectedKind ? (emoji) => {
-                                      pushUndoSnapshot();
-                                      setKindDefaultIcon(selectedKind!, emoji);
-                                      const group = featureGroupRef.current;
-                                      if (group) {
-                                        group.eachLayer((layer) => {
-                                          const layerWithFeature = layer as L.Layer & { feature?: GardenFeature };
-                                          const lf = layerWithFeature.feature;
-                                          if (lf?.properties?.kind === selectedKind && layer instanceof L.Marker) {
-                                            lf.properties.customIcon = emoji;
-                                          }
-                                        });
-                                      }
-                                      if (selected.feature.properties?.kind === selectedKind) {
-                                        setSelected({
-                                          gardenosId: selected.gardenosId,
-                                          feature: ensureDefaultProperties({
-                                            ...selected.feature,
-                                            properties: { ...selected.feature.properties, customIcon: emoji },
-                                          }),
-                                        });
-                                      }
-                                      rebuildFromGroupAndUpdateSelection();
-                                    } : undefined}
-                                  />
-                                </div>
-                              );
-                            })() : null}
                             {/* Growing info */}
                             <div className="grid grid-cols-2 gap-x-3 gap-y-1">
                               {linkedSpecies.lifecycle ? (
@@ -12879,58 +12945,92 @@ export function GardenMapClient({ userId }: { userId: string }) {
             {/* ── Sub-tab: Steder ── */}
             {viewSubTab === "steder" ? (
               <div className="space-y-3">
-                {/* Address search inline */}
+                {/* Address search inline with autocomplete */}
                 <div>
                   <label className="block text-[11px] font-semibold text-foreground/60 uppercase tracking-wide mb-1.5">🔍 Adressesøgning</label>
-                  <div className="flex gap-1">
-                    <input
-                      type="text"
-                      className="flex-1 rounded-lg border border-border px-2 py-1.5 text-xs placeholder:text-foreground/30 focus:border-accent/50 focus:outline-none"
-                      placeholder="F.eks. Strandvejen 152, 8410 Rønde"
-                      value={addressQuery}
-                      onChange={(e) => setAddressQuery(e.target.value)}
-                      onKeyDown={(e) => { if (e.key === "Enter") searchAddress(addressQuery); }}
-                    />
-                    <button
-                      type="button"
-                      className="rounded-lg border border-accent/30 bg-accent/10 px-2.5 py-1.5 text-xs text-accent-dark font-medium hover:bg-accent/20 transition-colors"
-                      onClick={() => searchAddress(addressQuery)}
-                    >
-                      {addressSearching ? "…" : "Søg"}
-                    </button>
-                  </div>
-                  {addressResults.length > 0 ? (
-                    <div className="mt-1.5 rounded-lg border border-border bg-white overflow-hidden">
-                      {addressResults.map((r, i) => {
-                        const shortName = r.display_name.split(",")[0].trim();
-                        return (
-                          <div key={i} className="flex items-center gap-1 px-3 py-2 border-b border-border/50 last:border-b-0 hover:bg-accent/5 transition-colors">
-                            <button
-                              type="button"
-                              className="flex-1 text-left text-xs truncate hover:text-accent transition-colors"
-                              onClick={() => { goToLocation(parseFloat(r.lat), parseFloat(r.lon)); }}
-                            >
-                              📍 {r.display_name}
-                            </button>
-                            <button
-                              type="button"
-                              className="shrink-0 rounded border border-accent/30 bg-accent/10 px-1.5 py-0.5 text-[10px] text-accent-dark font-medium hover:bg-accent/20 transition-colors"
-                              onClick={() => {
-                                const lat = parseFloat(r.lat);
-                                const lon = parseFloat(r.lon);
-                                goToLocation(lat, lon);
-                                addBookmark(shortName, "📍", { lat, lon, zoom: 18 });
-                                setAddressResults([]);
-                              }}
-                              title={`Gem "${shortName}" som bogmærke`}
-                            >
-                              + Gem
-                            </button>
-                          </div>
-                        );
-                      })}
+                  <div className="relative">
+                    <div className="flex gap-1">
+                      <div className="relative flex-1">
+                        <input
+                          type="text"
+                          className="w-full rounded-lg border border-border pl-7 pr-2 py-1.5 text-xs placeholder:text-foreground/30 focus:border-accent/50 focus:outline-none focus:ring-2 focus:ring-accent/10 transition-colors"
+                          placeholder="Adresse, by eller sted…"
+                          value={addressQuery}
+                          onChange={(e) => { setAddressQuery(e.target.value); searchAddressDebounced(e.target.value); }}
+                          onKeyDown={(e) => { if (e.key === "Enter") searchAddress(addressQuery); }}
+                        />
+                        <span className="absolute left-2 top-1/2 -translate-y-1/2 text-[10px] text-foreground/30">📍</span>
+                        {addressSearching && <span className="absolute right-2 top-1/2 -translate-y-1/2 animate-spin text-[10px]">⏳</span>}
+                      </div>
+                      <button
+                        type="button"
+                        className="rounded-lg border border-accent/30 bg-accent/10 px-2.5 py-1.5 text-xs text-accent-dark font-medium hover:bg-accent/20 transition-colors"
+                        onClick={() => searchAddress(addressQuery)}
+                      >
+                        {addressSearching ? "…" : "Søg"}
+                      </button>
                     </div>
-                  ) : null}
+                    {addressResults.length > 0 ? (
+                      <div className="mt-1.5 rounded-lg border border-border bg-white overflow-hidden shadow-sm">
+                        {addressResults.map((r, i) => {
+                          const parts = r.display_name.split(",");
+                          const mainName = parts[0].trim();
+                          const subText = parts.slice(1, 3).map(s => s.trim()).join(", ");
+                          return (
+                            <div key={i} className="flex items-center gap-2 px-3 py-2 border-b border-border/30 last:border-b-0 hover:bg-accent/5 transition-colors group">
+                              <button
+                                type="button"
+                                className="flex-1 text-left min-w-0"
+                                onClick={() => {
+                                  goToLocation(parseFloat(r.lat), parseFloat(r.lon));
+                                  setAddressQuery(mainName);
+                                }}
+                              >
+                                <div className="text-xs font-medium text-foreground/80 truncate group-hover:text-accent transition-colors">📍 {mainName}</div>
+                                {subText && <div className="text-[10px] text-foreground/40 truncate">{subText}</div>}
+                              </button>
+                              <div className="shrink-0 flex items-center gap-1">
+                                <button
+                                  type="button"
+                                  className="rounded-md border border-accent/30 bg-accent/10 px-1.5 py-0.5 text-[10px] text-accent-dark font-medium hover:bg-accent/20 transition-colors"
+                                  onClick={() => {
+                                    const lat = parseFloat(r.lat);
+                                    const lon = parseFloat(r.lon);
+                                    goToLocation(lat, lon);
+                                    addBookmark(mainName, "📍", { lat, lon, zoom: 18 });
+                                    setAddressResults([]);
+                                  }}
+                                  title={`Gem "${mainName}"`}
+                                >
+                                  + Gem
+                                </button>
+                                <button
+                                  type="button"
+                                  className="rounded-md border border-amber-300 bg-amber-50 px-1.5 py-0.5 text-[10px] text-amber-700 font-medium hover:bg-amber-100 transition-colors"
+                                  onClick={() => {
+                                    const lat = parseFloat(r.lat);
+                                    const lon = parseFloat(r.lon);
+                                    goToLocation(lat, lon);
+                                    addBookmark(mainName, "📍", { lat, lon, zoom: 18 }, true);
+                                    setAddressResults([]);
+                                    setAddressQuery("");
+                                  }}
+                                  title={`Gem "${mainName}" som favorit i top-baren`}
+                                >
+                                  ⭐ Fastgør
+                                </button>
+                              </div>
+                            </div>
+                          );
+                        })}
+                        <div className="px-3 py-1.5 bg-foreground/[0.02] border-t border-border/30">
+                          <p className="text-[9px] text-foreground/30 text-center">+ Gem = tilføj til steder · ⭐ Fastgør = vis i top-bar</p>
+                        </div>
+                      </div>
+                    ) : addressQuery.trim().length >= 3 && !addressSearching ? (
+                      <p className="mt-1.5 text-[10px] text-foreground/30 text-center">Skriv mere eller tryk Søg…</p>
+                    ) : null}
+                  </div>
                 </div>
 
                 <div className="border-t border-border-light pt-3">
@@ -13625,6 +13725,283 @@ export function GardenMapClient({ userId }: { userId: string }) {
             ) : null}
           </div>
         ) : null}
+
+        {/* ── Saved Designs / Gemte Designs Tab ── */}
+        {sidebarTab === "designs" ? (() => {
+          const loadDesigns = async () => {
+            setDesignsLoading(true);
+            setDesignError(null);
+            try {
+              const resp = await fetchDesigns();
+              setSavedDesigns(resp.designs);
+              setUserMaxDesigns(resp.maxDesigns);
+            } catch (e: unknown) {
+              setDesignError(e instanceof Error ? e.message : "Fejl ved hentning");
+            } finally {
+              setDesignsLoading(false);
+            }
+          };
+
+          const handleSave = async () => {
+            const trimmed = designNewName.trim();
+            if (!trimmed) return;
+            if (savedDesigns.length >= userMaxDesigns) {
+              setDesignError(`Maks ${userMaxDesigns} designs. Slet et først.`);
+              return;
+            }
+            setDesignSaving(true);
+            setDesignError(null);
+            try {
+              const group = featureGroupRef.current;
+              if (!group) return;
+              const layoutJson = JSON.stringify(serializeGroup(group));
+              const plantsJson = JSON.stringify(loadPlantInstances());
+              const d = await createDesign({ name: trimmed, layout: layoutJson, plants: plantsJson });
+              setSavedDesigns((prev) => [d, ...prev]);
+              setDesignNewName("");
+              setDesignLoadedFlash("Gemt!");
+              setTimeout(() => setDesignLoadedFlash(false), 2000);
+            } catch (e: unknown) {
+              setDesignError(e instanceof Error ? e.message : "Fejl");
+            } finally {
+              setDesignSaving(false);
+            }
+          };
+
+          const handleOverwrite = async (id: string) => {
+            setDesignSaving(true);
+            setDesignError(null);
+            try {
+              const group = featureGroupRef.current;
+              if (!group) return;
+              const layoutJson = JSON.stringify(serializeGroup(group));
+              const plantsJson = JSON.stringify(loadPlantInstances());
+              const d = await updateDesign(id, { layout: layoutJson, plants: plantsJson });
+              setSavedDesigns((prev) => prev.map((x) => (x.id === id ? d : x)));
+              setDesignLoadedFlash("Opdateret!");
+              setTimeout(() => setDesignLoadedFlash(false), 2000);
+            } catch (e: unknown) {
+              setDesignError(e instanceof Error ? e.message : "Fejl");
+            } finally {
+              setDesignSaving(false);
+            }
+          };
+
+          const handleLoad = (design: SavedDesign) => {
+            try {
+              const layout = JSON.parse(design.layout);
+              const plants: PlantInstance[] = JSON.parse(design.plants);
+
+              // Apply layout
+              const group = featureGroupRef.current;
+              if (!group) return;
+              group.clearLayers();
+              const geoJsonLayer = L.geoJSON(layout, {
+                onEachFeature: (feature, layer) => {
+                  attachClickHandlerRef.current(layer, feature as GardenFeature);
+                },
+              });
+              geoJsonLayer.eachLayer((layer) => group.addLayer(layer));
+              window.localStorage.setItem(userKey(STORAGE_LAYOUT_KEY), JSON.stringify(layout));
+              markDirty(STORAGE_LAYOUT_KEY);
+              setLayoutForContainment(layout);
+
+              // Apply plants
+              savePlantInstances(plants);
+              setPlantInstancesVersion((v) => v + 1);
+
+              setSelectedAndFocus(null);
+              setDesignLoadedFlash(`"${design.name}" indlæst`);
+              setTimeout(() => setDesignLoadedFlash(false), 2500);
+            } catch {
+              setDesignError("Kunne ikke indlæse design");
+            }
+          };
+
+          const handleDelete = async (id: string) => {
+            try {
+              await deleteDesign(id);
+              setSavedDesigns((prev) => prev.filter((d) => d.id !== id));
+              setDesignConfirmDelete(null);
+            } catch (e: unknown) {
+              setDesignError(e instanceof Error ? e.message : "Fejl");
+            }
+          };
+
+          const handleRename = async (id: string) => {
+            const trimmed = designRenameText.trim();
+            if (!trimmed) return;
+            try {
+              const d = await updateDesign(id, { name: trimmed });
+              setSavedDesigns((prev) => prev.map((x) => (x.id === id ? d : x)));
+              setDesignRenamingId(null);
+            } catch (e: unknown) {
+              setDesignError(e instanceof Error ? e.message : "Fejl");
+            }
+          };
+
+          return (
+            <div className="mt-3 space-y-3">
+              <div className="flex items-center justify-between">
+                <h3 className="text-sm font-semibold text-foreground/80">💾 Gemte Designs</h3>
+                <button
+                  type="button"
+                  className="text-[10px] text-accent hover:text-accent/80 font-medium"
+                  onClick={loadDesigns}
+                  disabled={designsLoading}
+                >
+                  {designsLoading ? "Henter…" : "↻ Opdater"}
+                </button>
+              </div>
+
+              <p className="text-[11px] text-foreground/50">
+                Gem dit nuværende havedesign og eksperimenter frit. Du kan gemme op til {userMaxDesigns} designs.
+              </p>
+
+              {/* Flash message */}
+              {designLoadedFlash && (
+                <div className="rounded-lg bg-green-100 border border-green-200 px-3 py-1.5 text-[11px] text-green-700 font-medium text-center animate-pulse">
+                  ✓ {designLoadedFlash}
+                </div>
+              )}
+
+              {/* Error */}
+              {designError && (
+                <div className="rounded-lg bg-red-50 border border-red-200 px-3 py-1.5 text-[11px] text-red-600">
+                  {designError}
+                  <button type="button" className="ml-2 underline" onClick={() => setDesignError(null)}>Luk</button>
+                </div>
+              )}
+
+              {/* Save current as new */}
+              <div className="rounded-lg border border-border bg-background p-3 space-y-2">
+                <label className="block text-[11px] font-semibold text-foreground/60 uppercase tracking-wide">
+                  Gem nuværende som nyt design
+                </label>
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    placeholder={`Navngiv design (f.eks. "Forår 2026")`}
+                    className="flex-1 rounded-md border border-border px-2 py-1.5 text-xs bg-background focus:border-accent focus:outline-none"
+                    value={designNewName}
+                    onChange={(e) => setDesignNewName(e.target.value)}
+                    onKeyDown={(e) => e.key === "Enter" && handleSave()}
+                    maxLength={40}
+                  />
+                  <button
+                    type="button"
+                    className="rounded-md bg-accent text-white px-3 py-1.5 text-xs font-medium hover:bg-accent/90 disabled:opacity-50 disabled:cursor-not-allowed transition-colors whitespace-nowrap"
+                    onClick={handleSave}
+                    disabled={designSaving || !designNewName.trim() || savedDesigns.length >= userMaxDesigns}
+                  >
+                    {designSaving ? "…" : "💾 Gem"}
+                  </button>
+                </div>
+                <p className="text-[10px] text-foreground/40">
+                  {savedDesigns.length}/{userMaxDesigns} brugt
+                </p>
+              </div>
+
+              {/* List of saved designs */}
+              {savedDesigns.length === 0 && !designsLoading ? (
+                <div className="text-center py-6 text-foreground/40 text-xs">
+                  <div className="text-2xl mb-2">🗂️</div>
+                  Ingen gemte designs endnu.
+                  <br />
+                  <button type="button" className="text-accent underline mt-1" onClick={loadDesigns}>Hent fra server</button>
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  {savedDesigns.map((design) => (
+                    <div
+                      key={design.id}
+                      className="rounded-lg border border-border bg-background p-3 hover:border-accent/30 transition-colors"
+                    >
+                      <div className="flex items-center justify-between mb-1">
+                        {designRenamingId === design.id ? (
+                          <div className="flex gap-1 flex-1 mr-2">
+                            <input
+                              type="text"
+                              className="flex-1 rounded border border-accent/40 px-1.5 py-0.5 text-xs bg-background focus:outline-none"
+                              value={designRenameText}
+                              onChange={(e) => setDesignRenameText(e.target.value)}
+                              onKeyDown={(e) => {
+                                if (e.key === "Enter") handleRename(design.id);
+                                if (e.key === "Escape") setDesignRenamingId(null);
+                              }}
+                              autoFocus
+                              maxLength={40}
+                            />
+                            <button type="button" className="text-[10px] text-accent font-medium" onClick={() => handleRename(design.id)}>✓</button>
+                            <button type="button" className="text-[10px] text-foreground/40" onClick={() => setDesignRenamingId(null)}>✕</button>
+                          </div>
+                        ) : (
+                          <span className="text-sm font-semibold text-foreground/80 truncate">{design.name}</span>
+                        )}
+                        <span className="text-[10px] text-foreground/35 whitespace-nowrap ml-2">
+                          {new Date(design.updatedAt).toLocaleDateString("da-DK", { day: "numeric", month: "short", year: "numeric" })}
+                        </span>
+                      </div>
+
+                      <div className="flex gap-1.5 mt-2">
+                        <button
+                          type="button"
+                          className="flex-1 rounded-md bg-accent/10 text-accent px-2 py-1.5 text-[11px] font-medium hover:bg-accent/20 transition-colors"
+                          onClick={() => handleLoad(design)}
+                        >
+                          📂 Indlæs
+                        </button>
+                        <button
+                          type="button"
+                          className="rounded-md bg-foreground/5 text-foreground/60 px-2 py-1.5 text-[11px] hover:bg-foreground/10 transition-colors"
+                          onClick={() => handleOverwrite(design.id)}
+                          title="Overskriv med nuværende kort"
+                        >
+                          ⬆️
+                        </button>
+                        <button
+                          type="button"
+                          className="rounded-md bg-foreground/5 text-foreground/60 px-2 py-1.5 text-[11px] hover:bg-foreground/10 transition-colors"
+                          onClick={() => { setDesignRenamingId(design.id); setDesignRenameText(design.name); }}
+                          title="Omdøb"
+                        >
+                          ✏️
+                        </button>
+                        {designConfirmDelete === design.id ? (
+                          <div className="flex gap-1 items-center">
+                            <button
+                              type="button"
+                              className="rounded-md bg-red-500 text-white px-2 py-1 text-[10px] font-medium hover:bg-red-600"
+                              onClick={() => handleDelete(design.id)}
+                            >
+                              Slet!
+                            </button>
+                            <button
+                              type="button"
+                              className="text-[10px] text-foreground/40"
+                              onClick={() => setDesignConfirmDelete(null)}
+                            >
+                              Nej
+                            </button>
+                          </div>
+                        ) : (
+                          <button
+                            type="button"
+                            className="rounded-md bg-red-50 text-red-400 px-2 py-1.5 text-[11px] hover:bg-red-100 transition-colors"
+                            onClick={() => setDesignConfirmDelete(design.id)}
+                            title="Slet design"
+                          >
+                            🗑
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          );
+        })() : null}
         </div>
       </aside>
 

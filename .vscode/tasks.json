@@ -43,6 +43,24 @@
 			"problemMatcher": [
 				"$tsc-watch"
 			]
+		},
+		{
+			"label": "Prisma migrate: add-saved-designs",
+			"type": "shell",
+			"command": "npx prisma migrate dev --name add-saved-designs",
+			"group": "build"
+		},
+		{
+			"label": "prisma-push",
+			"type": "shell",
+			"command": "npx prisma db push"
+		},
+		{
+			"label": "prisma-and-dev",
+			"type": "shell",
+			"command": "npx prisma db push && npm run dev",
+			"isBackground": false,
+			"group": "build"
 		}
 	]
 }

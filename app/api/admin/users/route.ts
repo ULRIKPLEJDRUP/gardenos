@@ -31,6 +31,7 @@ export async function GET() {
       name: true,
       role: true,
       feedbackEnabled: true,
+      maxDesigns: true,
       createdAt: true,
     },
   });
@@ -135,7 +136,7 @@ export async function PUT(request: NextRequest) {
     return NextResponse.json({ error: "Ingen adgang." }, { status: 403 });
   }
 
-  let body: { id?: string; password?: string; feedbackEnabled?: boolean };
+  let body: { id?: string; password?: string; feedbackEnabled?: boolean; maxDesigns?: number };
   try {
     body = await request.json();
   } catch {
@@ -150,6 +151,17 @@ export async function PUT(request: NextRequest) {
   const user = await prisma.user.findUnique({ where: { id: userId } });
   if (!user) {
     return NextResponse.json({ error: "Bruger ikke fundet." }, { status: 404 });
+  }
+
+  // Update maxDesigns
+  if (typeof body.maxDesigns === "number") {
+    const clamped = Math.max(1, Math.min(20, Math.round(body.maxDesigns)));
+    const db = prisma as any;
+    await db.user.update({
+      where: { id: userId },
+      data: { maxDesigns: clamped },
+    });
+    return NextResponse.json({ ok: true, maxDesigns: clamped });
   }
 
   // Toggle feedbackEnabled

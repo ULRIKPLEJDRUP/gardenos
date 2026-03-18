@@ -24,6 +24,7 @@ model User {
   password  String   // bcrypt hash
   role      String   @default("user") // "admin" | "user"
   feedbackEnabled Boolean @default(false)
+  maxDesigns Int      @default(3) // admin-configurable per-user design limit
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -36,9 +37,15 @@ model User {
   // Garden data blobs (key-value)
   data UserData[]
 
+  // Saved garden designs (limit per user via maxDesigns)
+  designs SavedDesign[]
+
   // Feedback
   feedback       Feedback[]
   feedbackReplies FeedbackReply[]
+
+  // Icon bank submissions
+  iconSubmissions IconBank[]
 
   @@map("users")
 }
@@ -104,6 +111,25 @@ model Feedback {
 }
 
 // ---------------------------------------------------------------------------
+// IconBank – AI-generated icons awaiting admin approval
+// ---------------------------------------------------------------------------
+model IconBank {
+  id          String   @id @default(cuid())
+  imageData   String   // base64 data URL of the icon
+  prompt      String   // description used to generate
+  status      String   @default("pending") // "pending" | "approved" | "rejected"
+  submittedBy String   // userId who generated it
+  createdAt   DateTime @default(now())
+  reviewedAt  DateTime?
+
+  user User @relation(fields: [submittedBy], references: [id], onDelete: Cascade)
+
+  @@index([status])
+  @@index([submittedBy])
+  @@map("icon_bank")
+}
+
+// ---------------------------------------------------------------------------
 // FeedbackReply – conversation thread on a feedback item
 // ---------------------------------------------------------------------------
 model FeedbackReply {
@@ -118,4 +144,23 @@ model FeedbackReply {
 
   @@index([feedbackId])
   @@map("feedback_replies")
+}
+
+// ---------------------------------------------------------------------------
+// SavedDesign – user's saved garden map designs (max 3 per user)
+// ---------------------------------------------------------------------------
+model SavedDesign {
+  id        String   @id @default(cuid())
+  userId    String
+  name      String   // user-given name, e.g. "Forår 2026", "Drømmehaven"
+  layout    String   // JSON-encoded GeoJSON FeatureCollection
+  plants    String   @default("[]") // JSON-encoded PlantInstance[]
+  thumbnail String?  // optional small base64 preview image
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("saved_designs")
 }

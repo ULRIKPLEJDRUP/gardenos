@@ -79,7 +79,7 @@ export async function POST(request: NextRequest) {
     }
 
     // ── Step 2: Generate icon via DALL·E 3 ──
-    const dallePrompt = `A tiny flat-design garden icon, 128x128 pixels, simple and cute, white background, minimal detail, bold outlines, emoji style. Subject: ${plantDescription || "a green garden plant"}. No text, no labels, centered, single object.`;
+    const dallePrompt = `A single flat-design garden emoji icon on a PURE WHITE (#FFFFFF) background. The icon must look like a standard phone emoji: simple, cute, bold outlines, minimal shading, no gradients, no shadows, no 3D effects. Subject: ${plantDescription || "a green garden plant"}. Rules: centered single object, NO text, NO labels, NO ground, NO extra decorations, clean white background with nothing else.`;
 
     const dalleRes = await fetch(
       "https://api.openai.com/v1/images/generations",

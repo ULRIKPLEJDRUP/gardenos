@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useMemo, useState } from "react";
+import IconPicker from "./IconPicker";
 import {
   addOrUpdateCustomPlant,
   deleteCustomPlant,
@@ -281,10 +282,9 @@ export default function PlantEditor({ isOpen, onClose, editSpeciesId, onDataChan
                 </div>
                 <div style={{ width: 70 }}>
                   <label className="vm-label">Ikon</label>
-                  <input
-                    className="vm-input text-center text-lg"
+                  <IconPicker
                     value={form.icon ?? ""}
-                    onChange={(e) => updateField("icon", e.target.value)}
+                    onChange={(emoji) => updateField("icon", emoji)}
                   />
                 </div>
               </div>
