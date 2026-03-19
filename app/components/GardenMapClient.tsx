@@ -229,6 +229,23 @@ const M_PER_DEG_LAT = 111_320;
 const MAX_PHOTO_SIZE_BYTES = 2 * 1024 * 1024;
 
 /**
+ * Build a PlantInstance with auto-filled `id`, `plantedAt` and `season`.
+ * Callers only supply the domain-specific fields.
+ */
+function makePlantInstance(
+  fields: Omit<PlantInstance, "id" | "plantedAt" | "season"> & {
+    count?: number;
+  },
+): PlantInstance {
+  return {
+    id: crypto.randomUUID(),
+    plantedAt: new Date().toISOString().slice(0, 10),
+    season: new Date().getFullYear(),
+    ...fields,
+  };
+}
+
+/**
  * Read an SSE (Server-Sent Events) stream and accumulate text chunks.
  * Returns the full accumulated text.  Calls `onChunk` with the running
  * total after each chunk so the caller can update UI state.
@@ -2786,16 +2803,13 @@ function MapDrawControls({
 
       // Auto-create PlantInstance if species was linked
       if (pendingSpecies?.speciesId && normalized.properties?.gardenosId) {
-        addPlantInstance({
-          id: crypto.randomUUID(),
+        addPlantInstance(makePlantInstance({
           speciesId: pendingSpecies.speciesId,
           varietyId: pendingSpecies.varietyId ?? undefined,
           varietyName: pendingSpecies.varietyName ?? undefined,
           featureId: normalized.properties.gardenosId,
           count: 1,
-          plantedAt: new Date().toISOString().slice(0, 10),
-          season: new Date().getFullYear(),
-        });
+        }));
         cbRef.current.bumpPlantInstances?.();
       }
 
@@ -6704,16 +6718,13 @@ export function GardenMapClient({ userId }: { userId: string }) {
 
       // Auto-create plant instance for the row
       if (nextFeature.properties?.gardenosId) {
-        addPlantInstance({
-          id: crypto.randomUUID(),
+        addPlantInstance(makePlantInstance({
           speciesId,
           varietyId: varietyId ?? undefined,
           varietyName: varietyName || undefined,
           featureId: nextFeature.properties.gardenosId,
           count: plantsInRow,
-          plantedAt: new Date().toISOString().slice(0, 10),
-          season: new Date().getFullYear(),
-        });
+        }));
       }
 
       createdCount++;
@@ -6887,16 +6898,13 @@ export function GardenMapClient({ userId }: { userId: string }) {
 
       // Auto-create plant instance
       if (nextFeature.properties?.gardenosId) {
-        addPlantInstance({
-          id: crypto.randomUUID(),
+        addPlantInstance(makePlantInstance({
           speciesId,
           varietyId: varietyId ?? undefined,
           varietyName: varietyName || undefined,
           featureId: nextFeature.properties.gardenosId,
           count: 1,
-          plantedAt: new Date().toISOString().slice(0, 10),
-          season: new Date().getFullYear(),
-        });
+        }));
       }
 
       createdCount++;
@@ -9609,14 +9617,11 @@ export function GardenMapClient({ userId }: { userId: string }) {
                                 if (!featureId) return;
                                 // Remove existing crop first
                                 for (const inst of selectedFeatureInstances) removePlantInstance(inst.id);
-                                addPlantInstance({
-                                  id: crypto.randomUUID(),
+                                addPlantInstance(makePlantInstance({
                                   speciesId: bedPickerSpeciesId,
                                   featureId,
                                   count: pickedCap || 1,
-                                  plantedAt: new Date().toISOString().slice(0, 10),
-                                  season: new Date().getFullYear(),
-                                });
+                                }));
                                 setPlantInstancesVersion((v) => v + 1);
                                 setShowBedPlantPicker(false);
                                 setBedPickerSpeciesId(null);
@@ -9637,16 +9642,13 @@ export function GardenMapClient({ userId }: { userId: string }) {
                                   const featureId = selected?.feature.properties?.gardenosId;
                                   if (!featureId) return;
                                   for (const inst of selectedFeatureInstances) removePlantInstance(inst.id);
-                                  addPlantInstance({
-                                    id: crypto.randomUUID(),
+                                  addPlantInstance(makePlantInstance({
                                     speciesId: bedPickerSpeciesId,
                                     varietyId: v.id,
                                     varietyName: v.name,
                                     featureId,
                                     count: vCap || 1,
-                                    plantedAt: new Date().toISOString().slice(0, 10),
-                                    season: new Date().getFullYear(),
-                                  });
+                                  }));
                                   setPlantInstancesVersion((vv) => vv + 1);
                                   setShowBedPlantPicker(false);
                                   setBedPickerSpeciesId(null);
@@ -9690,14 +9692,11 @@ export function GardenMapClient({ userId }: { userId: string }) {
                                   const featureId = selected?.feature.properties?.gardenosId;
                                   if (!featureId) return;
                                   for (const inst of selectedFeatureInstances) removePlantInstance(inst.id);
-                                  addPlantInstance({
-                                    id: crypto.randomUUID(),
+                                  addPlantInstance(makePlantInstance({
                                     speciesId: plant.id,
                                     featureId,
                                     count: pCap || 1,
-                                    plantedAt: new Date().toISOString().slice(0, 10),
-                                    season: new Date().getFullYear(),
-                                  });
+                                  }));
                                   setPlantInstancesVersion((v) => v + 1);
                                   setShowBedPlantPicker(false);
                                   setBedPlantSearch("");
@@ -9926,14 +9925,11 @@ export function GardenMapClient({ userId }: { userId: string }) {
                               onClick={() => {
                                 const featureId = selected?.feature.properties?.gardenosId;
                                 if (!featureId) return;
-                                addPlantInstance({
-                                  id: crypto.randomUUID(),
+                                addPlantInstance(makePlantInstance({
                                   speciesId: bedPickerSpeciesId,
                                   featureId,
                                   count: 1,
-                                  plantedAt: new Date().toISOString().slice(0, 10),
-                                  season: new Date().getFullYear(),
-                                });
+                                }));
                                 setPlantInstancesVersion((v) => v + 1);
                                 setShowBedPlantPicker(false);
                                 setBedPickerSpeciesId(null);
@@ -9951,16 +9947,13 @@ export function GardenMapClient({ userId }: { userId: string }) {
                                 onClick={() => {
                                   const featureId = selected?.feature.properties?.gardenosId;
                                   if (!featureId) return;
-                                  addPlantInstance({
-                                    id: crypto.randomUUID(),
+                                  addPlantInstance(makePlantInstance({
                                     speciesId: bedPickerSpeciesId,
                                     varietyId: v.id,
                                     varietyName: v.name,
                                     featureId,
                                     count: 1,
-                                    plantedAt: new Date().toISOString().slice(0, 10),
-                                    season: new Date().getFullYear(),
-                                  });
+                                  }));
                                   setPlantInstancesVersion((vv) => vv + 1);
                                   setShowBedPlantPicker(false);
                                   setBedPickerSpeciesId(null);
@@ -10005,14 +9998,11 @@ export function GardenMapClient({ userId }: { userId: string }) {
                                 } else {
                                   const featureId = selected?.feature.properties?.gardenosId;
                                   if (!featureId) return;
-                                  addPlantInstance({
-                                    id: crypto.randomUUID(),
+                                  addPlantInstance(makePlantInstance({
                                     speciesId: plant.id,
                                     featureId,
                                     count: 1,
-                                    plantedAt: new Date().toISOString().slice(0, 10),
-                                    season: new Date().getFullYear(),
-                                  });
+                                  }));
                                   setPlantInstancesVersion((v) => v + 1);
                                   setShowBedPlantPicker(false);
                                   setBedPlantSearch("");
@@ -13049,16 +13039,13 @@ export function GardenMapClient({ userId }: { userId: string }) {
                                       onClick={() => {
                                         const featureId = selected.feature.properties?.gardenosId;
                                         if (!featureId) return;
-                                        addPlantInstance({
-                                          id: crypto.randomUUID(),
+                                        addPlantInstance(makePlantInstance({
                                           speciesId: plant.id,
                                           varietyId: v.id,
                                           varietyName: v.name,
                                           featureId,
                                           count: 1,
-                                          plantedAt: new Date().toISOString().slice(0, 10),
-                                          season: new Date().getFullYear(),
-                                        });
+                                        }));
                                         setPlantInstancesVersion((prev) => prev + 1);
                                       }}
                                     >
@@ -13079,14 +13066,11 @@ export function GardenMapClient({ userId }: { userId: string }) {
                             onClick={() => {
                               const featureId = selected.feature.properties?.gardenosId;
                               if (!featureId) return;
-                              addPlantInstance({
-                                id: crypto.randomUUID(),
+                              addPlantInstance(makePlantInstance({
                                 speciesId: plant.id,
                                 featureId,
                                 count: 1,
-                                plantedAt: new Date().toISOString().slice(0, 10),
-                                season: new Date().getFullYear(),
-                              });
+                              }));
                               setPlantInstancesVersion((v) => v + 1);
                             }}
                           >
