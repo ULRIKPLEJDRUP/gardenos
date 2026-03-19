@@ -3279,6 +3279,13 @@ export function GardenMapClient({ userId }: { userId: string }) {
       setSidebarPanelOpen((v) => !v);
     }
   }, [sidebarTab]);
+  // ── Invalidate Leaflet size when sidebar panel opens/closes ──
+  useEffect(() => {
+    const t1 = setTimeout(() => mapRef.current?.invalidateSize(), 50);
+    const t2 = setTimeout(() => mapRef.current?.invalidateSize(), 320);
+    return () => { clearTimeout(t1); clearTimeout(t2); };
+  }, [sidebarPanelOpen]);
+
   const [conflictFilter, setConflictFilter] = useState<"all" | "spacing" | "bad-companion" | "layer-competition" | "shade">("all");
   const [conflictSortBy, setConflictSortBy] = useState<"severity" | "type" | "distance">("severity");
   const [conflictResolvedIds, setConflictResolvedIds] = useState<Set<string>>(() => {
@@ -8487,15 +8494,39 @@ export function GardenMapClient({ userId }: { userId: string }) {
               {/* Gruppe 1 — Opret */}
               <span className="text-[6px] font-bold text-foreground/25 uppercase tracking-widest mt-1 mb-0.5">Opret</span>
               {grp(["create", "content", "groups"])}
-              <div className="w-6 h-px bg-border my-1.5" />
+              {/* Spacer between groups */}
+              <div className="w-8 my-2 flex flex-col items-center gap-[3px]"><div className="w-1 h-1 rounded-full bg-border" /><div className="w-1 h-1 rounded-full bg-border" /><div className="w-1 h-1 rounded-full bg-border" /></div>
               {/* Gruppe 2 — Analyse */}
-              <span className="text-[6px] font-bold text-foreground/25 uppercase tracking-widest mt-0.5 mb-0.5">Analyse</span>
+              <span className="text-[6px] font-bold text-foreground/25 uppercase tracking-widest mb-0.5">Analyse</span>
               {grp(["conflicts", "scan", "view", "tasks", "plants"])}
-              <div className="w-6 h-px bg-border my-1.5" />
-              {/* Gruppe 3 — System */}
-              <span className="text-[6px] font-bold text-foreground/25 uppercase tracking-widest mt-0.5 mb-0.5">System</span>
-              {grp(["designs"])}
             </>
+          );
+        })()}
+        {/* ── Spacer — pushes System group to bottom ── */}
+        <div className="flex-1" />
+        {/* ── Gruppe 3 — System (bottom-anchored) ── */}
+        <div className="w-6 h-px bg-border mb-1.5" />
+        <span className="text-[6px] font-bold text-foreground/25 uppercase tracking-widest mb-0.5">System</span>
+        {(() => {
+          const tab = ALL_SIDEBAR_TABS.find(t => t.id === "designs")!;
+          const isActive = sidebarTab === "designs" && sidebarPanelOpen;
+          return (
+            <button
+              type="button"
+              data-tour="tab-designs"
+              className={`relative flex flex-col items-center justify-center w-10 h-10 rounded-xl transition-all group ${
+                isActive
+                  ? "bg-accent text-white shadow-md"
+                  : "text-foreground/50 hover:bg-foreground/[0.06] hover:text-foreground/70"
+              }`}
+              onClick={() => toggleSidebarPanel("designs")}
+              title={tab.label}
+            >
+              <span className="text-[17px] leading-none">{tab.icon}</span>
+              <span className={`text-[7px] font-semibold leading-tight tracking-tight whitespace-nowrap mt-0.5 ${
+                isActive ? "text-white/90" : "text-foreground/35"
+              }`}>{tab.label}</span>
+            </button>
           );
         })()}
         {isAdmin && (
@@ -8508,7 +8539,6 @@ export function GardenMapClient({ userId }: { userId: string }) {
             <span className="text-[7px] font-semibold mt-0.5 text-amber-600/60">Admin</span>
           </a>
         )}
-        <div className="flex-1" />
         {sessionData?.user && (
           <div className="flex flex-col items-center justify-center w-10 h-10 text-foreground/30" title={sessionData.user.name || sessionData.user.email || ""}>
             <span className="text-[15px] leading-none">👤</span>
