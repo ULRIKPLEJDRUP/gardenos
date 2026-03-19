@@ -3,7 +3,7 @@
 // ---------------------------------------------------------------------------
 // GET    /api/designs             → List user's saved designs
 // POST   /api/designs             → Create new design (max 3)
-// PATCH  /api/designs?id=<id>     → Update existing design
+// PATCH  /api/designs?id=<id>     → Update existing design (auto-snapshots previous version)
 // DELETE /api/designs?id=<id>     → Delete a design
 // ---------------------------------------------------------------------------
 import { NextRequest, NextResponse } from "next/server";
@@ -12,6 +12,7 @@ import { prisma } from "@/app/lib/db";
 
 const db = prisma as any;
 const DEFAULT_MAX_DESIGNS = 3;
+const MAX_VERSIONS_PER_DESIGN = 5;
 
 // ── GET: List all designs for current user ──
 export async function GET() {
@@ -119,6 +120,34 @@ export async function PATCH(request: NextRequest) {
   if (body.layout !== undefined) updateData.layout = body.layout;
   if (body.plants !== undefined) updateData.plants = body.plants;
   if (body.thumbnail !== undefined) updateData.thumbnail = body.thumbnail;
+
+  // If layout or plants are being changed, snapshot the CURRENT version first
+  const isContentChange = body.layout !== undefined || body.plants !== undefined;
+  if (isContentChange) {
+    // Save a snapshot of the current data before overwriting
+    await db.designVersion.create({
+      data: {
+        designId: id,
+        layout: existing.layout,
+        plants: existing.plants ?? "[]",
+      },
+    });
+
+    // Prune old versions – keep only the last MAX_VERSIONS_PER_DESIGN
+    const allVersions = await db.designVersion.findMany({
+      where: { designId: id },
+      orderBy: { savedAt: "desc" },
+      select: { id: true },
+    });
+    if (allVersions.length > MAX_VERSIONS_PER_DESIGN) {
+      const idsToDelete = allVersions
+        .slice(MAX_VERSIONS_PER_DESIGN)
+        .map((v: { id: string }) => v.id);
+      await db.designVersion.deleteMany({
+        where: { id: { in: idsToDelete } },
+      });
+    }
+  }
 
   const updated = await db.savedDesign.update({
     where: { id },

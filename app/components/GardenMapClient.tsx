@@ -64,8 +64,11 @@ import {
   createDesign,
   updateDesign,
   deleteDesign,
+  fetchVersions,
+  restoreVersion,
   DEFAULT_MAX_DESIGNS,
   type SavedDesign,
+  type DesignVersion,
 } from "../lib/designStore";
 import {
   getInfraElementById,
@@ -3149,6 +3152,11 @@ export function GardenMapClient({ userId }: { userId: string }) {
   const [activeDesignId, setActiveDesignId] = useState<string | null>(null);
   const [activeDesignName, setActiveDesignName] = useState<string | null>(null);
   const [quickSaveFlash, setQuickSaveFlash] = useState(false);
+  // ── Version history state ──
+  const [versionHistoryId, setVersionHistoryId] = useState<string | null>(null); // which design's history is open
+  const [versionList, setVersionList] = useState<DesignVersion[]>([]);
+  const [versionLoading, setVersionLoading] = useState(false);
+  const [versionRestoring, setVersionRestoring] = useState<string | null>(null); // version id being restored
 
   // Auto-load designs on mount (so toolbar quick-save works immediately)
   useEffect(() => {
@@ -14195,6 +14203,81 @@ export function GardenMapClient({ userId }: { userId: string }) {
                           >
                             🗑
                           </button>
+                        )}
+                      </div>
+
+                      {/* ── Version History Toggle ── */}
+                      <div className="mt-2">
+                        <button
+                          type="button"
+                          className="text-[10px] text-foreground/40 hover:text-accent transition-colors flex items-center gap-1"
+                          onClick={async () => {
+                            if (versionHistoryId === design.id) {
+                              setVersionHistoryId(null);
+                              setVersionList([]);
+                              return;
+                            }
+                            setVersionHistoryId(design.id);
+                            setVersionLoading(true);
+                            try {
+                              const versions = await fetchVersions(design.id);
+                              setVersionList(versions);
+                            } catch {
+                              setVersionList([]);
+                            } finally {
+                              setVersionLoading(false);
+                            }
+                          }}
+                        >
+                          <span style={{ display: "inline-block", transform: versionHistoryId === design.id ? "rotate(90deg)" : "rotate(0)", transition: "transform 0.15s" }}>▶</span>
+                          🕓 Historik
+                        </button>
+
+                        {versionHistoryId === design.id && (
+                          <div className="mt-1.5 ml-2 border-l-2 border-foreground/10 pl-2 space-y-1">
+                            {versionLoading ? (
+                              <p className="text-[10px] text-foreground/40 animate-pulse">Henter versioner…</p>
+                            ) : versionList.length === 0 ? (
+                              <p className="text-[10px] text-foreground/30 italic">Ingen tidligere versioner endnu</p>
+                            ) : (
+                              versionList.map((ver) => (
+                                <div key={ver.id} className="flex items-center justify-between gap-2 rounded border border-foreground/5 bg-foreground/[0.02] px-2 py-1">
+                                  <span className="text-[10px] text-foreground/50">
+                                    {new Date(ver.savedAt).toLocaleDateString("da-DK", { day: "numeric", month: "short" })}{" "}
+                                    {new Date(ver.savedAt).toLocaleTimeString("da-DK", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}
+                                  </span>
+                                  <button
+                                    type="button"
+                                    className="text-[10px] text-accent font-medium hover:text-accent/80 disabled:opacity-40 transition-colors whitespace-nowrap"
+                                    disabled={versionRestoring === ver.id}
+                                    onClick={async () => {
+                                      setVersionRestoring(ver.id);
+                                      try {
+                                        const restored = await restoreVersion(ver.id);
+                                        // Update design in list
+                                        setSavedDesigns((prev) => prev.map((x) => (x.id === design.id ? { ...x, layout: restored.layout, plants: restored.plants, updatedAt: restored.updatedAt } : x)));
+                                        // If this is the active design, reload it into the map
+                                        if (design.id === activeDesignId) {
+                                          handleLoad({ ...design, layout: restored.layout, plants: restored.plants, updatedAt: restored.updatedAt });
+                                        }
+                                        setDesignLoadedFlash("Version gendannet!");
+                                        setTimeout(() => setDesignLoadedFlash(false), 2500);
+                                        // Refresh version list
+                                        const versions = await fetchVersions(design.id);
+                                        setVersionList(versions);
+                                      } catch {
+                                        setDesignError("Kunne ikke gendanne version");
+                                      } finally {
+                                        setVersionRestoring(null);
+                                      }
+                                    }}
+                                  >
+                                    {versionRestoring === ver.id ? "…" : "↩ Gendan"}
+                                  </button>
+                                </div>
+                              ))
+                            )}
+                          </div>
                         )}
                       </div>
                     </div>

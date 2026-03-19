@@ -21,6 +21,11 @@ export interface SavedDesign {
   updatedAt: string;
 }
 
+export interface DesignVersion {
+  id: string;
+  savedAt: string;
+}
+
 export interface DesignListResponse {
   designs: SavedDesign[];
   maxDesigns: number;
@@ -79,4 +84,33 @@ export async function deleteDesign(id: string): Promise<void> {
     method: "DELETE",
   });
   if (!res.ok) throw new Error("Kunne ikke slette design");
+}
+
+// ---------------------------------------------------------------------------
+// Version history helpers
+// ---------------------------------------------------------------------------
+
+/** Fetch version snapshots for a design (newest first, max 5). */
+export async function fetchVersions(
+  designId: string
+): Promise<DesignVersion[]> {
+  const res = await fetch(
+    `/api/designs/versions?designId=${encodeURIComponent(designId)}`
+  );
+  if (!res.ok) throw new Error("Kunne ikke hente versioner");
+  const data = await res.json();
+  return data.versions;
+}
+
+/** Restore a version snapshot – copies its layout/plants back to the design. */
+export async function restoreVersion(versionId: string): Promise<SavedDesign> {
+  const res = await fetch(
+    `/api/designs/versions?versionId=${encodeURIComponent(versionId)}`,
+    { method: "POST" }
+  );
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.error ?? "Kunne ikke gendanne version");
+  }
+  return res.json();
 }
