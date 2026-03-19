@@ -73,11 +73,11 @@ const STEPS: TourStep[] = [
     body: "Vælg et element på kortet, og se alle dets egenskaber her — navn, type, mål, planter og konflikter. Redigér direkte i panelet.",
     position: "top",
   },
-  // ── 10 · Plantebibliotek ──────────────────────────────────
+  // ── 10 · Bibliotek ──────────────────────────────────
   {
     target: "tab-plants",
-    title: "🌱 Plantebibliotek",
-    body: "Søg blandt 180+ arter og 500+ sorter — med sæsonkalender, næringsinfo, naboskab, sygdomme og dyrkningsråd. Du kan også oprette egne planter.",
+    title: "🌿 Bibliotek (Planter + Jord)",
+    body: "Biblioteket samler to ting: 🌱 Planter (søg 180+ arter/500+ sorter) og 🪨 Jord (opret og redigér jordprofiler med pH, dræning, NPK m.m.).",
     position: "top",
   },
   // ── 11 · Plantebibliotek: Detaljer ────────────────────────

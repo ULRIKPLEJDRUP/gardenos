@@ -3287,6 +3287,8 @@ export function GardenMapClient({ userId }: { userId: string }) {
   const [conflictShowResolved, setConflictShowResolved] = useState(false);
   const [viewSubTab, setViewSubTab] = useState<"steder" | "baggrund" | "synlighed" | "ankre">("steder");
   const [planSubTab, setPlanSubTab] = useState<"tasks" | "calendar">("tasks");
+  const [libSubTab, setLibSubTab] = useState<"plants" | "soil">("plants");
+  const [libSoilEditId, setLibSoilEditId] = useState<string | null>(null);
 
   // ── Draft state for name/notes (commit on blur/Enter, not per-keystroke) ──
   const [draftName, setDraftName] = useState("");
@@ -3389,7 +3391,7 @@ export function GardenMapClient({ userId }: { userId: string }) {
     { id: "content", icon: "◉", label: "Indhold" },
     { id: "conflicts", icon: "⚡", label: "Konflikter" },
     { id: "groups", icon: "⊞", label: "Grupper" },
-    { id: "plants", icon: "🌱", label: "Planter" },
+    { id: "plants", icon: "�", label: "Bibliotek" },
     { id: "scan", icon: "📷", label: "Scan" },
     { id: "view", icon: "👁", label: "Visning" },
     { id: "tasks", icon: "📋", label: "Planlæg" },
@@ -12111,74 +12113,13 @@ export function GardenMapClient({ userId }: { userId: string }) {
             ) : null}
 
             {/* ══════════════════════════════════════════════════════════ */}
-            {/* ── JORDPROFIL ── soil profile section                   ── */}
+            {/* ── JORDPROFIL ── compact assign + link to Bibliotek     ── */}
             {/* ══════════════════════════════════════════════════════════ */}
             {(selectedCategory === "seedbed" || selectedCategory === "container" || (selectedCategory === "area" && selectedSubGroup !== "structure")) ? (() => {
               const profileId = selected.feature.properties?.soilProfileId;
               const profile = profileId ? getSoilProfileById(profileId) : undefined;
-              // Force re-read on version bump
               void soilDataVersion;
-              const recs = profile ? computeSoilRecommendations(profile) : [];
-              const logEntries = profile ? getLogForProfile(profile.id) : [];
-
-              /** Helper: update a field on the soil profile */
-              const updateSoilField = (patch: Partial<SoilProfile>) => {
-                if (!profile) return;
-                addOrUpdateSoilProfile({ ...profile, ...patch });
-                setSoilDataVersion((v) => v + 1);
-              };
-
-              /** Render a select dropdown for a soil field */
-              const soilSelect = <T extends string>(
-                label: string,
-                value: T | undefined,
-                options: Record<string, string>,
-                onChange: (v: T) => void,
-              ) => (
-                <div>
-                  <label className="block text-[10px] font-semibold text-foreground/50 uppercase tracking-wide">{label}</label>
-                  <select
-                    className="mt-0.5 w-full rounded-md border border-border bg-background px-2 py-1.5 text-xs shadow-sm"
-                    value={value ?? ""}
-                    onChange={(e) => onChange(e.target.value as T)}
-                  >
-                    <option value="">—</option>
-                    {Object.entries(options).map(([k, v]) => (
-                      <option key={k} value={k}>{v}</option>
-                    ))}
-                  </select>
-                </div>
-              );
-
-              /** Render a yes/no toggle */
-              const soilToggle = (label: string, value: boolean | undefined, onChange: (v: boolean | undefined) => void) => (
-                <div>
-                  <label className="block text-[10px] font-semibold text-foreground/50 uppercase tracking-wide">{label}</label>
-                  <div className="mt-0.5 flex gap-1">
-                    {(["yes", "no", "unknown"] as const).map((opt) => {
-                      const isActive = opt === "yes" ? value === true : opt === "no" ? value === false : value === undefined;
-                      return (
-                        <button
-                          key={opt}
-                          type="button"
-                          className={`flex-1 rounded-md border px-2 py-1 text-[10px] font-medium transition-all ${
-                            isActive
-                              ? "border-accent/30 bg-accent-light text-accent-dark"
-                              : "border-border bg-background text-foreground/50 hover:bg-foreground/5"
-                          }`}
-                          onClick={() => onChange(opt === "yes" ? true : opt === "no" ? false : undefined)}
-                        >
-                          {opt === "yes" ? "Ja" : opt === "no" ? "Nej" : "—"}
-                        </button>
-                      );
-                    })}
-                  </div>
-                </div>
-              );
-
-              const filteredSections = SOIL_SECTIONS.filter((s) =>
-                soilLevelFilter === "all" || s.level <= soilLevelFilter
-              );
+              const allProfiles = loadSoilProfiles();
 
               return (
                 <div className="rounded-lg border border-foreground/10 bg-foreground/[0.02] overflow-hidden">
@@ -12191,8 +12132,10 @@ export function GardenMapClient({ userId }: { userId: string }) {
                     {profile?.baseType ? (
                       <>
                         <span className="text-[9px] text-foreground/30">·</span>
-                        <span className="text-[11px] text-foreground/70 truncate flex-1">{SOIL_BASE_TYPE_LABELS[profile.baseType]}</span>
+                        <span className="text-[11px] text-foreground/70 truncate flex-1">{profile.name} ({SOIL_BASE_TYPE_LABELS[profile.baseType]})</span>
                       </>
+                    ) : profile ? (
+                      <span className="text-[11px] text-foreground/50 truncate flex-1">{profile.name}</span>
                     ) : (
                       <span className="text-[11px] text-foreground/40 italic truncate flex-1">(ingen profil)</span>
                     )}
@@ -12200,459 +12143,58 @@ export function GardenMapClient({ userId }: { userId: string }) {
                   </button>
 
                   {soilPanelOpen ? (
-                    <div className="px-3 pb-3 pt-1 space-y-3">
+                    <div className="px-3 pb-3 pt-1 space-y-2">
+                      {/* Dropdown: assign existing profile */}
+                      <div>
+                        <label className="block text-[10px] font-semibold text-foreground/50 uppercase tracking-wide">Tilknyt jordprofil</label>
+                        <select
+                          className="mt-0.5 w-full rounded-md border border-border bg-background px-2 py-1.5 text-xs shadow-sm"
+                          value={profileId ?? ""}
+                          onChange={(e) => {
+                            updateSelectedProperty({ soilProfileId: e.target.value || undefined });
+                            setSoilDataVersion((v) => v + 1);
+                          }}
+                        >
+                          <option value="">Ingen profil</option>
+                          {allProfiles.map((p) => (
+                            <option key={p.id} value={p.id}>
+                              {p.name}{p.baseType ? ` (${SOIL_BASE_TYPE_LABELS[p.baseType]})` : ""}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
 
-                      {/* ── Create / link profile ── */}
-                      {!profile ? (
-                        <div className="space-y-2">
-                          <p className="text-xs text-foreground/50 italic">Ingen jordprofil tilknyttet.</p>
-                          <button
-                            type="button"
-                            className="w-full rounded-md border border-dashed border-foreground/20 px-2 py-2 text-xs text-foreground/60 hover:border-accent/40 hover:bg-accent-light/30 transition-colors"
-                            onClick={() => {
-                              const bp = createBlankSoilProfile(selected.feature.properties?.name ?? "Ukendt jord");
-                              addOrUpdateSoilProfile(bp);
-                              updateSelectedProperty({ soilProfileId: bp.id });
-                              setSoilDataVersion((v) => v + 1);
-                            }}
-                          >
-                            + Opret jordprofil
-                          </button>
-                          {/* Link to existing profile */}
-                          {(() => {
-                            const allProfiles = loadSoilProfiles();
-                            return allProfiles.length > 0 ? (
-                              <div>
-                                <label className="block text-[10px] font-semibold text-foreground/50 uppercase tracking-wide">Eller brug eksisterende</label>
-                                <select
-                                  className="mt-0.5 w-full rounded-md border border-border bg-background px-2 py-1.5 text-xs shadow-sm"
-                                  value=""
-                                  onChange={(e) => {
-                                    if (e.target.value) {
-                                      updateSelectedProperty({ soilProfileId: e.target.value });
-                                      setSoilDataVersion((v) => v + 1);
-                                    }
-                                  }}
-                                >
-                                  <option value="">Vælg profil…</option>
-                                  {allProfiles.map((p) => (
-                                    <option key={p.id} value={p.id}>
-                                      {p.name}{p.baseType ? ` (${SOIL_BASE_TYPE_LABELS[p.baseType]})` : ""}
-                                    </option>
-                                  ))}
-                                </select>
-                              </div>
-                            ) : null;
-                          })()}
-                        </div>
-                      ) : (
-                        <>
-                          {/* ── Profile name ── */}
-                          <div className="flex items-center gap-2">
-                            <input
-                              className="flex-1 rounded-md border border-border bg-background px-2 py-1.5 text-xs font-medium shadow-sm"
-                              value={profile.name}
-                              onChange={(e) => updateSoilField({ name: e.target.value })}
-                              placeholder="Profilnavn"
-                            />
-                            <button
-                              type="button"
-                              className="shrink-0 rounded px-1.5 py-1 text-[10px] text-foreground/40 hover:text-red-500 hover:bg-red-50"
-                              onClick={() => {
-                                updateSelectedProperty({ soilProfileId: undefined });
-                                setSoilDataVersion((v) => v + 1);
-                              }}
-                              title="Fjern tilknytning (profilen bevares)"
-                            >
-                              ✕
-                            </button>
-                          </div>
+                      {/* Quick-create + assign */}
+                      <button
+                        type="button"
+                        className="w-full rounded-md border border-dashed border-foreground/20 px-2 py-2 text-xs text-foreground/60 hover:border-accent/40 hover:bg-accent-light/30 transition-colors"
+                        onClick={() => {
+                          const bp = createBlankSoilProfile(selected.feature.properties?.name ?? "Ukendt jord");
+                          addOrUpdateSoilProfile(bp);
+                          updateSelectedProperty({ soilProfileId: bp.id });
+                          setSoilDataVersion((v) => v + 1);
+                          setSidebarTab("plants");
+                          setLibSubTab("soil");
+                          setLibSoilEditId(bp.id);
+                        }}
+                      >
+                        + Opret ny profil & redigér
+                      </button>
 
-                          {/* ── Level filter pills ── */}
-                          <div className="flex gap-1">
-                            {([
-                              { v: "all" as const, label: "Alle" },
-                              { v: 1 as const, label: "👀 Basis" },
-                              { v: 2 as const, label: "🧪 Nørdet" },
-                              { v: 3 as const, label: "🔬 Lab" },
-                            ]).map((opt) => (
-                              <button
-                                key={String(opt.v)}
-                                type="button"
-                                className={`rounded-full px-2 py-0.5 text-[10px] font-medium transition-all ${
-                                  soilLevelFilter === opt.v
-                                    ? "bg-accent text-white shadow-sm"
-                                    : "bg-foreground/5 text-foreground/50 hover:bg-foreground/10"
-                                }`}
-                                onClick={() => setSoilLevelFilter(opt.v)}
-                              >
-                                {opt.label}
-                              </button>
-                            ))}
-                          </div>
-
-                          {/* ── Recommendations ── */}
-                          {recs.length > 0 ? (
-                            <div className="space-y-1">
-                              {recs.map((r, i) => (
-                                <div
-                                  key={i}
-                                  className={`rounded-md border px-2 py-1.5 text-[11px] ${
-                                    r.priority === "warning"
-                                      ? "border-amber-200 bg-amber-50 text-amber-800 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-200"
-                                      : r.priority === "suggestion"
-                                      ? "border-blue-200 bg-blue-50 text-blue-800 dark:border-blue-800 dark:bg-blue-950 dark:text-blue-200"
-                                      : "border-foreground/10 bg-foreground/[0.02] text-foreground/60"
-                                  }`}
-                                >
-                                  <span className="font-medium">{r.icon} {r.label}</span>
-                                  <p className="text-[10px] opacity-80 mt-0.5">{r.description}</p>
-                                </div>
-                              ))}
-                            </div>
-                          ) : null}
-
-                          {/* ── Accordion sections ── */}
-                          {filteredSections.map((section) => {
-                            const isOpen = soilOpenSections.has(section.key);
-                            return (
-                              <div key={section.key} className="rounded-md border border-foreground/10 overflow-hidden">
-                                <button
-                                  type="button"
-                                  className="flex w-full items-center gap-1.5 px-2.5 py-1.5 text-left hover:bg-foreground/[0.03] transition-colors"
-                                  onClick={() => {
-                                    setSoilOpenSections((prev) => {
-                                      const next = new Set(prev);
-                                      if (next.has(section.key)) next.delete(section.key);
-                                      else next.add(section.key);
-                                      return next;
-                                    });
-                                  }}
-                                >
-                                  <span className="text-xs leading-none">{section.icon}</span>
-                                  <span className="flex-1 text-[10px] font-semibold text-foreground/60 uppercase tracking-wide">{section.label}</span>
-                                  <span className="rounded-full bg-foreground/5 px-1.5 py-0.5 text-[8px] text-foreground/40">Niv. {section.level}</span>
-                                  <span className="text-[9px] text-foreground/30">{isOpen ? "▲" : "▼"}</span>
-                                </button>
-
-                                {isOpen ? (
-                                  <div className="px-2.5 pb-2 pt-1 space-y-2">
-                                    {/* ── 1. Jordtype ── */}
-                                    {section.key === "type" ? (
-                                      <div className="grid grid-cols-1 gap-2">
-                                        {soilSelect("Jordtype", profile.baseType, SOIL_BASE_TYPE_LABELS, (v) => updateSoilField({ baseType: v || undefined }))}
-                                        {profile.baseType && SOIL_BASE_TYPE_DESC[profile.baseType] ? (
-                                          <p className="text-[10px] text-foreground/40 italic leading-snug">{SOIL_BASE_TYPE_DESC[profile.baseType]}</p>
-                                        ) : null}
-                                        <div className="grid grid-cols-2 gap-2">
-                                          {soilSelect("Farve", profile.color, SOIL_COLOR_LABELS, (v) => updateSoilField({ color: v || undefined }))}
-                                          {soilSelect("Struktur ved berøring", profile.texture, SOIL_TEXTURE_LABELS, (v) => updateSoilField({ texture: v || undefined }))}
-                                        </div>
-                                      </div>
-                                    ) : null}
-
-                                    {/* ── 2. Fugt & dræning ── */}
-                                    {section.key === "moisture" ? (
-                                      <div className="grid grid-cols-2 gap-2">
-                                        {soilSelect("Dræning", profile.drainage, DRAINAGE_LABELS, (v) => updateSoilField({ drainage: v || undefined }))}
-                                        {soilSelect("Aktuel fugtighed", profile.moisture, MOISTURE_LABELS, (v) => updateSoilField({ moisture: v || undefined }))}
-                                        <div className="col-span-2">
-                                          {soilToggle("Tendens til udtørring", profile.droughtProne, (v) => updateSoilField({ droughtProne: v }))}
-                                        </div>
-                                      </div>
-                                    ) : null}
-
-                                    {/* ── 3. Liv i jorden ── */}
-                                    {section.key === "life" ? (
-                                      <div className="grid grid-cols-2 gap-2">
-                                        {soilSelect("Regnorme ved gravning", profile.earthworms, EARTHWORM_LABELS, (v) => updateSoilField({ earthworms: v || undefined }))}
-                                        {soilSelect("Generel vurdering", profile.soilHealth, SOIL_HEALTH_LABELS, (v) => updateSoilField({ soilHealth: v || undefined }))}
-                                        <div className="col-span-2">
-                                          {soilToggle("Synligt svampeflor", profile.fungalNetwork, (v) => updateSoilField({ fungalNetwork: v }))}
-                                        </div>
-                                      </div>
-                                    ) : null}
-
-                                    {/* ── 4. Organisk indhold ── */}
-                                    {section.key === "organic" ? (
-                                      <div className="space-y-2">
-                                        {soilSelect("Organisk indhold (visuelt)", profile.organicVisual, ORGANIC_LABELS, (v) => updateSoilField({ organicVisual: v || undefined }))}
-                                        <div className="grid grid-cols-2 gap-2">
-                                          <div>
-                                            <label className="block text-[10px] font-semibold text-foreground/50 uppercase tracking-wide">Organisk % (valgfrit)</label>
-                                            <input
-                                              type="number"
-                                              min={0}
-                                              max={20}
-                                              step={0.5}
-                                              className="mt-0.5 w-full rounded-md border border-border bg-background px-2 py-1.5 text-xs shadow-sm"
-                                              value={profile.organicPercent ?? ""}
-                                              onChange={(e) => updateSoilField({ organicPercent: e.target.value ? Number(e.target.value) : undefined })}
-                                              placeholder="0–20"
-                                            />
-                                          </div>
-                                          <div>
-                                            <label className="block text-[10px] font-semibold text-foreground/50 uppercase tracking-wide">Seneste tilsætning</label>
-                                            <input
-                                              className="mt-0.5 w-full rounded-md border border-border bg-background px-2 py-1.5 text-xs shadow-sm"
-                                              value={profile.lastAmendment ?? ""}
-                                              onChange={(e) => updateSoilField({ lastAmendment: e.target.value || undefined })}
-                                              placeholder="Fx Kompost forår 2024"
-                                            />
-                                          </div>
-                                        </div>
-                                      </div>
-                                    ) : null}
-
-                                    {/* ── 5. Kompost ── */}
-                                    {section.key === "compost" ? (
-                                      <div className="space-y-2">
-                                        <div>
-                                          <label className="block text-[10px] font-semibold text-foreground/50 uppercase tracking-wide">Komposttype (vælg alle relevante)</label>
-                                          <div className="mt-0.5 flex flex-wrap gap-1">
-                                            {(Object.entries(COMPOST_TYPE_LABELS) as [string, string][]).map(([k, v]) => {
-                                              const active = profile.compostTypes?.includes(k as never) ?? false;
-                                              return (
-                                                <button
-                                                  key={k}
-                                                  type="button"
-                                                  className={`rounded-full px-2 py-0.5 text-[10px] font-medium transition-all ${
-                                                    active
-                                                      ? "bg-accent text-white shadow-sm"
-                                                      : "bg-foreground/5 text-foreground/50 hover:bg-foreground/10"
-                                                  }`}
-                                                  onClick={() => {
-                                                    const current = profile.compostTypes ?? [];
-                                                    const next = active ? current.filter((c) => c !== k) : [...current, k];
-                                                    updateSoilField({ compostTypes: next.length ? next as never[] : undefined });
-                                                  }}
-                                                >
-                                                  {v}
-                                                </button>
-                                              );
-                                            })}
-                                          </div>
-                                        </div>
-                                        <div className="grid grid-cols-2 gap-2">
-                                          {soilSelect("Modenhed", profile.compostMaturity, COMPOST_MATURITY_LABELS, (v) => updateSoilField({ compostMaturity: v || undefined }))}
-                                          {soilSelect("Mængde tilsat", profile.compostAmount, COMPOST_AMOUNT_LABELS, (v) => updateSoilField({ compostAmount: v || undefined }))}
-                                        </div>
-                                        <div className="grid grid-cols-2 gap-2">
-                                          <div>
-                                            <label className="block text-[10px] font-semibold text-foreground/50 uppercase tracking-wide">Senest tilsat</label>
-                                            <input
-                                              className="mt-0.5 w-full rounded-md border border-border bg-background px-2 py-1.5 text-xs shadow-sm"
-                                              value={profile.compostLastApplied ?? ""}
-                                              onChange={(e) => updateSoilField({ compostLastApplied: e.target.value || undefined })}
-                                              placeholder="Fx Efterår 2024"
-                                            />
-                                          </div>
-                                          <div>
-                                            <label className="block text-[10px] font-semibold text-foreground/50 uppercase tracking-wide">Noter</label>
-                                            <input
-                                              className="mt-0.5 w-full rounded-md border border-border bg-background px-2 py-1.5 text-xs shadow-sm"
-                                              value={profile.compostNotes ?? ""}
-                                              onChange={(e) => updateSoilField({ compostNotes: e.target.value || undefined })}
-                                              placeholder="Fx kilde, kvalitet"
-                                            />
-                                          </div>
-                                        </div>
-                                      </div>
-                                    ) : null}
-
-                                    {/* ── 6. pH ── */}
-                                    {section.key === "ph" ? (
-                                      <div className="space-y-2">
-                                        <div className="grid grid-cols-2 gap-2">
-                                          <div>
-                                            <label className="block text-[10px] font-semibold text-foreground/50 uppercase tracking-wide">pH (målt)</label>
-                                            <input
-                                              type="number"
-                                              min={4}
-                                              max={8.5}
-                                              step={0.1}
-                                              className="mt-0.5 w-full rounded-md border border-border bg-background px-2 py-1.5 text-xs shadow-sm"
-                                              value={profile.phMeasured ?? ""}
-                                              onChange={(e) => updateSoilField({ phMeasured: e.target.value ? Number(e.target.value) : undefined })}
-                                              placeholder="4.0–8.5"
-                                            />
-                                          </div>
-                                          {soilSelect("pH (kategori)", profile.phCategory, PH_CATEGORY_LABELS, (v) => updateSoilField({ phCategory: v || undefined }))}
-                                        </div>
-                                        <div className="grid grid-cols-2 gap-2">
-                                          {soilSelect("Målemetode", profile.phMethod, PH_METHOD_LABELS, (v) => updateSoilField({ phMethod: v || undefined }))}
-                                          <div>
-                                            <label className="block text-[10px] font-semibold text-foreground/50 uppercase tracking-wide">Senest målt</label>
-                                            <input
-                                              type="date"
-                                              className="mt-0.5 w-full rounded-md border border-border bg-background px-2 py-1.5 text-xs shadow-sm"
-                                              value={profile.phLastMeasured ?? ""}
-                                              onChange={(e) => updateSoilField({ phLastMeasured: e.target.value || undefined })}
-                                            />
-                                          </div>
-                                        </div>
-                                      </div>
-                                    ) : null}
-
-                                    {/* ── 7. Kalkindhold ── */}
-                                    {section.key === "lime" ? (
-                                      <div className="grid grid-cols-2 gap-2">
-                                        {soilSelect("Kalkindhold", profile.limeContent, LIME_CONTENT_LABELS, (v) => updateSoilField({ limeContent: v || undefined }))}
-                                        {soilSelect("Kalk tilsat (type)", profile.limeType, LIME_TYPE_LABELS, (v) => updateSoilField({ limeType: v || undefined }))}
-                                        <div className="col-span-2">
-                                          {soilToggle("Kalket inden for 3 år", profile.limedRecently, (v) => updateSoilField({ limedRecently: v }))}
-                                        </div>
-                                      </div>
-                                    ) : null}
-
-                                    {/* ── 8. NPK ── */}
-                                    {section.key === "npk" ? (
-                                      <div className="space-y-2">
-                                        <div className="grid grid-cols-2 gap-2">
-                                          {soilSelect("Kvælstof (N)", profile.nitrogen, NUTRIENT_LABELS, (v) => updateSoilField({ nitrogen: v || undefined }))}
-                                          {soilSelect("Fosfor (P)", profile.phosphorus, NUTRIENT_LABELS, (v) => updateSoilField({ phosphorus: v || undefined }))}
-                                          {soilSelect("Kalium (K)", profile.potassium, NUTRIENT_LABELS, (v) => updateSoilField({ potassium: v || undefined }))}
-                                          {soilSelect("Magnesium (Mg)", profile.magnesium, NUTRIENT_LABELS, (v) => updateSoilField({ magnesium: v || undefined }))}
-                                        </div>
-                                        <div className="grid grid-cols-2 gap-2">
-                                          {soilSelect("Kilde", profile.npkSource, NPK_SOURCE_LABELS, (v) => updateSoilField({ npkSource: v || undefined }))}
-                                          <div>
-                                            <label className="block text-[10px] font-semibold text-foreground/50 uppercase tracking-wide">Analysedato</label>
-                                            <input
-                                              type="date"
-                                              className="mt-0.5 w-full rounded-md border border-border bg-background px-2 py-1.5 text-xs shadow-sm"
-                                              value={profile.npkDate ?? ""}
-                                              onChange={(e) => updateSoilField({ npkDate: e.target.value || undefined })}
-                                            />
-                                          </div>
-                                        </div>
-                                      </div>
-                                    ) : null}
-
-                                    {/* ── 9. Kornstørrelse ── */}
-                                    {section.key === "grain" ? (
-                                      <div className="space-y-2">
-                                        <div className="grid grid-cols-3 gap-2">
-                                          {(["clay", "sand", "silt"] as const).map((grain) => {
-                                            const key = `${grain}Percent` as "clayPercent" | "sandPercent" | "siltPercent";
-                                            const labels = { clay: "Ler %", sand: "Sand %", silt: "Silt %" };
-                                            return (
-                                              <div key={grain}>
-                                                <label className="block text-[10px] font-semibold text-foreground/50 uppercase tracking-wide">{labels[grain]}</label>
-                                                <input
-                                                  type="number"
-                                                  min={0}
-                                                  max={100}
-                                                  step={1}
-                                                  className="mt-0.5 w-full rounded-md border border-border bg-background px-2 py-1.5 text-xs shadow-sm"
-                                                  value={profile[key] ?? ""}
-                                                  onChange={(e) => updateSoilField({ [key]: e.target.value ? Number(e.target.value) : undefined })}
-                                                  placeholder="0–100"
-                                                />
-                                              </div>
-                                            );
-                                          })}
-                                        </div>
-                                        {soilSelect("Kompression", profile.compression, COMPRESSION_LABELS, (v) => updateSoilField({ compression: v || undefined }))}
-                                      </div>
-                                    ) : null}
-                                  </div>
-                                ) : null}
-                              </div>
-                            );
-                          })}
-
-                          {/* ── Soil log / change history ── */}
-                          <div className="rounded-md border border-foreground/10 overflow-hidden">
-                            <button
-                              type="button"
-                              className="flex w-full items-center gap-1.5 px-2.5 py-1.5 text-left hover:bg-foreground/[0.03] transition-colors"
-                              onClick={() => setSoilLogOpen(!soilLogOpen)}
-                            >
-                              <span className="text-xs leading-none">📋</span>
-                              <span className="flex-1 text-[10px] font-semibold text-foreground/60 uppercase tracking-wide">
-                                Ændringslog ({logEntries.length})
-                              </span>
-                              <span className="text-[9px] text-foreground/30">{soilLogOpen ? "▲" : "▼"}</span>
-                            </button>
-                            {soilLogOpen ? (
-                              <div className="px-2.5 pb-2 pt-1 space-y-2">
-                                {/* Add entry */}
-                                <div className="grid grid-cols-[1fr_auto] gap-1.5">
-                                  <select
-                                    className="rounded-md border border-border bg-background px-2 py-1 text-[11px] shadow-sm"
-                                    value={soilLogAction}
-                                    onChange={(e) => setSoilLogAction(e.target.value as SoilLogAction)}
-                                  >
-                                    {Object.entries(SOIL_LOG_ACTION_LABELS).map(([k, v]) => (
-                                      <option key={k} value={k}>{v}</option>
-                                    ))}
-                                  </select>
-                                  <button
-                                    type="button"
-                                    className="rounded-md border border-border bg-background px-2 py-1 text-[11px] font-medium text-foreground/70 hover:bg-foreground/5 transition-colors shadow-sm"
-                                    onClick={() => {
-                                      addSoilLogEntry({
-                                        id: crypto.randomUUID(),
-                                        profileId: profile.id,
-                                        date: new Date().toISOString().slice(0, 10),
-                                        action: soilLogAction,
-                                        notes: soilLogNotes || undefined,
-                                      });
-                                      setSoilLogNotes("");
-                                      setSoilDataVersion((v) => v + 1);
-                                    }}
-                                  >
-                                    + Tilføj
-                                  </button>
-                                </div>
-                                <input
-                                  className="w-full rounded-md border border-border bg-background px-2 py-1 text-[11px] shadow-sm"
-                                  value={soilLogNotes}
-                                  onChange={(e) => setSoilLogNotes(e.target.value)}
-                                  placeholder="Note (valgfrit)"
-                                />
-
-                                {/* Existing entries */}
-                                {logEntries.length > 0 ? (
-                                  <div className="max-h-32 overflow-y-auto space-y-0.5">
-                                    {logEntries.map((entry) => (
-                                      <div
-                                        key={entry.id}
-                                        className="flex items-center gap-1.5 rounded px-1.5 py-1 text-[10px] text-foreground/60 hover:bg-foreground/[0.03]"
-                                      >
-                                        <span className="shrink-0 text-foreground/40">{entry.date}</span>
-                                        <span className="flex-1 truncate">{SOIL_LOG_ACTION_LABELS[entry.action]}{entry.notes ? ` — ${entry.notes}` : ""}</span>
-                                        <button
-                                          type="button"
-                                          className="shrink-0 rounded px-1 text-foreground/30 hover:text-red-500"
-                                          onClick={() => { deleteSoilLogEntry(entry.id); setSoilDataVersion((v) => v + 1); }}
-                                        >
-                                          ✕
-                                        </button>
-                                      </div>
-                                    ))}
-                                  </div>
-                                ) : (
-                                  <p className="text-[10px] text-foreground/40 italic">Ingen registreringer endnu.</p>
-                                )}
-                              </div>
-                            ) : null}
-                          </div>
-
-                          {/* ── Profile notes ── */}
-                          <div>
-                            <label className="block text-[10px] font-semibold text-foreground/50 uppercase tracking-wide">Jordnoter</label>
-                            <textarea
-                              className="mt-0.5 w-full rounded-md border border-border bg-background px-2 py-1.5 text-xs shadow-sm resize-none"
-                              rows={2}
-                              value={profile.notes ?? ""}
-                              onChange={(e) => updateSoilField({ notes: e.target.value || undefined })}
-                              placeholder="Generelle noter om denne jord…"
-                            />
-                          </div>
-                        </>
-                      )}
+                      {/* Link to edit in Bibliotek → Jord */}
+                      {profile ? (
+                        <button
+                          type="button"
+                          className="w-full flex items-center justify-center gap-1.5 rounded-md border border-accent/30 bg-accent-light/20 px-2 py-2 text-xs font-medium text-accent-dark hover:bg-accent-light/40 transition-colors"
+                          onClick={() => {
+                            setSidebarTab("plants");
+                            setLibSubTab("soil");
+                            setLibSoilEditId(profile.id);
+                          }}
+                        >
+                          🪨 Redigér &quot;{profile.name}&quot; i Bibliotek →
+                        </button>
+                      ) : null}
                     </div>
                   ) : null}
                 </div>
@@ -12923,6 +12465,34 @@ export function GardenMapClient({ userId }: { userId: string }) {
         {/* ══════════════════════════════════════════════════════════════ */}
         {sidebarTab === "plants" ? (
           <div className="mt-3 space-y-3">
+            {/* Sub-tab: Planter / Jord */}
+            <div className="flex gap-1 rounded-lg bg-background p-1 border border-border-light shadow-sm">
+              <button
+                type="button"
+                className={`flex-1 rounded-md px-2 py-1.5 text-[11px] font-medium transition-all ${
+                  libSubTab === "plants"
+                    ? "bg-accent text-white shadow-sm"
+                    : "text-foreground/60 hover:bg-foreground/5 hover:text-foreground/80"
+                }`}
+                onClick={() => setLibSubTab("plants")}
+              >
+                🌱 Planter
+              </button>
+              <button
+                type="button"
+                className={`flex-1 rounded-md px-2 py-1.5 text-[11px] font-medium transition-all ${
+                  libSubTab === "soil"
+                    ? "bg-accent text-white shadow-sm"
+                    : "text-foreground/60 hover:bg-foreground/5 hover:text-foreground/80"
+                }`}
+                onClick={() => setLibSubTab("soil")}
+              >
+                🪨 Jord
+              </button>
+            </div>
+
+            {libSubTab === "plants" ? (
+            <>
             {/* Search */}
             <input
               className="w-full rounded-lg border border-border bg-background px-3 py-2.5 text-sm shadow-sm placeholder:text-muted/60 focus:outline-none focus:ring-2 focus:ring-accent/30 focus:border-accent/50 transition-all"
@@ -13329,6 +12899,544 @@ export function GardenMapClient({ userId }: { userId: string }) {
                 ? ` Du kan tilføje planter direkte til det valgte ${CATEGORY_LABELS[selectedCategory as keyof typeof CATEGORY_LABELS] ?? "element"}.`
                 : " Vælg et bed, række eller element på kortet for at tilføje planter."}
             </p>
+            </>
+            ) : null}
+
+            {/* ══════════════════════════════════════════════════════════ */}
+            {/* ── JORD SUB-TAB: Soil Profiles list + editor ──────────  */}
+            {/* ══════════════════════════════════════════════════════════ */}
+            {libSubTab === "soil" ? (() => {
+              const allProfiles = loadSoilProfiles();
+              void soilDataVersion;
+              const editingProfile = libSoilEditId ? getSoilProfileById(libSoilEditId) : undefined;
+
+              /** Helper: update a field on the editing soil profile */
+              const updateSoilField = (patch: Partial<SoilProfile>) => {
+                if (!editingProfile) return;
+                addOrUpdateSoilProfile({ ...editingProfile, ...patch });
+                setSoilDataVersion((v) => v + 1);
+              };
+
+              /** Render a select dropdown for a soil field */
+              const soilSelect = <T extends string>(
+                label: string,
+                value: T | undefined,
+                options: Record<string, string>,
+                onChange: (v: T) => void,
+              ) => (
+                <div>
+                  <label className="block text-[10px] font-semibold text-foreground/50 uppercase tracking-wide">{label}</label>
+                  <select
+                    className="mt-0.5 w-full rounded-md border border-border bg-background px-2 py-1.5 text-xs shadow-sm"
+                    value={value ?? ""}
+                    onChange={(e) => onChange(e.target.value as T)}
+                  >
+                    <option value="">—</option>
+                    {Object.entries(options).map(([k, v]) => (
+                      <option key={k} value={k}>{v}</option>
+                    ))}
+                  </select>
+                </div>
+              );
+
+              /** Render a yes/no toggle */
+              const soilToggle = (label: string, value: boolean | undefined, onChange: (v: boolean | undefined) => void) => (
+                <div>
+                  <label className="block text-[10px] font-semibold text-foreground/50 uppercase tracking-wide">{label}</label>
+                  <div className="mt-0.5 flex gap-1">
+                    {(["yes", "no", "unknown"] as const).map((opt) => {
+                      const isActive = opt === "yes" ? value === true : opt === "no" ? value === false : value === undefined;
+                      return (
+                        <button
+                          key={opt}
+                          type="button"
+                          className={`flex-1 rounded-md border px-2 py-1 text-[10px] font-medium transition-all ${
+                            isActive
+                              ? "border-accent/30 bg-accent-light text-accent-dark"
+                              : "border-border bg-background text-foreground/50 hover:bg-foreground/5"
+                          }`}
+                          onClick={() => onChange(opt === "yes" ? true : opt === "no" ? false : undefined)}
+                        >
+                          {opt === "yes" ? "Ja" : opt === "no" ? "Nej" : "—"}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              );
+
+              const filteredSections = SOIL_SECTIONS.filter((s) =>
+                soilLevelFilter === "all" || s.level <= soilLevelFilter
+              );
+
+              const logEntries = editingProfile ? getLogForProfile(editingProfile.id) : [];
+              const recs = editingProfile ? computeSoilRecommendations(editingProfile) : [];
+
+              return (
+                <div className="space-y-3">
+                  {/* ── Profile list (when NOT editing) ── */}
+                  {!libSoilEditId ? (
+                    <>
+                      <button
+                        type="button"
+                        className="w-full rounded-lg border border-dashed border-green-500/30 bg-green-50/50 px-3 py-2.5 text-xs font-medium text-green-800 hover:bg-green-100 hover:border-green-500/50 transition-all dark:border-green-500/20 dark:bg-green-900/10 dark:text-green-300 dark:hover:bg-green-900/20"
+                        onClick={() => {
+                          const bp = createBlankSoilProfile("Ny jordprofil");
+                          addOrUpdateSoilProfile(bp);
+                          setSoilDataVersion((v) => v + 1);
+                          setLibSoilEditId(bp.id);
+                        }}
+                      >
+                        ➕ Ny jordprofil
+                      </button>
+                      {allProfiles.length === 0 ? (
+                        <p className="text-xs text-foreground/40 italic text-center py-4">
+                          🪨 Ingen jordprofiler endnu. Opret din første ovenfor.
+                        </p>
+                      ) : (
+                        <div className="space-y-1.5">
+                          {allProfiles.map((p) => (
+                            <button
+                              key={p.id}
+                              type="button"
+                              className="w-full flex items-center gap-2 rounded-lg border border-foreground/10 bg-foreground/[0.02] px-3 py-2.5 text-left hover:bg-foreground/[0.05] hover:border-accent/30 transition-all group"
+                              onClick={() => setLibSoilEditId(p.id)}
+                            >
+                              <span className="text-base">🪨</span>
+                              <div className="flex-1 min-w-0">
+                                <div className="text-xs font-medium truncate">{p.name}</div>
+                                {p.baseType ? (
+                                  <div className="text-[10px] text-foreground/50">{SOIL_BASE_TYPE_LABELS[p.baseType]}</div>
+                                ) : (
+                                  <div className="text-[10px] text-foreground/30 italic">Ingen type valgt</div>
+                                )}
+                              </div>
+                              <span className="text-[10px] text-foreground/30 group-hover:text-accent transition-colors">Rediger →</span>
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                      <p className="text-[10px] text-foreground/40 leading-tight">
+                        🪨 {allProfiles.length} jordprofil{allProfiles.length !== 1 ? "er" : ""} oprettet. Jordprofiler kan tilknyttes beds, beholdere og jord-zoner via Indhold-panelet.
+                      </p>
+                    </>
+                  ) : editingProfile ? (
+                    <>
+                      {/* ── Back button ── */}
+                      <button
+                        type="button"
+                        className="flex items-center gap-1.5 rounded-lg border border-border px-2.5 py-1.5 text-xs text-foreground/60 hover:bg-foreground/5 hover:text-foreground transition-all"
+                        onClick={() => setLibSoilEditId(null)}
+                      >
+                        ← Tilbage til liste
+                      </button>
+
+                      {/* ── Profile name ── */}
+                      <div className="flex items-center gap-2">
+                        <input
+                          className="flex-1 rounded-md border border-border bg-background px-2 py-1.5 text-sm font-medium shadow-sm"
+                          value={editingProfile.name}
+                          onChange={(e) => updateSoilField({ name: e.target.value })}
+                          placeholder="Profilnavn"
+                        />
+                        <button
+                          type="button"
+                          className="shrink-0 rounded px-2 py-1.5 text-[10px] text-red-500/60 hover:text-red-600 hover:bg-red-50 border border-transparent hover:border-red-200 transition-all"
+                          onClick={() => {
+                            if (confirm("Slet denne jordprofil permanent?")) {
+                              deleteSoilProfile(editingProfile.id);
+                              setSoilDataVersion((v) => v + 1);
+                              setLibSoilEditId(null);
+                            }
+                          }}
+                          title="Slet profil"
+                        >
+                          🗑️ Slet
+                        </button>
+                      </div>
+
+                      {/* ── Level filter pills ── */}
+                      <div className="flex gap-1">
+                        {([
+                          { v: "all" as const, label: "Alle" },
+                          { v: 1 as const, label: "👀 Basis" },
+                          { v: 2 as const, label: "🧪 Nørdet" },
+                          { v: 3 as const, label: "🔬 Lab" },
+                        ]).map((opt) => (
+                          <button
+                            key={String(opt.v)}
+                            type="button"
+                            className={`rounded-full px-2 py-0.5 text-[10px] font-medium transition-all ${
+                              soilLevelFilter === opt.v
+                                ? "bg-accent text-white shadow-sm"
+                                : "bg-foreground/5 text-foreground/50 hover:bg-foreground/10"
+                            }`}
+                            onClick={() => setSoilLevelFilter(opt.v)}
+                          >
+                            {opt.label}
+                          </button>
+                        ))}
+                      </div>
+
+                      {/* ── Recommendations ── */}
+                      {recs.length > 0 ? (
+                        <div className="space-y-1">
+                          {recs.map((r, i) => (
+                            <div
+                              key={i}
+                              className={`rounded-md border px-2 py-1.5 text-[11px] ${
+                                r.priority === "warning"
+                                  ? "border-amber-200 bg-amber-50 text-amber-800 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-200"
+                                  : r.priority === "suggestion"
+                                  ? "border-blue-200 bg-blue-50 text-blue-800 dark:border-blue-800 dark:bg-blue-950 dark:text-blue-200"
+                                  : "border-foreground/10 bg-foreground/[0.02] text-foreground/60"
+                              }`}
+                            >
+                              <span className="font-medium">{r.icon} {r.label}</span>
+                              <p className="text-[10px] opacity-80 mt-0.5">{r.description}</p>
+                            </div>
+                          ))}
+                        </div>
+                      ) : null}
+
+                      {/* ── Accordion sections ── */}
+                      {filteredSections.map((section) => {
+                        const isOpen = soilOpenSections.has(section.key);
+                        return (
+                          <div key={section.key} className="rounded-md border border-foreground/10 overflow-hidden">
+                            <button
+                              type="button"
+                              className="flex w-full items-center gap-1.5 px-2.5 py-1.5 text-left hover:bg-foreground/[0.03] transition-colors"
+                              onClick={() => {
+                                setSoilOpenSections((prev) => {
+                                  const next = new Set(prev);
+                                  if (next.has(section.key)) next.delete(section.key);
+                                  else next.add(section.key);
+                                  return next;
+                                });
+                              }}
+                            >
+                              <span className="text-xs leading-none">{section.icon}</span>
+                              <span className="flex-1 text-[10px] font-semibold text-foreground/60 uppercase tracking-wide">{section.label}</span>
+                              <span className="rounded-full bg-foreground/5 px-1.5 py-0.5 text-[8px] text-foreground/40">Niv. {section.level}</span>
+                              <span className="text-[9px] text-foreground/30">{isOpen ? "▲" : "▼"}</span>
+                            </button>
+
+                            {isOpen ? (
+                              <div className="px-2.5 pb-2 pt-1 space-y-2">
+                                {/* ── 1. Jordtype ── */}
+                                {section.key === "type" ? (
+                                  <div className="grid grid-cols-1 gap-2">
+                                    {soilSelect("Jordtype", editingProfile.baseType, SOIL_BASE_TYPE_LABELS, (v) => updateSoilField({ baseType: v || undefined }))}
+                                    {editingProfile.baseType && SOIL_BASE_TYPE_DESC[editingProfile.baseType] ? (
+                                      <p className="text-[10px] text-foreground/40 italic leading-snug">{SOIL_BASE_TYPE_DESC[editingProfile.baseType]}</p>
+                                    ) : null}
+                                    <div className="grid grid-cols-2 gap-2">
+                                      {soilSelect("Farve", editingProfile.color, SOIL_COLOR_LABELS, (v) => updateSoilField({ color: v || undefined }))}
+                                      {soilSelect("Struktur ved berøring", editingProfile.texture, SOIL_TEXTURE_LABELS, (v) => updateSoilField({ texture: v || undefined }))}
+                                    </div>
+                                  </div>
+                                ) : null}
+
+                                {/* ── 2. Fugt & dræning ── */}
+                                {section.key === "moisture" ? (
+                                  <div className="grid grid-cols-2 gap-2">
+                                    {soilSelect("Dræning", editingProfile.drainage, DRAINAGE_LABELS, (v) => updateSoilField({ drainage: v || undefined }))}
+                                    {soilSelect("Aktuel fugtighed", editingProfile.moisture, MOISTURE_LABELS, (v) => updateSoilField({ moisture: v || undefined }))}
+                                    <div className="col-span-2">
+                                      {soilToggle("Tendens til udtørring", editingProfile.droughtProne, (v) => updateSoilField({ droughtProne: v }))}
+                                    </div>
+                                  </div>
+                                ) : null}
+
+                                {/* ── 3. Liv i jorden ── */}
+                                {section.key === "life" ? (
+                                  <div className="grid grid-cols-2 gap-2">
+                                    {soilSelect("Regnorme ved gravning", editingProfile.earthworms, EARTHWORM_LABELS, (v) => updateSoilField({ earthworms: v || undefined }))}
+                                    {soilSelect("Generel vurdering", editingProfile.soilHealth, SOIL_HEALTH_LABELS, (v) => updateSoilField({ soilHealth: v || undefined }))}
+                                    <div className="col-span-2">
+                                      {soilToggle("Synligt svampeflor", editingProfile.fungalNetwork, (v) => updateSoilField({ fungalNetwork: v }))}
+                                    </div>
+                                  </div>
+                                ) : null}
+
+                                {/* ── 4. Organisk indhold ── */}
+                                {section.key === "organic" ? (
+                                  <div className="space-y-2">
+                                    {soilSelect("Organisk indhold (visuelt)", editingProfile.organicVisual, ORGANIC_LABELS, (v) => updateSoilField({ organicVisual: v || undefined }))}
+                                    <div className="grid grid-cols-2 gap-2">
+                                      <div>
+                                        <label className="block text-[10px] font-semibold text-foreground/50 uppercase tracking-wide">Organisk % (valgfrit)</label>
+                                        <input
+                                          type="number" min={0} max={20} step={0.5}
+                                          className="mt-0.5 w-full rounded-md border border-border bg-background px-2 py-1.5 text-xs shadow-sm"
+                                          value={editingProfile.organicPercent ?? ""}
+                                          onChange={(e) => updateSoilField({ organicPercent: e.target.value ? Number(e.target.value) : undefined })}
+                                          placeholder="0–20"
+                                        />
+                                      </div>
+                                      <div>
+                                        <label className="block text-[10px] font-semibold text-foreground/50 uppercase tracking-wide">Seneste tilsætning</label>
+                                        <input
+                                          className="mt-0.5 w-full rounded-md border border-border bg-background px-2 py-1.5 text-xs shadow-sm"
+                                          value={editingProfile.lastAmendment ?? ""}
+                                          onChange={(e) => updateSoilField({ lastAmendment: e.target.value || undefined })}
+                                          placeholder="Fx Kompost forår 2024"
+                                        />
+                                      </div>
+                                    </div>
+                                  </div>
+                                ) : null}
+
+                                {/* ── 5. Kompost ── */}
+                                {section.key === "compost" ? (
+                                  <div className="space-y-2">
+                                    <div>
+                                      <label className="block text-[10px] font-semibold text-foreground/50 uppercase tracking-wide">Komposttype (vælg alle relevante)</label>
+                                      <div className="mt-0.5 flex flex-wrap gap-1">
+                                        {(Object.entries(COMPOST_TYPE_LABELS) as [string, string][]).map(([k, v]) => {
+                                          const active = editingProfile.compostTypes?.includes(k as never) ?? false;
+                                          return (
+                                            <button
+                                              key={k}
+                                              type="button"
+                                              className={`rounded-full px-2 py-0.5 text-[10px] font-medium transition-all ${
+                                                active
+                                                  ? "bg-accent text-white shadow-sm"
+                                                  : "bg-foreground/5 text-foreground/50 hover:bg-foreground/10"
+                                              }`}
+                                              onClick={() => {
+                                                const current = editingProfile.compostTypes ?? [];
+                                                const next = active ? current.filter((c) => c !== k) : [...current, k];
+                                                updateSoilField({ compostTypes: next.length ? next as never[] : undefined });
+                                              }}
+                                            >
+                                              {v}
+                                            </button>
+                                          );
+                                        })}
+                                      </div>
+                                    </div>
+                                    <div className="grid grid-cols-2 gap-2">
+                                      {soilSelect("Modenhed", editingProfile.compostMaturity, COMPOST_MATURITY_LABELS, (v) => updateSoilField({ compostMaturity: v || undefined }))}
+                                      {soilSelect("Mængde tilsat", editingProfile.compostAmount, COMPOST_AMOUNT_LABELS, (v) => updateSoilField({ compostAmount: v || undefined }))}
+                                    </div>
+                                    <div className="grid grid-cols-2 gap-2">
+                                      <div>
+                                        <label className="block text-[10px] font-semibold text-foreground/50 uppercase tracking-wide">Senest tilsat</label>
+                                        <input
+                                          className="mt-0.5 w-full rounded-md border border-border bg-background px-2 py-1.5 text-xs shadow-sm"
+                                          value={editingProfile.compostLastApplied ?? ""}
+                                          onChange={(e) => updateSoilField({ compostLastApplied: e.target.value || undefined })}
+                                          placeholder="Fx Efterår 2024"
+                                        />
+                                      </div>
+                                      <div>
+                                        <label className="block text-[10px] font-semibold text-foreground/50 uppercase tracking-wide">Noter</label>
+                                        <input
+                                          className="mt-0.5 w-full rounded-md border border-border bg-background px-2 py-1.5 text-xs shadow-sm"
+                                          value={editingProfile.compostNotes ?? ""}
+                                          onChange={(e) => updateSoilField({ compostNotes: e.target.value || undefined })}
+                                          placeholder="Fx kilde, kvalitet"
+                                        />
+                                      </div>
+                                    </div>
+                                  </div>
+                                ) : null}
+
+                                {/* ── 6. pH ── */}
+                                {section.key === "ph" ? (
+                                  <div className="space-y-2">
+                                    <div className="grid grid-cols-2 gap-2">
+                                      <div>
+                                        <label className="block text-[10px] font-semibold text-foreground/50 uppercase tracking-wide">pH (målt)</label>
+                                        <input
+                                          type="number" min={4} max={8.5} step={0.1}
+                                          className="mt-0.5 w-full rounded-md border border-border bg-background px-2 py-1.5 text-xs shadow-sm"
+                                          value={editingProfile.phMeasured ?? ""}
+                                          onChange={(e) => updateSoilField({ phMeasured: e.target.value ? Number(e.target.value) : undefined })}
+                                          placeholder="4.0–8.5"
+                                        />
+                                      </div>
+                                      {soilSelect("pH (kategori)", editingProfile.phCategory, PH_CATEGORY_LABELS, (v) => updateSoilField({ phCategory: v || undefined }))}
+                                    </div>
+                                    <div className="grid grid-cols-2 gap-2">
+                                      {soilSelect("Målemetode", editingProfile.phMethod, PH_METHOD_LABELS, (v) => updateSoilField({ phMethod: v || undefined }))}
+                                      <div>
+                                        <label className="block text-[10px] font-semibold text-foreground/50 uppercase tracking-wide">Senest målt</label>
+                                        <input
+                                          type="date"
+                                          className="mt-0.5 w-full rounded-md border border-border bg-background px-2 py-1.5 text-xs shadow-sm"
+                                          value={editingProfile.phLastMeasured ?? ""}
+                                          onChange={(e) => updateSoilField({ phLastMeasured: e.target.value || undefined })}
+                                        />
+                                      </div>
+                                    </div>
+                                  </div>
+                                ) : null}
+
+                                {/* ── 7. Kalkindhold ── */}
+                                {section.key === "lime" ? (
+                                  <div className="grid grid-cols-2 gap-2">
+                                    {soilSelect("Kalkindhold", editingProfile.limeContent, LIME_CONTENT_LABELS, (v) => updateSoilField({ limeContent: v || undefined }))}
+                                    {soilSelect("Kalk tilsat (type)", editingProfile.limeType, LIME_TYPE_LABELS, (v) => updateSoilField({ limeType: v || undefined }))}
+                                    <div className="col-span-2">
+                                      {soilToggle("Kalket inden for 3 år", editingProfile.limedRecently, (v) => updateSoilField({ limedRecently: v }))}
+                                    </div>
+                                  </div>
+                                ) : null}
+
+                                {/* ── 8. NPK ── */}
+                                {section.key === "npk" ? (
+                                  <div className="space-y-2">
+                                    <div className="grid grid-cols-2 gap-2">
+                                      {soilSelect("Kvælstof (N)", editingProfile.nitrogen, NUTRIENT_LABELS, (v) => updateSoilField({ nitrogen: v || undefined }))}
+                                      {soilSelect("Fosfor (P)", editingProfile.phosphorus, NUTRIENT_LABELS, (v) => updateSoilField({ phosphorus: v || undefined }))}
+                                      {soilSelect("Kalium (K)", editingProfile.potassium, NUTRIENT_LABELS, (v) => updateSoilField({ potassium: v || undefined }))}
+                                      {soilSelect("Magnesium (Mg)", editingProfile.magnesium, NUTRIENT_LABELS, (v) => updateSoilField({ magnesium: v || undefined }))}
+                                    </div>
+                                    <div className="grid grid-cols-2 gap-2">
+                                      {soilSelect("Kilde", editingProfile.npkSource, NPK_SOURCE_LABELS, (v) => updateSoilField({ npkSource: v || undefined }))}
+                                      <div>
+                                        <label className="block text-[10px] font-semibold text-foreground/50 uppercase tracking-wide">Analysedato</label>
+                                        <input
+                                          type="date"
+                                          className="mt-0.5 w-full rounded-md border border-border bg-background px-2 py-1.5 text-xs shadow-sm"
+                                          value={editingProfile.npkDate ?? ""}
+                                          onChange={(e) => updateSoilField({ npkDate: e.target.value || undefined })}
+                                        />
+                                      </div>
+                                    </div>
+                                  </div>
+                                ) : null}
+
+                                {/* ── 9. Kornstørrelse ── */}
+                                {section.key === "grain" ? (
+                                  <div className="space-y-2">
+                                    <div className="grid grid-cols-3 gap-2">
+                                      {(["clay", "sand", "silt"] as const).map((grain) => {
+                                        const key = `${grain}Percent` as "clayPercent" | "sandPercent" | "siltPercent";
+                                        const labels = { clay: "Ler %", sand: "Sand %", silt: "Silt %" };
+                                        return (
+                                          <div key={grain}>
+                                            <label className="block text-[10px] font-semibold text-foreground/50 uppercase tracking-wide">{labels[grain]}</label>
+                                            <input
+                                              type="number" min={0} max={100} step={1}
+                                              className="mt-0.5 w-full rounded-md border border-border bg-background px-2 py-1.5 text-xs shadow-sm"
+                                              value={editingProfile[key] ?? ""}
+                                              onChange={(e) => updateSoilField({ [key]: e.target.value ? Number(e.target.value) : undefined })}
+                                              placeholder="0–100"
+                                            />
+                                          </div>
+                                        );
+                                      })}
+                                    </div>
+                                    {soilSelect("Kompression", editingProfile.compression, COMPRESSION_LABELS, (v) => updateSoilField({ compression: v || undefined }))}
+                                  </div>
+                                ) : null}
+                              </div>
+                            ) : null}
+                          </div>
+                        );
+                      })}
+
+                      {/* ── Soil log / change history ── */}
+                      <div className="rounded-md border border-foreground/10 overflow-hidden">
+                        <button
+                          type="button"
+                          className="flex w-full items-center gap-1.5 px-2.5 py-1.5 text-left hover:bg-foreground/[0.03] transition-colors"
+                          onClick={() => setSoilLogOpen(!soilLogOpen)}
+                        >
+                          <span className="text-xs leading-none">📋</span>
+                          <span className="flex-1 text-[10px] font-semibold text-foreground/60 uppercase tracking-wide">
+                            Ændringslog ({logEntries.length})
+                          </span>
+                          <span className="text-[9px] text-foreground/30">{soilLogOpen ? "▲" : "▼"}</span>
+                        </button>
+                        {soilLogOpen ? (
+                          <div className="px-2.5 pb-2 pt-1 space-y-2">
+                            {/* Add entry */}
+                            <div className="grid grid-cols-[1fr_auto] gap-1.5">
+                              <select
+                                className="rounded-md border border-border bg-background px-2 py-1 text-[11px] shadow-sm"
+                                value={soilLogAction}
+                                onChange={(e) => setSoilLogAction(e.target.value as SoilLogAction)}
+                              >
+                                {Object.entries(SOIL_LOG_ACTION_LABELS).map(([k, v]) => (
+                                  <option key={k} value={k}>{v}</option>
+                                ))}
+                              </select>
+                              <button
+                                type="button"
+                                className="rounded-md border border-border bg-background px-2 py-1 text-[11px] font-medium text-foreground/70 hover:bg-foreground/5 transition-colors shadow-sm"
+                                onClick={() => {
+                                  addSoilLogEntry({
+                                    id: crypto.randomUUID(),
+                                    profileId: editingProfile.id,
+                                    date: new Date().toISOString().slice(0, 10),
+                                    action: soilLogAction,
+                                    notes: soilLogNotes || undefined,
+                                  });
+                                  setSoilLogNotes("");
+                                  setSoilDataVersion((v) => v + 1);
+                                }}
+                              >
+                                + Tilføj
+                              </button>
+                            </div>
+                            <input
+                              className="w-full rounded-md border border-border bg-background px-2 py-1 text-[11px] shadow-sm"
+                              value={soilLogNotes}
+                              onChange={(e) => setSoilLogNotes(e.target.value)}
+                              placeholder="Note (valgfrit)"
+                            />
+
+                            {/* Existing entries */}
+                            {logEntries.length > 0 ? (
+                              <div className="max-h-32 overflow-y-auto space-y-0.5">
+                                {logEntries.map((entry) => (
+                                  <div
+                                    key={entry.id}
+                                    className="flex items-center gap-1.5 rounded px-1.5 py-1 text-[10px] text-foreground/60 hover:bg-foreground/[0.03]"
+                                  >
+                                    <span className="shrink-0 text-foreground/40">{entry.date}</span>
+                                    <span className="flex-1 truncate">{SOIL_LOG_ACTION_LABELS[entry.action]}{entry.notes ? ` — ${entry.notes}` : ""}</span>
+                                    <button
+                                      type="button"
+                                      className="shrink-0 rounded px-1 text-foreground/30 hover:text-red-500"
+                                      onClick={() => { deleteSoilLogEntry(entry.id); setSoilDataVersion((v) => v + 1); }}
+                                    >
+                                      ✕
+                                    </button>
+                                  </div>
+                                ))}
+                              </div>
+                            ) : (
+                              <p className="text-[10px] text-foreground/40 italic">Ingen registreringer endnu.</p>
+                            )}
+                          </div>
+                        ) : null}
+                      </div>
+
+                      {/* ── Profile notes ── */}
+                      <div>
+                        <label className="block text-[10px] font-semibold text-foreground/50 uppercase tracking-wide">Jordnoter</label>
+                        <textarea
+                          className="mt-0.5 w-full rounded-md border border-border bg-background px-2 py-1.5 text-xs shadow-sm resize-none"
+                          rows={2}
+                          value={editingProfile.notes ?? ""}
+                          onChange={(e) => updateSoilField({ notes: e.target.value || undefined })}
+                          placeholder="Generelle noter om denne jord…"
+                        />
+                      </div>
+                    </>
+                  ) : (
+                    <p className="text-xs text-foreground/40 italic">Jordprofilen blev ikke fundet. <button type="button" className="underline" onClick={() => setLibSoilEditId(null)}>Gå tilbage</button></p>
+                  )}
+                </div>
+              );
+            })() : null}
+
           </div>
         ) : null}
 
