@@ -8331,7 +8331,7 @@ export function GardenMapClient({ userId }: { userId: string }) {
          ══════════════════════════════════════════════════════════════ */}
       <aside className={`
         flex flex-col border-border bg-sidebar-bg
-        md:row-start-2 md:col-start-2 md:border-l md:shadow-xl md:min-h-0
+        md:row-start-2 md:col-start-2 md:h-full md:border-l md:shadow-xl md:min-h-0
         md:transition-[width] md:duration-300 md:ease-in-out md:overflow-hidden
         ${sidebarPanelOpen ? "md:w-[340px]" : "md:w-0 md:border-l-0"}
         max-md:fixed max-md:bottom-0 max-md:left-0 max-md:right-0 max-md:z-[9998]
@@ -8347,7 +8347,7 @@ export function GardenMapClient({ userId }: { userId: string }) {
         </div>
 
         {/* Inner wrapper – keeps content at 340px even while aside width transitions */}
-        <div className="md:w-[340px] md:min-w-[340px] flex flex-col flex-1 min-h-0 overflow-hidden">
+        <div className="md:w-[340px] md:min-w-[340px] flex flex-col h-full min-h-0">
 
         {/* Panel header */}
         <div className="flex items-center justify-between px-4 pt-3 pb-2 border-b border-border/50 shrink-0">
