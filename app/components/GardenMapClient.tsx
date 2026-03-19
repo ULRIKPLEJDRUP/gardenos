@@ -58,7 +58,7 @@ import YearWheel from "./YearWheel";
 import TaskList from "./TaskList";
 import FeedbackPanel from "./FeedbackPanel";
 import GuidedTour from "./GuidedTour";
-import { createTask, parseAiResponse, loadTasks } from "../lib/taskStore";
+import { createTask, parseAiResponse, loadTasks, PRIORITY_ICONS } from "../lib/taskStore";
 import {
   loadSoilProfiles,
   saveSoilProfiles,
@@ -3848,8 +3848,84 @@ export function GardenMapClient({ userId }: { userId: string }) {
       if (weatherCtx) parts.push(weatherCtx);
     } catch { /* ignore */ }
 
+    // 5. Historical climate stats (if available)
+    try {
+      if (weatherStats) {
+        const s = weatherStats.stats;
+        const rangeLabel = `${weatherStatRange} dage`;
+        parts.push(
+          `Historisk klimastatistik (sidste ${rangeLabel}, ${weatherStats.count} datapunkter):\n` +
+          `- Gns. dagtemperatur (maks): ${s.avgTempMax}°C\n` +
+          `- Gns. nattemperatur (min): ${s.avgTempMin}°C\n` +
+          `- Total nedbør: ${s.totalPrecipitation} mm\n` +
+          `- Frostdage: ${s.frostDays}\n` +
+          `- Regndage: ${s.rainDays}`
+        );
+      }
+    } catch { /* ignore */ }
+
+    // 6. Soil profiles
+    try {
+      const profiles = loadSoilProfiles();
+      if (profiles.length > 0) {
+        const profileLines = profiles.map((p) => {
+          const details: string[] = [];
+          if (p.baseType) details.push(`type: ${SOIL_BASE_TYPE_LABELS[p.baseType]}`);
+          if (p.drainage) details.push(`dræning: ${DRAINAGE_LABELS[p.drainage]}`);
+          if (p.moisture) details.push(`fugtighed: ${MOISTURE_LABELS[p.moisture]}`);
+          if (p.droughtProne) details.push("udtørringstruet");
+          if (p.earthworms) details.push(`regnorme: ${EARTHWORM_LABELS[p.earthworms]}`);
+          if (p.soilHealth) details.push(`sundhed: ${SOIL_HEALTH_LABELS[p.soilHealth]}`);
+          if (p.organicVisual) details.push(`organisk: ${ORGANIC_LABELS[p.organicVisual]}`);
+          if (p.organicPercent != null) details.push(`organisk %: ${p.organicPercent}`);
+          if (p.phMeasured != null) details.push(`pH: ${p.phMeasured}`);
+          if (p.phCategory) details.push(`pH-kategori: ${PH_CATEGORY_LABELS[p.phCategory]}`);
+          if (p.limeContent) details.push(`kalk: ${LIME_CONTENT_LABELS[p.limeContent]}`);
+          if (p.limedRecently) details.push("kalket for nylig");
+          if (p.compostTypes?.length) details.push(`kompost: ${p.compostTypes.map(c => COMPOST_TYPE_LABELS[c]).join(", ")}`);
+          if (p.compostMaturity) details.push(`kompost-modenhed: ${COMPOST_MATURITY_LABELS[p.compostMaturity]}`);
+          if (p.nitrogen) details.push(`N: ${NUTRIENT_LABELS[p.nitrogen]}`);
+          if (p.phosphorus) details.push(`P: ${NUTRIENT_LABELS[p.phosphorus]}`);
+          if (p.potassium) details.push(`K: ${NUTRIENT_LABELS[p.potassium]}`);
+          if (p.compression) details.push(`kompression: ${COMPRESSION_LABELS[p.compression]}`);
+          if (p.lastAmendment) details.push(`seneste forbedring: ${p.lastAmendment}`);
+          if (p.notes) details.push(`noter: ${p.notes}`);
+          return `- ${p.name}: ${details.length > 0 ? details.join(", ") : "ingen data registreret"}`;
+        });
+        parts.push(
+          `JORDPROFILER I HAVEN (${profiles.length} profiler):\n${profileLines.join("\n")}`
+        );
+      }
+    } catch { /* ignore */ }
+
+    // 7. Active tasks / opgaver
+    try {
+      const allTasks = loadTasks();
+      const activeTasks = allTasks.filter(t => !t.completedAt);
+      const completedRecently = allTasks.filter(t => t.completedAt && (Date.now() - t.completedAt < 30 * 24 * 60 * 60 * 1000));
+      if (activeTasks.length > 0 || completedRecently.length > 0) {
+        const lines: string[] = [];
+        if (activeTasks.length > 0) {
+          lines.push(`Aktive opgaver (${activeTasks.length}):`);
+          for (const t of activeTasks) {
+            let line = `  - ${PRIORITY_ICONS[t.priority]} ${t.title}`;
+            if (t.month) line += ` (mål-måned: ${t.month})`;
+            if (t.description) line += ` – ${t.description.slice(0, 100)}`;
+            lines.push(line);
+          }
+        }
+        if (completedRecently.length > 0) {
+          lines.push(`Nyligt fuldførte opgaver (${completedRecently.length}):`);
+          for (const t of completedRecently) {
+            lines.push(`  - ✅ ${t.title}`);
+          }
+        }
+        parts.push(lines.join("\n"));
+      }
+    } catch { /* ignore */ }
+
     return parts.length > 0 ? parts.join("\n\n") : "";
-  }, [estimateDanishClimateZone, weatherData]);
+  }, [estimateDanishClimateZone, weatherData, weatherStats, weatherStatRange]);
 
   // Send chat message
   const sendChatMessage = useCallback(async () => {
@@ -8210,8 +8286,8 @@ export function GardenMapClient({ userId }: { userId: string }) {
           </div>
         ) : null}
 
-        {/* ── Floating Rådgiver Button (top-left on map) ── */}
-        <div className="absolute top-3 left-3 z-[1000]">
+        {/* ── Floating Rådgiver Button (top-center on map) ── */}
+        <div className="absolute top-3 left-1/2 -translate-x-1/2 z-[1000]">
           <button
             type="button"
             data-tour="tab-chat"
@@ -14717,11 +14793,11 @@ export function GardenMapClient({ userId }: { userId: string }) {
               <label className="block text-[10px] font-semibold text-foreground/50 uppercase tracking-wide mb-1.5">
                 Dyrkningsfilosofi
               </label>
-              <div className="space-y-1">
+              <div className="space-y-1.5">
                 {[
-                  { id: "conventional", emoji: "🚜", label: "Konventionel", desc: "Effektivt, udbyttefokuseret — accepterer kunstgødning og sprøjtemidler" },
-                  { id: "organic", emoji: "🌱", label: "Økolog", desc: "Naturlige metoder, ingen kemi — kompost, nyttedyr, sædskifte" },
-                  { id: "regenerative", emoji: "♻️", label: "Regenerativ", desc: "Genopbyg økosystemet — no-dig, polykultur, skovhave, kulstoflagring" },
+                  { id: "conventional", emoji: "🚜", label: "Konventionel", desc: "Fokus på højt udbytte og effektiv drift. Bruger bl.a. kunstgødning (NPK), godkendte sprøjtemidler og klassisk jordbearbejdning. Praktisk og resultat-orienteret." },
+                  { id: "organic", emoji: "🌱", label: "Økolog", desc: "Dyrkning helt uden syntetisk kemi. Bygger på kompost, grøngødning, nyttedyr og sædskifte. Fokus på jordens mikroliv, biodiversitet og lukkede kredsløb." },
+                  { id: "regenerative", emoji: "♻️", label: "Regenerativ", desc: "Går ud over bæredygtighed — haven skal aktivt genopbygge økosystemet. No-dig, permanent jorddække, polykultur, skovhavens 7 lag og kulstoflagring i jorden." },
                 ].map((p) => (
                   <button
                     key={p.id}
