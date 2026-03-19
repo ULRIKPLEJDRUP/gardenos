@@ -559,8 +559,8 @@ function trilaterate(
 ): { lat: number; lng: number } | null {
   // metres per degree at the average latitude
   const midLat = (a.lat + b.lat) / 2;
-  const mPerDegLat = 111_320;
-  const mPerDegLng = 111_320 * Math.cos((midLat * Math.PI) / 180);
+  const mPerDegLat = M_PER_DEG_LAT;
+  const mPerDegLng = M_PER_DEG_LAT * Math.cos((midLat * Math.PI) / 180);
 
   // convert to local metres
   const ax = 0;
@@ -1319,6 +1319,18 @@ function haversineM(a: [number, number], b: [number, number]): number {
   return 2 * R * Math.asin(Math.sqrt(h));
 }
 
+type SpreadSpec = Pick<PlantSpecies, "spreadDiameterCm" | "spacingCm">;
+
+/** Full spread diameter in metres (fallback 0.30 m). */
+function spreadDiameterM(sp: SpreadSpec): number {
+  return (sp.spreadDiameterCm ?? sp.spacingCm ?? 30) / 100;
+}
+
+/** Canopy radius in metres (fallback 0.50 m). */
+function canopyRadiusM(sp: SpreadSpec): number {
+  return (sp.spreadDiameterCm ?? sp.spacingCm ?? 100) / 200;
+}
+
 /**
  * Detect all pairwise plant conflicts among point features.
  * Returns an array of PlantConflict objects.
@@ -1347,8 +1359,8 @@ function detectPlantConflicts(features: GardenFeature[]): PlantConflict[] {
       const pairKey = [a.id, b.id].sort().join(":");
 
       // 1. Spacing conflict: check recommended spacing between both species
-      const spreadA = (a.species.spreadDiameterCm ?? a.species.spacingCm ?? 30) / 100;
-      const spreadB = (b.species.spreadDiameterCm ?? b.species.spacingCm ?? 30) / 100;
+      const spreadA = spreadDiameterM(a.species);
+      const spreadB = spreadDiameterM(b.species);
       // Required distance = half spread A + half spread B (canopy edges shouldn't overlap for competing layers)
       let requiredM: number;
       const layerA = a.species.forestGardenLayer;
@@ -1442,7 +1454,7 @@ function detectPlantConflicts(features: GardenFeature[]): PlantConflict[] {
         if (heightA && heightA >= 1 && couldCastSignificantShade(heightA, dist, latitude)) {
           const maxShadeB = maxAcceptableShadeHours(b.species.light);
           if (maxShadeB < 900) { // skip shade-tolerant plants
-            const canopyRadA = (a.species.spreadDiameterCm ?? a.species.spacingCm ?? 100) / 200;
+            const canopyRadA = canopyRadiusM(a.species);
             const bearingAtoB = geoBearing(a.coords, b.coords);
             const shade = computeShadeImpact(heightA, canopyRadA, dist, bearingAtoB, latitude);
             if (shade.avgShadeHoursPerDay > maxShadeB) {
@@ -1471,7 +1483,7 @@ function detectPlantConflicts(features: GardenFeature[]): PlantConflict[] {
         if (!seen.has(pairKey + ":shade") && heightB && heightB >= 1 && couldCastSignificantShade(heightB, dist, latitude)) {
           const maxShadeA = maxAcceptableShadeHours(a.species.light);
           if (maxShadeA < 900) {
-            const canopyRadB = (b.species.spreadDiameterCm ?? b.species.spacingCm ?? 100) / 200;
+            const canopyRadB = canopyRadiusM(b.species);
             const bearingBtoA = geoBearing(b.coords, a.coords);
             const shade = computeShadeImpact(heightB, canopyRadB, dist, bearingBtoA, latitude);
             if (shade.avgShadeHoursPerDay > maxShadeA) {
@@ -1526,7 +1538,7 @@ function checkPlacementConflicts(
   existingFeatures: GardenFeature[],
 ): PlantConflict[] {
   const conflicts: PlantConflict[] = [];
-  const spreadNew = (proposedSpecies.spreadDiameterCm ?? proposedSpecies.spacingCm ?? 30) / 100;
+  const spreadNew = spreadDiameterM(proposedSpecies);
   const layerNew = proposedSpecies.forestGardenLayer;
 
   for (const f of existingFeatures) {
@@ -1538,7 +1550,7 @@ function checkPlacementConflicts(
     const coords = f.geometry.coordinates as [number, number];
     const dist = haversineM(proposedCoords, coords);
 
-    const spreadOther = (sp.spreadDiameterCm ?? sp.spacingCm ?? 30) / 100;
+    const spreadOther = spreadDiameterM(sp);
     const layerOther = sp.forestGardenLayer;
     const layersCoexist = layerNew && layerOther && canLayersCoexist(layerNew, layerOther);
 
@@ -1596,7 +1608,7 @@ function checkPlacementConflicts(
     if (heightOther && heightOther >= 1 && couldCastSignificantShade(heightOther, dist, latitude)) {
       const maxShadeNew = maxAcceptableShadeHours(proposedSpecies.light);
       if (maxShadeNew < 900) {
-        const canopyRadOther = (sp.spreadDiameterCm ?? sp.spacingCm ?? 100) / 200;
+        const canopyRadOther = canopyRadiusM(sp);
         const bearing = geoBearing(coords, proposedCoords);
         const shade = computeShadeImpact(heightOther, canopyRadOther, dist, bearing, latitude);
         if (shade.avgShadeHoursPerDay > maxShadeNew) {
@@ -1621,7 +1633,7 @@ function checkPlacementConflicts(
     if (heightNew && heightNew >= 1 && couldCastSignificantShade(heightNew, dist, latitude)) {
       const maxShadeOther = maxAcceptableShadeHours(sp.light);
       if (maxShadeOther < 900) {
-        const canopyRadNew = (proposedSpecies.spreadDiameterCm ?? proposedSpecies.spacingCm ?? 100) / 200;
+        const canopyRadNew = canopyRadiusM(proposedSpecies);
         const bearing = geoBearing(proposedCoords, coords);
         const shade = computeShadeImpact(heightNew, canopyRadNew, dist, bearing, latitude);
         if (shade.avgShadeHoursPerDay > maxShadeOther) {
@@ -4183,7 +4195,6 @@ export function GardenMapClient({ userId }: { userId: string }) {
   const [autoRowCount, setAutoRowCount] = useState(0); // 0 = auto-max
   const [autoRowEdgeMarginCm, setAutoRowEdgeMarginCm] = useState(10);
   const [autoRowDirection, setAutoRowDirection] = useState<"length" | "width">("length");
-  const [, setAutoRowOverflow] = useState(false); // true when requested > max
 
   // ── Auto-element placement state ──
   const [autoElementOpen, setAutoElementOpen] = useState(false);
@@ -5304,7 +5315,7 @@ export function GardenMapClient({ userId }: { userId: string }) {
     if (!species) return;
 
     const coords: [number, number] = [latlng.lng, latlng.lat];
-    const spreadM = (species.spreadDiameterCm ?? species.spacingCm ?? 30) / 100;
+    const spreadM = spreadDiameterM(species);
     const radiusM = spreadM / 2;
 
     // Check conflicts at this position
@@ -5338,7 +5349,7 @@ export function GardenMapClient({ userId }: { userId: string }) {
       // Approximate shadow zone: a semi-ellipse to the north (in northern hemisphere)
       // Shadow reach ≈ height × 1.5 (equinox noon approximation at 56°N)
       const shadowReachM = heightM * 1.5;
-      const canopyR = (species.spreadDiameterCm ?? species.spacingCm ?? 100) / 200;
+      const canopyR = canopyRadiusM(species);
       // Draw a translucent wedge pointing roughly north
       // At 56°N, shadow falls between NW and NE, concentrated around due north at noon
       const centerBearing = 0; // north (shadow direction at noon)
@@ -5352,8 +5363,8 @@ export function GardenMapClient({ userId }: { userId: string }) {
         const edgeFactor = 1 + 0.3 * Math.abs(i / steps); // edges are ~30% longer
         const dist = shadowReachM * edgeFactor;
         // Convert metres to lat/lng offset
-        const dLat = (dist * Math.cos(angleRad)) / 111320;
-        const dLng = (dist * Math.sin(angleRad)) / (111320 * Math.cos(latlng.lat * Math.PI / 180));
+        const dLat = (dist * Math.cos(angleRad)) / M_PER_DEG_LAT;
+        const dLng = (dist * Math.sin(angleRad)) / (M_PER_DEG_LAT * Math.cos(latlng.lat * Math.PI / 180));
         polyPoints.push(L.latLng(latlng.lat + dLat, latlng.lng + dLng));
       }
       polyPoints.push(latlng); // close shape
@@ -5370,7 +5381,7 @@ export function GardenMapClient({ userId }: { userId: string }) {
       previewGroup.addLayer(shadeZone);
 
       // Label for shade zone
-      const northPoint = L.latLng(latlng.lat + shadowReachM / 111320, latlng.lng);
+      const northPoint = L.latLng(latlng.lat + shadowReachM / M_PER_DEG_LAT, latlng.lng);
       const shadeLabelIcon = L.divIcon({
         className: "gardenos-shade-label",
         html: `<div style="background:rgba(71,85,105,0.8);color:white;font-size:9px;padding:1px 5px;border-radius:3px;white-space:nowrap;pointer-events:none">🌑 Skygge ~${shadowReachM.toFixed(0)}m</div>`,
@@ -6553,8 +6564,8 @@ export function GardenMapClient({ userId }: { userId: string }) {
       // Project point onto shortDir axis
       const midLat2 = ring.reduce((s, p) => s + p[1], 0) / ring.length;
       const midLng2 = ring.reduce((s, p) => s + p[0], 0) / ring.length;
-      const mpLat2 = 111_320;
-      const mpLng2 = 111_320 * Math.cos((midLat2 * Math.PI) / 180);
+      const mpLat2 = M_PER_DEG_LAT;
+      const mpLng2 = M_PER_DEG_LAT * Math.cos((midLat2 * Math.PI) / 180);
       const mRing2: [number, number][] = ring.map(([lng, lat]) => [(lng - midLng2) * mpLng2, (lat - midLat2) * mpLat2]);
       let ld = 0, li = 0, sd = Infinity, si = 0;
       for (let i = 0; i < mRing2.length; i++) {
@@ -6618,8 +6629,8 @@ export function GardenMapClient({ userId }: { userId: string }) {
       const newOffset = (() => {
         const midLat = ring.reduce((s, p) => s + p[1], 0) / ring.length;
         const midLng = ring.reduce((s, p) => s + p[0], 0) / ring.length;
-        const mpLat = 111_320;
-        const mpLng = 111_320 * Math.cos((midLat * Math.PI) / 180);
+        const mpLat = M_PER_DEG_LAT;
+        const mpLng = M_PER_DEG_LAT * Math.cos((midLat * Math.PI) / 180);
         const mRing: [number, number][] = ring.map(([lng, lat]) => [(lng - midLng) * mpLng, (lat - midLat) * mpLat]);
         let longestD = 0, longestI = 0, shortestD = Infinity, shortestI = 0;
         for (let i = 0; i < mRing.length; i++) {
@@ -10067,7 +10078,7 @@ export function GardenMapClient({ userId }: { userId: string }) {
                 <button
                   type="button"
                   className="flex w-full items-center gap-2 px-2.5 py-1.5 text-left hover:bg-foreground/[0.03] transition-colors"
-                  onClick={() => { setAutoRowOpen(!autoRowOpen); setAutoRowSearch(""); setAutoRowOverflow(false); }}
+                  onClick={() => { setAutoRowOpen(!autoRowOpen); setAutoRowSearch(""); }}
                 >
                   <span className="text-[10px] font-semibold text-foreground/50 uppercase tracking-wide">🌾 Tilføj rækker</span>
                   <span className="text-[9px] text-foreground/30">·</span>
@@ -10150,8 +10161,8 @@ export function GardenMapClient({ userId }: { userId: string }) {
                     if (bedPointFeatures.length > 0) {
                       const midLat = ring.reduce((s, p) => s + p[1], 0) / ring.length;
                       const midLng = ring.reduce((s, p) => s + p[0], 0) / ring.length;
-                      const mpLat = 111_320;
-                      const mpLng = 111_320 * Math.cos((midLat * Math.PI) / 180);
+                      const mpLat = M_PER_DEG_LAT;
+                      const mpLng = M_PER_DEG_LAT * Math.cos((midLat * Math.PI) / 180);
                       const mRing: [number, number][] = ring.map(([lng, lat]) => [(lng - midLng) * mpLng, (lat - midLat) * mpLat]);
                       let longestD = 0, longestI = 0, shortestD = Infinity, shortestI = 0;
                       for (let i = 0; i < mRing.length; i++) {
@@ -10255,7 +10266,7 @@ export function GardenMapClient({ userId }: { userId: string }) {
                                 ? "bg-accent text-white"
                                 : "bg-background text-foreground/60 hover:bg-foreground/5"
                             } ${directionLocked ? "opacity-60 cursor-not-allowed" : ""}`}
-                            onClick={() => { if (!directionLocked) { setAutoRowDirection("length"); setAutoRowOverflow(false); } }}
+                            onClick={() => { if (!directionLocked) { setAutoRowDirection("length"); } }}
                           >
                             ↔ Langs længden
                           </button>
@@ -10267,7 +10278,7 @@ export function GardenMapClient({ userId }: { userId: string }) {
                                 ? "bg-accent text-white"
                                 : "bg-background text-foreground/60 hover:bg-foreground/5"
                             } ${directionLocked ? "opacity-60 cursor-not-allowed" : ""}`}
-                            onClick={() => { if (!directionLocked) { setAutoRowDirection("width"); setAutoRowOverflow(false); } }}
+                            onClick={() => { if (!directionLocked) { setAutoRowDirection("width"); } }}
                           >
                             ↕ På tværs
                           </button>
@@ -10343,7 +10354,6 @@ export function GardenMapClient({ userId }: { userId: string }) {
                                           setAutoRowSearch("");
                                           setAutoRowCount(0);
                                           setAutoRowEdgeMarginCm(Math.round((rec.species.rowSpacingCm ?? 30) / 2));
-                                          setAutoRowOverflow(false);
                                           setRecRowOpen(false);
                                         }}
                                         title={rec.reasons.map((r) => `${r.emoji} ${r.text}`).join("\n")}
@@ -10396,7 +10406,6 @@ export function GardenMapClient({ userId }: { userId: string }) {
                                   setAutoRowSearch("");
                                   setAutoRowCount(0);
                                   setAutoRowEdgeMarginCm(Math.round((p.rowSpacingCm ?? 30) / 2));
-                                  setAutoRowOverflow(false);
                                 }}
                               >
                                 <span className="text-sm leading-none">{p.icon ?? "🌱"}</span>
@@ -10430,7 +10439,7 @@ export function GardenMapClient({ userId }: { userId: string }) {
                             <button
                               type="button"
                               className="shrink-0 rounded px-1.5 py-0.5 text-[10px] text-foreground/40 hover:bg-red-50 hover:text-red-500"
-                              onClick={() => { setAutoRowSpeciesId(null); setAutoRowVarietyId(null); setAutoRowOverflow(false); }}
+                              onClick={() => { setAutoRowSpeciesId(null); setAutoRowVarietyId(null); }}
                               title="Vælg en anden plante"
                             >
                               ✕
@@ -10464,7 +10473,7 @@ export function GardenMapClient({ userId }: { userId: string }) {
                                   min={0}
                                   className="mt-0.5 w-full rounded-md border border-border bg-background px-2 py-1 text-xs shadow-sm"
                                   value={autoRowCount}
-                                  onChange={(e) => { setAutoRowCount(Math.max(0, parseInt(e.target.value) || 0)); setAutoRowOverflow(false); }}
+                                  onChange={(e) => { setAutoRowCount(Math.max(0, parseInt(e.target.value) || 0)); }}
                                   placeholder="0 = max"
                                   title="0 = fyld hele bedet"
                                 />
@@ -10478,7 +10487,7 @@ export function GardenMapClient({ userId }: { userId: string }) {
                                   max={200}
                                   className="mt-0.5 w-full rounded-md border border-border bg-background px-2 py-1 text-xs shadow-sm"
                                   value={autoRowEdgeMarginCm}
-                                  onChange={(e) => { setAutoRowEdgeMarginCm(Math.max(0, parseInt(e.target.value) || 0)); setAutoRowOverflow(false); }}
+                                  onChange={(e) => { setAutoRowEdgeMarginCm(Math.max(0, parseInt(e.target.value) || 0)); }}
                                 />
                               </div>
                             </div>
@@ -10556,7 +10565,6 @@ export function GardenMapClient({ userId }: { userId: string }) {
                                         setAutoRowOpen(false);
                                         setAutoRowSpeciesId(null);
                                         setAutoRowVarietyId(null);
-                                        setAutoRowOverflow(false);
                                       }
                                     }}
                                   >
@@ -10579,7 +10587,6 @@ export function GardenMapClient({ userId }: { userId: string }) {
                                       setAutoRowOpen(false);
                                       setAutoRowSpeciesId(null);
                                       setAutoRowVarietyId(null);
-                                      setAutoRowOverflow(false);
                                     }
                                   }}
                                 >
@@ -10603,7 +10610,7 @@ export function GardenMapClient({ userId }: { userId: string }) {
                                 <button
                                   type="button"
                                   className="w-full rounded-md border border-foreground/10 px-2 py-1 text-[10px] text-foreground/50 hover:bg-foreground/5"
-                                  onClick={() => setAutoRowOverflow(false)}
+                                  onClick={() => {}}
                                 >
                                   Annullér
                                 </button>
@@ -10636,7 +10643,6 @@ export function GardenMapClient({ userId }: { userId: string }) {
                                   setAutoRowOpen(false);
                                   setAutoRowSpeciesId(null);
                                   setAutoRowVarietyId(null);
-                                  setAutoRowOverflow(false);
                                 }
                               }}
                             >

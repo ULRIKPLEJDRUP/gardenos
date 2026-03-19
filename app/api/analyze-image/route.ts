@@ -137,8 +137,6 @@ Returnér KUN valid JSON, ingen kommentarer eller forklaringer.`;
     const openaiData = await openaiResponse.json();
     const content: string = openaiData.choices?.[0]?.message?.content ?? "";
 
-    console.log("OpenAI raw response content:", content.slice(0, 500));
-
     // Parse JSON from the response (may be wrapped in ```json ... ```)
     const jsonMatch = content.match(/\{[\s\S]*\}/);
     if (!jsonMatch) {
