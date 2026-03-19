@@ -229,6 +229,19 @@ const M_PER_DEG_LAT = 111_320;
 const MAX_PHOTO_SIZE_BYTES = 2 * 1024 * 1024;
 
 /**
+ * Read an image file as a data-URL string.
+ * Returns `null` if the file exceeds `MAX_PHOTO_SIZE_BYTES`.
+ */
+function readImageAsDataURL(file: File): Promise<string | null> {
+  if (file.size > MAX_PHOTO_SIZE_BYTES) return Promise.resolve(null);
+  return new Promise((resolve) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(typeof reader.result === "string" ? reader.result : null);
+    reader.readAsDataURL(file);
+  });
+}
+
+/**
  * Build a PlantInstance with auto-filled `id`, `plantedAt` and `season`.
  * Callers only supply the domain-specific fields.
  */
@@ -12473,15 +12486,12 @@ export function GardenMapClient({ userId }: { userId: string }) {
                             type="file"
                             accept="image/*"
                             className="hidden"
-                            onChange={(e) => {
+                            onChange={async (e) => {
                               const file = e.target.files?.[0];
                               if (!file) return;
-                              if (file.size > MAX_PHOTO_SIZE_BYTES) { showToast("Foto må max være 2 MB", "error"); return; }
-                              const reader = new FileReader();
-                              reader.onload = () => {
-                                if (typeof reader.result === "string") updateSelectedProperty({ photoUrl: reader.result });
-                              };
-                              reader.readAsDataURL(file);
+                              const url = await readImageAsDataURL(file);
+                              if (url) updateSelectedProperty({ photoUrl: url });
+                              else showToast("Foto må max være 2 MB", "error");
                             }}
                           />
                         </label>
@@ -12494,15 +12504,12 @@ export function GardenMapClient({ userId }: { userId: string }) {
                           type="file"
                           accept="image/*"
                           className="hidden"
-                          onChange={(e) => {
+                          onChange={async (e) => {
                             const file = e.target.files?.[0];
                             if (!file) return;
-                            if (file.size > MAX_PHOTO_SIZE_BYTES) { showToast("Foto må max være 2 MB", "error"); return; }
-                            const reader = new FileReader();
-                            reader.onload = () => {
-                              if (typeof reader.result === "string") updateSelectedProperty({ photoUrl: reader.result });
-                            };
-                            reader.readAsDataURL(file);
+                            const url = await readImageAsDataURL(file);
+                            if (url) updateSelectedProperty({ photoUrl: url });
+                            else showToast("Foto må max være 2 MB", "error");
                           }}
                         />
                       </label>
