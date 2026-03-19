@@ -58,7 +58,7 @@ import YearWheel from "./YearWheel";
 import TaskList from "./TaskList";
 import FeedbackPanel from "./FeedbackPanel";
 import GuidedTour from "./GuidedTour";
-import { createTask, parseAiResponse } from "../lib/taskStore";
+import { createTask, parseAiResponse, loadTasks } from "../lib/taskStore";
 import {
   loadSoilProfiles,
   saveSoilProfiles,
@@ -3286,7 +3286,8 @@ export function GardenMapClient({ userId }: { userId: string }) {
   });
   const [conflictShowResolved, setConflictShowResolved] = useState(false);
   const [viewSubTab, setViewSubTab] = useState<"steder" | "baggrund" | "synlighed" | "ankre">("steder");
-  const [planSubTab, setPlanSubTab] = useState<"tasks" | "calendar">("tasks");
+  const [planSubTab, setPlanSubTab] = useState<"tasks" | "calendar" | "notes">("tasks");
+  const [noteFilter, setNoteFilter] = useState<"all" | "elements" | "soil" | "tasks">("all");
   const [libSubTab, setLibSubTab] = useState<"plants" | "soil">("plants");
   const [libSoilEditId, setLibSoilEditId] = useState<string | null>(null);
 
@@ -3392,8 +3393,8 @@ export function GardenMapClient({ userId }: { userId: string }) {
     { id: "conflicts", icon: "⚡", label: "Konflikter" },
     { id: "groups", icon: "⊞", label: "Grupper" },
     { id: "plants", icon: "�", label: "Bibliotek" },
-    { id: "scan", icon: "📷", label: "Scan" },
-    { id: "view", icon: "👁", label: "Visning" },
+    { id: "scan", icon: "�️", label: "Værktøj" },
+    { id: "view", icon: "🗺️", label: "Kort" },
     { id: "tasks", icon: "📋", label: "Planlæg" },
     { id: "chat", icon: "💬", label: "Rådgiver" },
     { id: "designs", icon: "💾", label: "Designs" },
@@ -14491,12 +14492,12 @@ export function GardenMapClient({ userId }: { userId: string }) {
           );
         })() : null}
 
-        {/* ── Planlæg Tab (Opgaver + Årshjul) ── */}
+        {/* ── Planlæg Tab (Opgaver + Årshjul + Noter) ── */}
         {sidebarTab === "tasks" ? (
           <div className="mt-3 space-y-3">
             {/* Sub-tab picker */}
             <div className="flex gap-1 rounded-lg bg-background p-1 border border-border-light shadow-sm">
-              {(["tasks", "calendar"] as const).map((st) => (
+              {(["tasks", "calendar", "notes"] as const).map((st) => (
                 <button
                   key={st}
                   type="button"
@@ -14507,7 +14508,7 @@ export function GardenMapClient({ userId }: { userId: string }) {
                   }`}
                   onClick={() => setPlanSubTab(st)}
                 >
-                  {st === "tasks" ? "📋 Opgaver" : "📅 Årshjul"}
+                  {st === "tasks" ? "📋 Opgaver" : st === "calendar" ? "📅 Årshjul" : "📝 Noter"}
                 </button>
               ))}
             </div>
@@ -14524,6 +14525,137 @@ export function GardenMapClient({ userId }: { userId: string }) {
             {planSubTab === "calendar" ? (
               <YearWheel plantDataVersion={plantDataVersion} plantInstancesVersion={plantInstancesVersion} flashFeatureIds={flashFeatureIds} />
             ) : null}
+
+            {/* ══════════════════════════════════════════════════════════ */}
+            {/* ── NOTER SUB-TAB ── collect all notes across the system  */}
+            {/* ══════════════════════════════════════════════════════════ */}
+            {planSubTab === "notes" ? (() => {
+              // Collect notes from all sources
+              type NoteItem = { id: string; source: "elements" | "soil" | "tasks"; icon: string; title: string; text: string; onClick?: () => void };
+              const notes: NoteItem[] = [];
+
+              // 1. Feature notes (elements on the map)
+              if (layoutForContainment?.features?.length) {
+                for (const f of layoutForContainment.features) {
+                  const props = (f as GardenFeature).properties;
+                  if (props?.notes?.trim()) {
+                    const cat = props.category as GardenFeatureCategory;
+                    const catIcons: Record<string, string> = { element: "🌱", row: "📏", seedbed: "🌾", container: "🪴", area: "🏡", condition: "🌡️" };
+                    notes.push({
+                      id: `feat-${props.gardenosId}`,
+                      source: "elements",
+                      icon: catIcons[cat] ?? "📍",
+                      title: props.name || CATEGORY_LABELS[cat] || "Element",
+                      text: props.notes,
+                      onClick: () => {
+                        // Select this feature on the map
+                        const gf = f as GardenFeature;
+                        setSelected({ gardenosId: props.gardenosId!, feature: gf });
+                        setSidebarTab("content");
+                        setSidebarPanelOpen(true);
+                      },
+                    });
+                  }
+                }
+              }
+
+              // 2. Soil profile notes
+              void soilDataVersion;
+              const soilProfiles = loadSoilProfiles();
+              for (const p of soilProfiles) {
+                if (p.notes?.trim()) {
+                  notes.push({
+                    id: `soil-${p.id}`,
+                    source: "soil",
+                    icon: "🪨",
+                    title: p.name,
+                    text: p.notes,
+                    onClick: () => {
+                      setSidebarTab("plants");
+                      setLibSubTab("soil");
+                      setLibSoilEditId(p.id);
+                    },
+                  });
+                }
+              }
+
+              // 3. Task descriptions
+              void taskVersion;
+              const tasks = loadTasks();
+              for (const t of tasks) {
+                if (t.description?.trim()) {
+                  notes.push({
+                    id: `task-${t.id}`,
+                    source: "tasks",
+                    icon: t.completedAt ? "✅" : "📋",
+                    title: t.title,
+                    text: t.description,
+                    onClick: () => {
+                      setPlanSubTab("tasks");
+                    },
+                  });
+                }
+              }
+
+              // Filter
+              const filtered = noteFilter === "all" ? notes : notes.filter((n) => n.source === noteFilter);
+
+              return (
+                <div className="space-y-3">
+                  {/* Filter chips */}
+                  <div className="flex flex-wrap gap-1.5">
+                    {([
+                      { v: "all" as const, label: "Alle", count: notes.length },
+                      { v: "elements" as const, label: "🗺️ Elementer", count: notes.filter((n) => n.source === "elements").length },
+                      { v: "soil" as const, label: "🪨 Jord", count: notes.filter((n) => n.source === "soil").length },
+                      { v: "tasks" as const, label: "📋 Opgaver", count: notes.filter((n) => n.source === "tasks").length },
+                    ]).map((opt) => (
+                      <button
+                        key={opt.v}
+                        type="button"
+                        className={`rounded-full border px-2.5 py-1 text-[10px] font-medium transition-all ${
+                          noteFilter === opt.v
+                            ? "border-accent/40 bg-accent-light text-accent-dark shadow-sm"
+                            : "border-border bg-background hover:bg-foreground/5 text-foreground/60"
+                        }`}
+                        onClick={() => setNoteFilter(opt.v)}
+                      >
+                        {opt.label} {opt.count > 0 ? `(${opt.count})` : ""}
+                      </button>
+                    ))}
+                  </div>
+
+                  {/* Note cards */}
+                  {filtered.length === 0 ? (
+                    <p className="text-xs text-foreground/40 italic text-center py-6">
+                      📝 Ingen noter fundet{noteFilter !== "all" ? " med dette filter" : ""}. Noter tilføjes via Indhold-panelet, Jordprofiler eller Opgaver.
+                    </p>
+                  ) : (
+                    <div className="space-y-1.5">
+                      {filtered.map((note) => (
+                        <button
+                          key={note.id}
+                          type="button"
+                          className="w-full text-left rounded-lg border border-foreground/10 bg-foreground/[0.02] px-3 py-2.5 hover:bg-foreground/[0.05] hover:border-accent/30 transition-all group"
+                          onClick={note.onClick}
+                        >
+                          <div className="flex items-center gap-2 mb-1">
+                            <span className="text-sm">{note.icon}</span>
+                            <span className="text-xs font-medium truncate flex-1">{note.title}</span>
+                            <span className="text-[9px] text-foreground/30 group-hover:text-accent transition-colors shrink-0">Gå til →</span>
+                          </div>
+                          <p className="text-[11px] text-foreground/55 leading-relaxed line-clamp-3">{note.text}</p>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+
+                  <p className="text-[10px] text-foreground/40 leading-tight">
+                    📝 {notes.length} note{notes.length !== 1 ? "r" : ""} fundet på tværs af systemet. Klik på en note for at gå til kilden.
+                  </p>
+                </div>
+              );
+            })() : null}
           </div>
         ) : null}
 

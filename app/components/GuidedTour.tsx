@@ -87,11 +87,11 @@ const STEPS: TourStep[] = [
     body: "Klik på en plante for at se ALT: familie, livscyklus, lys- og vandbehov, afstand, jordtype, såtid, høsttid, smag, ernæring, skadedyr og gode/dårlige naboer.",
     position: "left",
   },
-  // ── 12 · Scan & identificér ───────────────────────────────
+  // ── 12 · Værktøj ───────────────────────────────────────
   {
     target: "tab-scan",
-    title: "📷 Scan & identificér",
-    body: "To tilstande: 🌱 Frøpose — tag foto af en frøpose og AI'en aflæser art, sort og dyrkningsdata. 🔍 Identificér — tag foto af en plante og få artsbestemmelse.",
+    title: "🛠️ Værktøj",
+    body: "Samler foto-værktøjer: 🌱 Frøpose-scanner (aflæs frøpose med AI), 🔍 Identificér (tag foto af en plante og få artsbestemmelse), og 📚 Historik over gemte scanninger.",
     position: "top",
   },
   // ── 13 · Scan: Gem resultat ───────────────────────────────
@@ -126,7 +126,7 @@ const STEPS: TourStep[] = [
   {
     target: "tab-tasks",
     title: "📋 Planlæg",
-    body: "Opgaver og Årshjul samlet i én fane! 📋 Opgavelisten holder styr på alle haveopgaver. 📅 Årshjulet viser hvornår du skal forspire, så, plante ud og høste.",
+    body: "Tre faner: 📋 Opgaver (opgaveliste), 📅 Årshjul (så/plante/høst-kalender) og 📝 Noter (samler automatisk alle noter fra elementer, jordprofiler og opgaver ét sted).",
     position: "top",
   },
   // ── 19 · Konflikter ───────────────────────────────────────
@@ -143,11 +143,11 @@ const STEPS: TourStep[] = [
     body: "Shift+klik på flere elementer, og tryk 'Gruppér' i toolbaren. Grupper kan flyttes, omdøbes og opløses samlet. Perfekt til bede med flere planter.",
     position: "top",
   },
-  // ── 21 · Visning & lag ────────────────────────────────────
+  // ── 21 · Kort ──────────────────────────────────────────
   {
     target: "tab-view",
-    title: "👁 Visning & kortlag",
-    body: "Fire faner: 📍 Steder (bogmærker), 🗺️ Baggrund (satellit, matrikel, jordart, terræn), 👁 Synlighed (vis/skjul elementtyper) og 📌 Ankre (GPS-positionering).",
+    title: "🗺️ Kort",
+    body: "Kortopsætning: 📍 Steder (bogmærker), 🗺️ Baggrund (satellit, matrikel, jordart, terræn), 👁 Synlighed (vis/skjul elementtyper) og 📌 Ankre (GPS-positionering).",
     position: "top",
   },
   // ── 22 · Vejr ─────────────────────────────────────────────
