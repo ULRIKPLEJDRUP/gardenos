@@ -3302,6 +3302,46 @@ function BoxSelectOverlay({ featureGroupRef, setMultiSelectedIds }: BoxSelectPro
   return null;
 }
 
+// ── Small presentational components (extracted to reduce duplication) ──
+
+/** Companion planting check summary — used in both row and seedbed/container panels. */
+function CompanionChecksBlock({ checks }: { checks: CompanionCheck[] }) {
+  if (checks.length === 0) return null;
+  return (
+    <div className="space-y-0.5">
+      <p className="text-[10px] font-medium uppercase tracking-wide text-foreground/50">Samdyrkning</p>
+      {checks.map((c, idx) => (
+        <p
+          key={idx}
+          className={`text-xs ${
+            c.type === "good"
+              ? "text-green-700 dark:text-green-400"
+              : "text-red-600 dark:text-red-400"
+          }`}
+        >
+          {c.type === "good" ? "✓" : "⚠"} {c.plantA.name} + {c.plantB.name}
+          {c.type === "good" ? " — gode naboer" : " — dårlig kombination"}
+        </p>
+      ))}
+    </div>
+  );
+}
+
+/** Crop rotation warning summary — used in both row and seedbed/container panels. */
+function RotationWarningsBlock({ warnings }: { warnings: { plant: PlantSpecies; lastSeason: number; minYears: number }[] }) {
+  if (warnings.length === 0) return null;
+  return (
+    <div className="space-y-0.5">
+      <p className="text-[10px] font-medium uppercase tracking-wide text-foreground/50">Sædskifte</p>
+      {warnings.map((w, idx) => (
+        <p key={idx} className="text-xs text-amber-600 dark:text-amber-400">
+          🔄 {w.plant.name} — samme familie dyrket i {w.lastSeason} (vent {w.minYears} år)
+        </p>
+      ))}
+    </div>
+  );
+}
+
 export function GardenMapClient({ userId }: { userId: string }) {
   // ── Scope all localStorage keys to the authenticated user ──
   setCurrentUser(userId);
@@ -9531,36 +9571,10 @@ export function GardenMapClient({ userId }: { userId: string }) {
                     ) : null}
 
                     {/* Companion planting checks */}
-                    {selectedCompanionChecks.length > 0 ? (
-                      <div className="space-y-0.5">
-                        <p className="text-[10px] font-medium uppercase tracking-wide text-foreground/50">Samdyrkning</p>
-                        {selectedCompanionChecks.map((c, idx) => (
-                          <p
-                            key={idx}
-                            className={`text-xs ${
-                              c.type === "good"
-                                ? "text-green-700 dark:text-green-400"
-                                : "text-red-600 dark:text-red-400"
-                            }`}
-                          >
-                            {c.type === "good" ? "✓" : "⚠"} {c.plantA.name} + {c.plantB.name}
-                            {c.type === "good" ? " — gode naboer" : " — dårlig kombination"}
-                          </p>
-                        ))}
-                      </div>
-                    ) : null}
+                    <CompanionChecksBlock checks={selectedCompanionChecks} />
 
                     {/* Rotation warnings */}
-                    {selectedRotationWarnings.length > 0 ? (
-                      <div className="space-y-0.5">
-                        <p className="text-[10px] font-medium uppercase tracking-wide text-foreground/50">Sædskifte</p>
-                        {selectedRotationWarnings.map((w, idx) => (
-                          <p key={idx} className="text-xs text-amber-600 dark:text-amber-400">
-                            🔄 {w.plant.name} — samme familie dyrket i {w.lastSeason} (vent {w.minYears} år)
-                          </p>
-                        ))}
-                      </div>
-                    ) : null}
+                    <RotationWarningsBlock warnings={selectedRotationWarnings} />
 
                     {/* ── Pick / change crop ── */}
                     {!showBedPlantPicker ? (
@@ -9866,36 +9880,10 @@ export function GardenMapClient({ userId }: { userId: string }) {
                     ) : null}
 
                     {/* Companion planting checks */}
-                    {selectedCompanionChecks.length > 0 ? (
-                      <div className="space-y-0.5">
-                        <p className="text-[10px] font-medium uppercase tracking-wide text-foreground/50">Samdyrkning</p>
-                        {selectedCompanionChecks.map((c, idx) => (
-                          <p
-                            key={idx}
-                            className={`text-xs ${
-                              c.type === "good"
-                                ? "text-green-700 dark:text-green-400"
-                                : "text-red-600 dark:text-red-400"
-                            }`}
-                          >
-                            {c.type === "good" ? "✓" : "⚠"} {c.plantA.name} + {c.plantB.name}
-                            {c.type === "good" ? " — gode naboer" : " — dårlig kombination"}
-                          </p>
-                        ))}
-                      </div>
-                    ) : null}
+                    <CompanionChecksBlock checks={selectedCompanionChecks} />
 
                     {/* Rotation warnings */}
-                    {selectedRotationWarnings.length > 0 ? (
-                      <div className="space-y-0.5">
-                        <p className="text-[10px] font-medium uppercase tracking-wide text-foreground/50">Sædskifte</p>
-                        {selectedRotationWarnings.map((w, idx) => (
-                          <p key={idx} className="text-xs text-amber-600 dark:text-amber-400">
-                            🔄 {w.plant.name} — samme familie dyrket i {w.lastSeason} (vent {w.minYears} år)
-                          </p>
-                        ))}
-                      </div>
-                    ) : null}
+                    <RotationWarningsBlock warnings={selectedRotationWarnings} />
 
                     {/* Add plant picker */}
                     {!showBedPlantPicker ? (
