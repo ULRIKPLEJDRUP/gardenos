@@ -3405,7 +3405,6 @@ export function GardenMapClient({ userId }: { userId: string }) {
     { id: "view", icon: "🗺️", label: "Kort" },
     { id: "tasks", icon: "📋", label: "Planlæg" },
     { id: "climate", icon: "🌡️", label: "Klima" },
-    { id: "chat", icon: "💬", label: "Rådgiver" },
     { id: "designs", icon: "💾", label: "Designs" },
   ];
   const DEFAULT_PINNED: SidebarTabId[] = ["create", "scan", "plants", "content"];
@@ -3592,9 +3591,10 @@ export function GardenMapClient({ userId }: { userId: string }) {
   const [chatInput, setChatInput] = useState("");
   const [chatLoading, setChatLoading] = useState(false);
   const [chatPersona, setChatPersona] = useState<string>(() => {
-    if (typeof window === "undefined") return "generalist";
-    return localStorage.getItem(userKey(CHAT_PERSONA_KEY)) ?? "generalist";
+    if (typeof window === "undefined") return "organic";
+    return localStorage.getItem(userKey(CHAT_PERSONA_KEY)) ?? "organic";
   });
+  const [chatFloatingOpen, setChatFloatingOpen] = useState(false);
   const chatEndRef = useRef<HTMLDivElement>(null);
   const chatInputRef = useRef<HTMLTextAreaElement>(null);
 
@@ -7523,19 +7523,6 @@ export function GardenMapClient({ userId }: { userId: string }) {
             >
               ↩ <span className="hidden md:inline">Fortryd</span>
             </button>
-            <button
-              type="button"
-              data-tour="tab-chat"
-              className={`rounded-md px-2 md:px-2.5 py-1.5 text-xs font-medium transition-colors ${
-                sidebarTab === "chat" && sidebarPanelOpen
-                  ? "bg-accent/10 text-accent"
-                  : "text-foreground/60 hover:bg-foreground/5"
-              }`}
-              onClick={() => toggleSidebarPanel("chat")}
-              title="Rådgiver — AI-assistent"
-            >
-              💬 <span className="hidden md:inline">Rådgiver</span>
-            </button>
             {multiSelectedIds.size >= 2 ? (
               <button
                 type="button"
@@ -8223,6 +8210,26 @@ export function GardenMapClient({ userId }: { userId: string }) {
           </div>
         ) : null}
 
+        {/* ── Floating Rådgiver Button (top-left on map) ── */}
+        <div className="absolute top-3 left-3 z-[1000]">
+          <button
+            type="button"
+            data-tour="tab-chat"
+            className={`flex items-center gap-1.5 rounded-full px-3 py-1.5 transition-all shadow-md border text-[12px] font-semibold ${
+              sidebarTab === "chat" && sidebarPanelOpen
+                ? "bg-accent text-white border-accent shadow-accent/20"
+                : "bg-white/90 text-foreground/60 border-border/50 hover:bg-white hover:text-foreground/80 hover:shadow-lg backdrop-blur-sm"
+            }`}
+            onClick={() => {
+              toggleSidebarPanel("chat");
+            }}
+            title="Rådgiver — AI-haverådgiver"
+          >
+            <span className="text-sm">💬</span>
+            <span>Rådgiver</span>
+          </button>
+        </div>
+
         {/* ── Floating Guide Button (bottom-center on map) ── */}
         <div className="absolute bottom-3 left-1/2 -translate-x-1/2 z-[1000] flex flex-col items-center gap-2">
           {/* Popover menu */}
@@ -8586,8 +8593,8 @@ export function GardenMapClient({ userId }: { userId: string }) {
         {/* Panel header */}
         <div className="flex items-center justify-between px-4 pt-3 pb-2 border-b border-border/50 shrink-0">
           <h2 className="text-sm font-bold text-foreground/80 flex items-center gap-1.5">
-            <span className="text-base">{ALL_SIDEBAR_TABS.find(t => t.id === sidebarTab)?.icon}</span>
-            {ALL_SIDEBAR_TABS.find(t => t.id === sidebarTab)?.label}
+            <span className="text-base">{sidebarTab === "chat" ? "💬" : ALL_SIDEBAR_TABS.find(t => t.id === sidebarTab)?.icon}</span>
+            {sidebarTab === "chat" ? "Rådgiver" : ALL_SIDEBAR_TABS.find(t => t.id === sidebarTab)?.label}
           </h2>
           <button
             type="button"
@@ -14705,30 +14712,34 @@ export function GardenMapClient({ userId }: { userId: string }) {
         {sidebarTab === "chat" ? (
           <div className="mt-3 flex flex-col" style={{ height: "calc(100vh - 220px)" }}>
 
-            {/* Persona selector */}
+            {/* Persona selector — 3 dyrkningsfilosofier */}
             <div className="mb-2" data-tour="chat-personas">
-              <label className="block text-[10px] font-semibold text-foreground/50 uppercase tracking-wide mb-1">
-                Vælg rådgiver
+              <label className="block text-[10px] font-semibold text-foreground/50 uppercase tracking-wide mb-1.5">
+                Dyrkningsfilosofi
               </label>
-              <div className="flex flex-wrap gap-1">
+              <div className="space-y-1">
                 {[
-                  { id: "generalist", emoji: "🌿", label: "Have-ekspert" },
-                  { id: "forest-garden", emoji: "🌳", label: "Skovhave" },
-                  { id: "traditional", emoji: "🚜", label: "Traditionel" },
-                  { id: "organic", emoji: "🌱", label: "Økologisk" },
-                  { id: "kids", emoji: "🧒", label: "Børn" },
+                  { id: "conventional", emoji: "🚜", label: "Konventionel", desc: "Effektivt, udbyttefokuseret — accepterer kunstgødning og sprøjtemidler" },
+                  { id: "organic", emoji: "🌱", label: "Økolog", desc: "Naturlige metoder, ingen kemi — kompost, nyttedyr, sædskifte" },
+                  { id: "regenerative", emoji: "♻️", label: "Regenerativ", desc: "Genopbyg økosystemet — no-dig, polykultur, skovhave, kulstoflagring" },
                 ].map((p) => (
                   <button
                     key={p.id}
                     type="button"
-                    className={`rounded-lg border px-2 py-1 text-[11px] font-medium transition-all ${
+                    className={`w-full text-left rounded-lg border px-2.5 py-1.5 transition-all ${
                       chatPersona === p.id
-                        ? "border-accent/40 bg-accent-light text-accent-dark shadow-sm"
+                        ? "border-accent/40 bg-accent-light text-accent-dark shadow-sm ring-1 ring-accent/20"
                         : "border-border bg-background hover:bg-foreground/5 text-foreground/60"
                     }`}
                     onClick={() => setChatPersona(p.id)}
                   >
-                    {p.emoji} {p.label}
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-sm">{p.emoji}</span>
+                      <span className="text-[11px] font-semibold">{p.label}</span>
+                    </div>
+                    <div className={`text-[9px] mt-0.5 leading-tight ${
+                      chatPersona === p.id ? "text-accent-dark/60" : "text-foreground/35"
+                    }`}>{p.desc}</div>
                   </button>
                 ))}
               </div>
@@ -14793,7 +14804,7 @@ export function GardenMapClient({ userId }: { userId: string }) {
                         <button
                           type="button"
                           data-tour="chat-save-task"
-                          className="mt-0.5 text-[9px] text-foreground/30 hover:text-violet-500 transition-colors flex items-center gap-0.5"
+                          className="mt-1 flex items-center gap-1.5 rounded-lg border border-violet-200/60 bg-violet-50/60 px-2.5 py-1.5 text-[10px] font-medium text-violet-600 hover:bg-violet-100 hover:border-violet-300 transition-all group"
                           onClick={() => {
                             // Parse AI response → clean title (first line), stripped description, auto-extracted month
                             const parsed = parseAiResponse(msg.content);
@@ -14811,9 +14822,10 @@ export function GardenMapClient({ userId }: { userId: string }) {
                             setTaskSavedFlash(flashMsg);
                             setTimeout(() => setTaskSavedFlash(false), 3000);
                           }}
-                          title="Gem dette som en opgave"
+                          title="Opret som opgave i Planlæg"
                         >
-                          📋 Gem som opgave
+                          <span className="text-xs group-hover:scale-110 transition-transform">📋</span>
+                          <span>Gem som opgave</span>
                         </button>
                       )}
                     </div>
