@@ -7389,8 +7389,8 @@ export function GardenMapClient({ userId }: { userId: string }) {
   }, [selected, selectedCategory]);
 
   return (
-    <div className="grid h-[calc(100dvh)] w-full grid-cols-1 grid-rows-[auto_1fr] md:grid-cols-[1fr_48px]">
-      <div data-tour="toolbar" className="gardenos-toolbar col-span-1 row-start-1 flex items-center justify-between gap-1 md:gap-2 border-b border-border bg-toolbar-bg px-2 md:px-3 py-1.5 md:py-2 md:col-span-2 shadow-sm">
+    <div className="grid h-[calc(100dvh)] w-full grid-cols-1 grid-rows-[auto_1fr] md:grid-cols-[1fr_auto_48px]">
+      <div data-tour="toolbar" className="gardenos-toolbar col-span-1 row-start-1 flex items-center justify-between gap-1 md:gap-2 border-b border-border bg-toolbar-bg px-2 md:px-3 py-1.5 md:py-2 md:col-span-3 shadow-sm">
         <div className="flex items-center gap-1 md:gap-3">
           <div className="flex items-center gap-1.5 mr-1">
             <span className="text-lg leading-none">🌿</span>
@@ -8245,7 +8245,7 @@ export function GardenMapClient({ userId }: { userId: string }) {
       {/* ══════════════════════════════════════════════════════════════
            Vertical Icon Bar (desktop, 48px grid column)
          ══════════════════════════════════════════════════════════════ */}
-      <nav className="row-start-2 col-start-2 hidden md:flex flex-col w-12 border-l border-border bg-sidebar-bg items-center py-2 gap-0.5 overflow-y-auto scrollbar-hide z-[50]">
+      <nav className="row-start-2 col-start-3 hidden md:flex flex-col w-12 border-l border-border bg-sidebar-bg items-center py-2 gap-0.5 overflow-y-auto scrollbar-hide z-[50]">
         {ALL_SIDEBAR_TABS.map((tab) => {
           const isActive = sidebarTab === tab.id && sidebarPanelOpen;
           const isDisabled = tab.id === "content" && !selected;
@@ -8327,21 +8327,17 @@ export function GardenMapClient({ userId }: { userId: string }) {
       </nav>
 
       {/* ══════════════════════════════════════════════════════════════
-           Sidebar Panel — Desktop: overlay from right; Mobile: bottom sheet
+           Sidebar Panel — Desktop: grid col 2; Mobile: bottom sheet
          ══════════════════════════════════════════════════════════════ */}
-      {/* Desktop overlay backdrop (click to close panel) */}
-      {sidebarPanelOpen && (
-        <div className="hidden md:block fixed inset-0 z-[39]" onClick={() => setSidebarPanelOpen(false)} />
-      )}
       <aside className={`
-        flex flex-col border-border bg-sidebar-bg overflow-hidden
-        md:absolute md:right-0 md:top-0 md:bottom-0 md:w-[340px] md:border-l md:shadow-xl md:z-[40]
-        md:transition-transform md:duration-300 md:ease-in-out
-        ${sidebarPanelOpen ? "md:translate-x-0" : "md:translate-x-full"}
+        flex flex-col border-border bg-sidebar-bg
+        md:row-start-2 md:col-start-2 md:border-l md:shadow-xl md:min-h-0
+        md:transition-[width] md:duration-300 md:ease-in-out md:overflow-hidden
+        ${sidebarPanelOpen ? "md:w-[340px]" : "md:w-0 md:border-l-0"}
         max-md:fixed max-md:bottom-0 max-md:left-0 max-md:right-0 max-md:z-[9998]
         max-md:max-h-[75dvh] max-md:rounded-t-2xl max-md:shadow-[0_-4px_20px_rgba(0,0,0,0.15)]
         max-md:transition-transform max-md:duration-300 max-md:ease-out
-        max-md:border-t
+        max-md:border-t max-md:overflow-hidden
         ${mobileSidebarOpen ? "max-md:translate-y-0" : "max-md:translate-y-full"}
         max-md:pb-[calc(60px+env(safe-area-inset-bottom,0px))]
       `}>
@@ -8349,6 +8345,9 @@ export function GardenMapClient({ userId }: { userId: string }) {
         <div className="md:hidden flex justify-center pt-2 pb-1">
           <div className="w-9 h-1 rounded-full bg-border" />
         </div>
+
+        {/* Inner wrapper – keeps content at 340px even while aside width transitions */}
+        <div className="md:w-[340px] md:min-w-[340px] flex flex-col flex-1 min-h-0 overflow-hidden">
 
         {/* Panel header */}
         <div className="flex items-center justify-between px-4 pt-3 pb-2 border-b border-border/50 shrink-0">
@@ -15673,6 +15672,7 @@ export function GardenMapClient({ userId }: { userId: string }) {
           );
         })() : null}
         </div>
+        </div>{/* end inner wrapper */}
       </aside>
 
       {/* ── Variety Manager Modal ── */}
