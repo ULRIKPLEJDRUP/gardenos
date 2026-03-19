@@ -36,15 +36,19 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
 
         if (!valid) return null;
 
-        // Record login: update lastLoginAt + activity log (fire-and-forget)
-        const db = prisma as any;
-        db.user.update({
-          where: { id: user.id },
-          data: { lastLoginAt: new Date() },
-        }).catch(() => {/* ignore */});
-        db.activityLog.create({
-          data: { userId: user.id, action: "login" },
-        }).catch(() => {/* ignore */});
+        // Record login (fire-and-forget, must not block auth)
+        try {
+          prisma.user.update({
+            where: { id: user.id },
+            data: { lastLoginAt: new Date() },
+          }).catch(() => {/* ignore */});
+        } catch { /* ignore */ }
+
+        try {
+          (prisma as any).activityLog.create({
+            data: { userId: user.id, action: "login" },
+          }).catch(() => {/* ignore */});
+        } catch { /* ignore */ }
 
         return {
           id: user.id,
