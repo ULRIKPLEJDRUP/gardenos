@@ -7514,7 +7514,19 @@ export function GardenMapClient({ userId }: { userId: string }) {
             >
               ↩ <span className="hidden md:inline">Fortryd</span>
             </button>
-            <span data-tour="feedback-btn"><FeedbackPanel /></span>
+            <button
+              type="button"
+              data-tour="tab-chat"
+              className={`rounded-md px-2 md:px-2.5 py-1.5 text-xs font-medium transition-colors ${
+                sidebarTab === "chat" && sidebarPanelOpen
+                  ? "bg-accent/10 text-accent"
+                  : "text-foreground/60 hover:bg-foreground/5"
+              }`}
+              onClick={() => toggleSidebarPanel("chat")}
+              title="Rådgiver — AI-assistent"
+            >
+              💬 <span className="hidden md:inline">Rådgiver</span>
+            </button>
             {multiSelectedIds.size >= 2 ? (
               <button
                 type="button"
@@ -7536,42 +7548,7 @@ export function GardenMapClient({ userId }: { userId: string }) {
               </button>
             ) : null}
           </div>
-          {/* ── Design pill ── */}
-          <div className="h-5 w-px bg-border hidden md:block" />
-          <div className="flex items-center gap-0">
-            <button
-              type="button"
-              className={`rounded-l-full border border-r-0 px-2.5 py-1 text-xs font-medium transition-colors flex items-center gap-1 ${
-                sidebarTab === "designs"
-                  ? "border-accent bg-accent/10 text-accent"
-                  : "border-border text-foreground/60 hover:bg-foreground/5 hover:border-foreground/20"
-              }`}
-              onClick={() => { setSidebarTab("designs"); setSidebarPanelOpen(true); }}
-              title="Gemte designs"
-            >
-              💾 <span className="hidden md:inline truncate max-w-[100px]">{activeDesignName || "Designs"}</span> <span className="text-[9px] opacity-50">▾</span>
-            </button>
-            {activeDesignId && (
-              <button
-                type="button"
-                className={`rounded-r-full border border-l-0 px-2 py-1 text-xs font-medium transition-colors ${
-                  quickSaveFlash
-                    ? "border-green-400 bg-green-50 text-green-600"
-                    : "border-border text-foreground/50 hover:bg-accent/10 hover:text-accent hover:border-accent/30"
-                } disabled:opacity-40`}
-                onClick={handleQuickSave}
-                disabled={designSaving}
-                title={`Gem ændringer til "${activeDesignName}"`}
-              >
-                {quickSaveFlash ? "✓" : designSaving ? "⏳" : "⬆️"}
-              </button>
-            )}
-            {!activeDesignId && (
-              <span className="rounded-r-full border border-l-0 border-border px-2 py-1 text-[9px] text-foreground/25">
-                —
-              </span>
-            )}
-          </div>
+
         </div>
         {/* ── Brugernavn ── */}
         <div className="flex items-center text-xs text-foreground/50 truncate max-w-[100px] md:max-w-none">
@@ -8268,6 +8245,21 @@ export function GardenMapClient({ userId }: { userId: string }) {
                     <div className="text-[10px] text-foreground/40 mt-0.5">AI-assistent der kender GardenOS</div>
                   </div>
                 </button>
+                <div className="w-full h-px bg-border/50 my-0.5" />
+                <div onClick={() => setGuidePopoverOpen(false)}>
+                  <span data-tour="feedback-btn">
+                    <FeedbackPanel
+                      triggerClassName="w-full flex items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-xs font-medium text-foreground/70 hover:bg-accent/10 hover:text-accent transition-colors"
+                      triggerContent={<>
+                        <span className="text-base">📣</span>
+                        <div>
+                          <div className="font-semibold text-foreground/80">Giv feedback</div>
+                          <div className="text-[10px] text-foreground/40 mt-0.5">Fejl, idéer, spørgsmål</div>
+                        </div>
+                      </>}
+                    />
+                  </span>
+                </div>
               </div>
             </div>
           )}
@@ -8447,47 +8439,65 @@ export function GardenMapClient({ userId }: { userId: string }) {
            Vertical Icon Bar (desktop, 48px grid column)
          ══════════════════════════════════════════════════════════════ */}
       <nav className="row-start-2 col-start-3 hidden md:flex flex-col w-12 border-l border-border bg-sidebar-bg items-center py-2 gap-0.5 overflow-y-auto scrollbar-hide z-[50]">
-        {ALL_SIDEBAR_TABS.map((tab) => {
-          const isActive = sidebarTab === tab.id && sidebarPanelOpen;
-          const isDisabled = tab.id === "content" && !selected;
-          const badge = tab.id === "conflicts" && allConflicts.length > 0
-            ? allConflicts.length
-            : tab.id === "groups" && allGroups.length > 0
-            ? allGroups.length
-            : null;
+        {(() => {
+          const renderTab = (tab: (typeof ALL_SIDEBAR_TABS)[number]) => {
+            const isActive = sidebarTab === tab.id && sidebarPanelOpen;
+            const isDisabled = tab.id === "content" && !selected;
+            const badge = tab.id === "conflicts" && allConflicts.length > 0
+              ? allConflicts.length
+              : tab.id === "groups" && allGroups.length > 0
+              ? allGroups.length
+              : null;
+            return (
+              <button
+                key={tab.id}
+                type="button"
+                data-tour={`tab-${tab.id}`}
+                disabled={!!isDisabled}
+                className={`relative flex flex-col items-center justify-center w-10 h-10 rounded-xl transition-all group ${
+                  isActive
+                    ? "bg-accent text-white shadow-md"
+                    : isDisabled
+                    ? "text-foreground/20 cursor-not-allowed"
+                    : "text-foreground/50 hover:bg-foreground/[0.06] hover:text-foreground/70"
+                }`}
+                onClick={() => {
+                  if (isDisabled) return;
+                  toggleSidebarPanel(tab.id);
+                  if (tab.id !== "groups") setHighlightedGroupId(null);
+                }}
+                title={isDisabled ? "Vælg noget på kortet først" : tab.label}
+              >
+                <span className="text-[17px] leading-none">{tab.icon}</span>
+                <span className={`text-[7px] font-semibold leading-tight tracking-tight whitespace-nowrap mt-0.5 ${
+                  isActive ? "text-white/90" : "text-foreground/35"
+                }`}>{tab.label}</span>
+                {badge ? (
+                  <span className="absolute -top-0.5 -right-0.5 min-w-[14px] h-[14px] rounded-full bg-red-500 text-white text-[8px] font-bold flex items-center justify-center px-0.5 leading-none">
+                    {badge}
+                  </span>
+                ) : null}
+              </button>
+            );
+          };
+          const grp = (ids: string[]) =>
+            ids.map(id => ALL_SIDEBAR_TABS.find(t => t.id === id)!).filter(Boolean).map(renderTab);
           return (
-            <button
-              key={tab.id}
-              type="button"
-              data-tour={`tab-${tab.id}`}
-              disabled={!!isDisabled}
-              className={`relative flex flex-col items-center justify-center w-10 h-10 rounded-xl transition-all group ${
-                isActive
-                  ? "bg-accent text-white shadow-md"
-                  : isDisabled
-                  ? "text-foreground/20 cursor-not-allowed"
-                  : "text-foreground/50 hover:bg-foreground/[0.06] hover:text-foreground/70"
-              }`}
-              onClick={() => {
-                if (isDisabled) return;
-                toggleSidebarPanel(tab.id);
-                if (tab.id !== "groups") setHighlightedGroupId(null);
-              }}
-              title={isDisabled ? "Vælg noget på kortet først" : tab.label}
-            >
-              <span className="text-[17px] leading-none">{tab.icon}</span>
-              <span className={`text-[7px] font-semibold leading-tight tracking-tight whitespace-nowrap mt-0.5 ${
-                isActive ? "text-white/90" : "text-foreground/35"
-              }`}>{tab.label}</span>
-              {badge ? (
-                <span className="absolute -top-0.5 -right-0.5 min-w-[14px] h-[14px] rounded-full bg-red-500 text-white text-[8px] font-bold flex items-center justify-center px-0.5 leading-none">
-                  {badge}
-                </span>
-              ) : null}
-            </button>
+            <>
+              {/* Gruppe 1 — Opret */}
+              <span className="text-[6px] font-bold text-foreground/25 uppercase tracking-widest mt-1 mb-0.5">Opret</span>
+              {grp(["create", "content", "groups"])}
+              <div className="w-6 h-px bg-border my-1.5" />
+              {/* Gruppe 2 — Analyse */}
+              <span className="text-[6px] font-bold text-foreground/25 uppercase tracking-widest mt-0.5 mb-0.5">Analyse</span>
+              {grp(["conflicts", "scan", "view", "tasks", "plants"])}
+              <div className="w-6 h-px bg-border my-1.5" />
+              {/* Gruppe 3 — System */}
+              <span className="text-[6px] font-bold text-foreground/25 uppercase tracking-widest mt-0.5 mb-0.5">System</span>
+              {grp(["designs"])}
+            </>
           );
-        })}
-        <div className="w-6 h-px bg-border my-1.5" />
+        })()}
         {isAdmin && (
           <a
             href="/admin"

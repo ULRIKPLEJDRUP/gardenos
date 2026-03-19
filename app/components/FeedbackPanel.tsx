@@ -6,7 +6,7 @@
 // Shows their previous submissions and admin replies.
 // ---------------------------------------------------------------------------
 import { useSession } from "next-auth/react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { type ReactNode, useCallback, useEffect, useRef, useState } from "react";
 
 type FeedbackType = "bug" | "idea" | "question" | "other";
 
@@ -46,7 +46,7 @@ const STATUS_META: Record<string, { emoji: string; label: string; color: string 
   closed: { emoji: "🔒", label: "Lukket", color: "text-gray-500 bg-gray-100" },
 };
 
-export default function FeedbackPanel() {
+export default function FeedbackPanel({ triggerClassName, triggerContent }: { triggerClassName?: string; triggerContent?: ReactNode } = {}) {
   const { data: session } = useSession();
   const [open, setOpen] = useState(false);
   const [view, setView] = useState<"intro" | "list" | "new" | "detail">("intro");
@@ -222,15 +222,15 @@ export default function FeedbackPanel() {
 
   return (
     <>
-      {/* Feedback button – sits next to undo in toolbar */}
+      {/* Feedback trigger button */}
       <button
         type="button"
-        className="rounded-md px-2 md:px-2.5 py-1.5 text-xs text-foreground/60 hover:bg-foreground/5 transition-colors relative"
+        className={triggerClassName || "rounded-md px-2 md:px-2.5 py-1.5 text-xs text-foreground/60 hover:bg-foreground/5 transition-colors relative"}
         onClick={handleOpen}
         title="Giv feedback"
       >
-        💬 <span className="hidden md:inline">Feedback</span>
-        {items.some((i) => i.status === "fixed") && (
+        {triggerContent || (<>💬 <span className="hidden md:inline">Feedback</span></>)}
+        {!triggerContent && items.some((i) => i.status === "fixed") && (
           <span className="absolute -top-0.5 -right-0.5 w-2 h-2 bg-green-500 rounded-full" />
         )}
       </button>
