@@ -3268,6 +3268,17 @@ export function GardenMapClient({ userId }: { userId: string }) {
   const [newKindError, setNewKindError] = useState<string | null>(null);
   const [undoStack, setUndoStack] = useState<UndoSnapshot[]>([]);
   const [sidebarTab, setSidebarTab] = useState<"create" | "content" | "groups" | "plants" | "view" | "scan" | "chat" | "calendar" | "tasks" | "conflicts" | "designs">("create");
+  const [sidebarPanelOpen, setSidebarPanelOpen] = useState(true);
+  const toggleSidebarPanel = useCallback((tabId?: typeof sidebarTab) => {
+    if (tabId && tabId !== sidebarTab) {
+      setSidebarTab(tabId);
+      setSidebarPanelOpen(true);
+    } else if (tabId && tabId === sidebarTab) {
+      setSidebarPanelOpen((v) => !v);
+    } else {
+      setSidebarPanelOpen((v) => !v);
+    }
+  }, [sidebarTab]);
   const [conflictFilter, setConflictFilter] = useState<"all" | "spacing" | "bad-companion" | "layer-competition" | "shade">("all");
   const [conflictSortBy, setConflictSortBy] = useState<"severity" | "type" | "distance">("severity");
   const [conflictResolvedIds, setConflictResolvedIds] = useState<Set<string>>(() => {
@@ -3465,24 +3476,25 @@ export function GardenMapClient({ userId }: { userId: string }) {
     return () => { cancelled = true; };
   }, []);
 
-  // Keyboard shortcuts: ⌘1-⌘9 for pinned sidebar tabs
+  // Keyboard shortcuts: ⌘1-⌘9 for sidebar tabs (all tabs, in order)
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       if (!e.metaKey && !e.ctrlKey) return;
       const num = parseInt(e.key, 10);
       if (num >= 1 && num <= 9) {
         const idx = num - 1;
-        if (idx < pinnedSidebarTabs.length) {
+        if (idx < ALL_SIDEBAR_TABS.length) {
           e.preventDefault();
-          const tabId = pinnedSidebarTabs[idx];
-          setSidebarTab(tabId);
+          const tabId = ALL_SIDEBAR_TABS[idx].id;
+          if (tabId === "content" && !selected) return;
+          toggleSidebarPanel(tabId);
           if (tabId !== "groups") setHighlightedGroupId(null);
         }
       }
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [pinnedSidebarTabs]);
+  }, [ALL_SIDEBAR_TABS, selected, toggleSidebarPanel]);
 
   // ── AI Chat / Rådgiver state ──
   type ChatMsg = { role: "user" | "assistant"; content: string; ts: number };
@@ -4140,6 +4152,7 @@ export function GardenMapClient({ userId }: { userId: string }) {
         // Only auto-switch to "content" if we're on "create" – don't hijack other tabs
         if (next && (sidebarTabRef.current === "create" || sidebarTabRef.current === "content")) {
           setSidebarTab("content");
+          setSidebarPanelOpen(true);
         }
         return next;
       });
@@ -7376,7 +7389,7 @@ export function GardenMapClient({ userId }: { userId: string }) {
   }, [selected, selectedCategory]);
 
   return (
-    <div className="grid h-[calc(100dvh)] w-full grid-cols-1 grid-rows-[auto_1fr] md:grid-cols-[1fr_340px]">
+    <div className="grid h-[calc(100dvh)] w-full grid-cols-1 grid-rows-[auto_1fr] md:grid-cols-[1fr_48px]">
       <div data-tour="toolbar" className="gardenos-toolbar col-span-1 row-start-1 flex items-center justify-between gap-1 md:gap-2 border-b border-border bg-toolbar-bg px-2 md:px-3 py-1.5 md:py-2 md:col-span-2 shadow-sm">
         <div className="flex items-center gap-1 md:gap-3">
           <div className="flex items-center gap-1.5 mr-1">
@@ -7458,7 +7471,7 @@ export function GardenMapClient({ userId }: { userId: string }) {
                   ? "border-accent bg-accent/10 text-accent"
                   : "border-border text-foreground/60 hover:bg-foreground/5 hover:border-foreground/20"
               }`}
-              onClick={() => setSidebarTab("designs")}
+              onClick={() => { setSidebarTab("designs"); setSidebarPanelOpen(true); }}
               title="Gemte designs"
             >
               💾 <span className="hidden md:inline truncate max-w-[100px]">{activeDesignName || "Designs"}</span> <span className="text-[9px] opacity-50">▾</span>
@@ -7509,7 +7522,7 @@ export function GardenMapClient({ userId }: { userId: string }) {
                 <button
                   type="button"
                   className="shrink-0 rounded-full border border-dashed border-foreground/20 px-1.5 py-0.5 text-[10px] text-foreground/40 hover:border-accent/40 hover:text-accent transition-all"
-                  onClick={() => { setSidebarTab("view"); setViewSubTab("steder"); }}
+                  onClick={() => { setSidebarTab("view"); setViewSubTab("steder"); setSidebarPanelOpen(true); }}
                   title="Administrer steder"
                 >
                   ＋
@@ -7600,14 +7613,6 @@ export function GardenMapClient({ userId }: { userId: string }) {
               </div>
             ) : null}
           </div>
-          <button
-            type="button"
-            className="shrink-0 rounded-md px-2 md:px-2.5 py-1.5 text-xs text-foreground/60 hover:bg-red-50 hover:text-red-600 transition-colors whitespace-nowrap"
-            onClick={() => signOut({ callbackUrl: "/login" })}
-            title="Log ud"
-          >
-            🚪 <span className="hidden md:inline">Log ud</span>
-          </button>
         </div>
       </div>
       <style>{`
@@ -8237,12 +8242,106 @@ export function GardenMapClient({ userId }: { userId: string }) {
         />
       ) : null}
 
+      {/* ══════════════════════════════════════════════════════════════
+           Vertical Icon Bar (desktop, 48px grid column)
+         ══════════════════════════════════════════════════════════════ */}
+      <nav className="row-start-2 col-start-2 hidden md:flex flex-col w-12 border-l border-border bg-sidebar-bg items-center py-2 gap-0.5 overflow-y-auto scrollbar-hide z-[50]">
+        {ALL_SIDEBAR_TABS.map((tab) => {
+          const isActive = sidebarTab === tab.id && sidebarPanelOpen;
+          const isDisabled = tab.id === "content" && !selected;
+          const badge = tab.id === "conflicts" && allConflicts.length > 0
+            ? allConflicts.length
+            : tab.id === "groups" && allGroups.length > 0
+            ? allGroups.length
+            : null;
+          return (
+            <button
+              key={tab.id}
+              type="button"
+              data-tour={`tab-${tab.id}`}
+              disabled={!!isDisabled}
+              className={`relative flex flex-col items-center justify-center w-10 h-10 rounded-xl transition-all group ${
+                isActive
+                  ? "bg-accent text-white shadow-md"
+                  : isDisabled
+                  ? "text-foreground/20 cursor-not-allowed"
+                  : "text-foreground/50 hover:bg-foreground/[0.06] hover:text-foreground/70"
+              }`}
+              onClick={() => {
+                if (isDisabled) return;
+                toggleSidebarPanel(tab.id);
+                if (tab.id !== "groups") setHighlightedGroupId(null);
+              }}
+              title={isDisabled ? "Vælg noget på kortet først" : tab.label}
+            >
+              <span className="text-[17px] leading-none">{tab.icon}</span>
+              <span className={`text-[7px] font-semibold leading-tight tracking-tight whitespace-nowrap mt-0.5 ${
+                isActive ? "text-white/90" : "text-foreground/35"
+              }`}>{tab.label}</span>
+              {badge ? (
+                <span className="absolute -top-0.5 -right-0.5 min-w-[14px] h-[14px] rounded-full bg-red-500 text-white text-[8px] font-bold flex items-center justify-center px-0.5 leading-none">
+                  {badge}
+                </span>
+              ) : null}
+            </button>
+          );
+        })}
+        <div className="w-6 h-px bg-border my-1.5" />
+        <button
+          type="button"
+          className="flex flex-col items-center justify-center w-10 h-10 rounded-xl text-foreground/35 hover:bg-foreground/[0.06] hover:text-foreground/60 transition-all"
+          onClick={() => setForceStartTour(true)}
+          title="Rundvisning"
+        >
+          <span className="text-[17px] leading-none">🎓</span>
+          <span className="text-[7px] font-semibold mt-0.5 text-foreground/30">Guide</span>
+        </button>
+        {isAdmin && (
+          <a
+            href="/admin"
+            className="flex flex-col items-center justify-center w-10 h-10 rounded-xl text-foreground/35 hover:bg-amber-500/10 hover:text-amber-600 transition-all"
+            title="Admin panel"
+          >
+            <span className="text-[17px] leading-none">🛡️</span>
+            <span className="text-[7px] font-semibold mt-0.5 text-amber-600/60">Admin</span>
+          </a>
+        )}
+        <div className="flex-1" />
+        {sessionData?.user && (
+          <div className="flex flex-col items-center justify-center w-10 h-10 text-foreground/30" title={sessionData.user.name || sessionData.user.email || ""}>
+            <span className="text-[15px] leading-none">👤</span>
+            <span className="text-[6px] font-medium mt-0.5 truncate max-w-[40px] text-center">
+              {(sessionData.user.name || sessionData.user.email || "").split(/[\s@]/)[0]}
+            </span>
+          </div>
+        )}
+        <button
+          type="button"
+          className="flex flex-col items-center justify-center w-10 h-10 rounded-xl text-foreground/35 hover:bg-red-50 hover:text-red-500 transition-all mb-1"
+          onClick={() => signOut({ callbackUrl: "/login" })}
+          title="Log ud"
+        >
+          <span className="text-[17px] leading-none">🚪</span>
+          <span className="text-[7px] font-semibold mt-0.5 text-foreground/30">Log ud</span>
+        </button>
+      </nav>
+
+      {/* ══════════════════════════════════════════════════════════════
+           Sidebar Panel — Desktop: overlay from right; Mobile: bottom sheet
+         ══════════════════════════════════════════════════════════════ */}
+      {/* Desktop overlay backdrop (click to close panel) */}
+      {sidebarPanelOpen && (
+        <div className="hidden md:block fixed inset-0 z-[39]" onClick={() => setSidebarPanelOpen(false)} />
+      )}
       <aside className={`
-        row-start-2 flex flex-col border-t border-border bg-sidebar-bg overflow-hidden
-        md:border-l md:border-t-0 md:relative md:translate-y-0 md:rounded-none md:max-h-none md:shadow-none
+        flex flex-col border-border bg-sidebar-bg overflow-hidden
+        md:absolute md:right-0 md:top-0 md:bottom-0 md:w-[340px] md:border-l md:shadow-xl md:z-[40]
+        md:transition-transform md:duration-300 md:ease-in-out
+        ${sidebarPanelOpen ? "md:translate-x-0" : "md:translate-x-full"}
         max-md:fixed max-md:bottom-0 max-md:left-0 max-md:right-0 max-md:z-[9998]
         max-md:max-h-[75dvh] max-md:rounded-t-2xl max-md:shadow-[0_-4px_20px_rgba(0,0,0,0.15)]
         max-md:transition-transform max-md:duration-300 max-md:ease-out
+        max-md:border-t
         ${mobileSidebarOpen ? "max-md:translate-y-0" : "max-md:translate-y-full"}
         max-md:pb-[calc(60px+env(safe-area-inset-bottom,0px))]
       `}>
@@ -8251,263 +8350,20 @@ export function GardenMapClient({ userId }: { userId: string }) {
           <div className="w-9 h-1 rounded-full bg-border" />
         </div>
 
-        <div className="px-3 pt-2 md:pt-2 max-md:pt-0 pb-0.5 relative">
-          <nav className="flex items-stretch gap-px">
-            {/* ── Pinned quick-access tabs (ordered) ── */}
-            <div className="flex items-stretch gap-px overflow-x-auto scrollbar-hide flex-1 min-w-0">
-              {pinnedSidebarTabs.map((tabId, idx) => {
-                const def = ALL_SIDEBAR_TABS.find((t) => t.id === tabId);
-                if (!def) return null;
-                const isActive = sidebarTab === tabId;
-                const isDisabled = tabId === "content" && !selected;
-                // Dynamic label with counts
-                const label = tabId === "conflicts" && allConflicts.length > 0
-                  ? `Konflikter ${allConflicts.length}`
-                  : tabId === "groups" && allGroups.length > 0
-                  ? `Grupper ${allGroups.length}`
-                  : def.label;
-                return (
-                  <button
-                    key={tabId}
-                    type="button"
-                    data-tour={`tab-${tabId}`}
-                    disabled={!!isDisabled}
-                    className={`flex flex-col items-center justify-center rounded-xl px-2 py-1.5 min-w-[46px] transition-all ${
-                      isActive
-                        ? "bg-accent text-white shadow-md -translate-y-px"
-                        : isDisabled
-                        ? "text-foreground/20 cursor-not-allowed"
-                        : "text-foreground/50 hover:bg-foreground/[0.06] hover:text-foreground/70"
-                    }`}
-                    onClick={() => {
-                      if (isDisabled) return;
-                      setSidebarTab(tabId);
-                      if (tabId !== "groups") setHighlightedGroupId(null);
-                      setSidebarDropdownOpen(false);
-                    }}
-                    title={isDisabled ? "Vælg noget på kortet først" : `${label} (⌘${idx + 1})`}
-                  >
-                    <span className="text-[15px] leading-none">{def.icon}</span>
-                    <span className={`text-[8px] font-semibold mt-0.5 leading-tight tracking-tight whitespace-nowrap ${
-                      isActive ? "" : "text-foreground/40"
-                    }`}>{label}</span>
-                  </button>
-                );
-              })}
-            </div>
-
-            {/* ── ▾ Dropdown: alle tabs ── */}
-            <button
-              type="button"
-              data-tour="sidebar-dropdown"
-              className={`flex flex-col items-center justify-center rounded-xl px-1.5 py-1.5 min-w-[32px] transition-all flex-shrink-0 ${
-                sidebarDropdownOpen
-                  ? "bg-foreground/10 text-foreground/80"
-                  : "text-foreground/30 hover:bg-foreground/[0.06] hover:text-foreground/50"
-              }`}
-              onClick={() => { setSidebarDropdownOpen((v) => !v); setSidebarTabPickerOpen(false); }}
-              title="Alle faner"
-            >
-              <span className="text-[13px] leading-none">▾</span>
-              <span className="text-[7px] font-semibold mt-0.5 text-foreground/30">Alle</span>
-            </button>
-
-            {/* ── ⚙️ Tilpas ── */}
-            <button
-              type="button"
-              data-tour="sidebar-settings"
-              className={`flex flex-col items-center justify-center rounded-xl px-1.5 py-1.5 min-w-[32px] transition-all flex-shrink-0 ${
-                sidebarTabPickerOpen
-                  ? "bg-foreground/10 text-foreground/80"
-                  : "text-foreground/30 hover:bg-foreground/[0.06] hover:text-foreground/50"
-              }`}
-              onClick={() => { setSidebarTabPickerOpen((v) => !v); setSidebarDropdownOpen(false); }}
-              title="Tilpas genveje"
-            >
-              <span className="text-[13px] leading-none">⚙️</span>
-              <span className="text-[7px] font-semibold mt-0.5 text-foreground/30">Tilpas</span>
-            </button>
-
-            {/* ── 🛡️ Admin shortcut (only for admins) ── */}
-            {isAdmin && (
-              <a
-                href="/admin"
-                className="flex flex-col items-center justify-center rounded-xl px-1.5 py-1.5 min-w-[32px] transition-all flex-shrink-0 text-foreground/30 hover:bg-amber-500/10 hover:text-amber-600"
-                title="Åbn Admin panel"
-              >
-                <span className="text-[13px] leading-none">🛡️</span>
-                <span className="text-[7px] font-semibold mt-0.5 text-amber-600/70">Admin</span>
-              </a>
-            )}
-          </nav>
-
-          {/* ── ▾ All-tabs dropdown ── */}
-          {sidebarDropdownOpen && (
-            <>
-              <div className="fixed inset-0 z-[40]" onClick={() => setSidebarDropdownOpen(false)} />
-              <div className="sidebar-tab-picker z-[41]">
-                <div className="grid grid-cols-2 gap-1 px-2 py-2">
-                  {ALL_SIDEBAR_TABS.map((tab) => {
-                    const isActive = sidebarTab === tab.id;
-                    const isDisabled = tab.id === "content" && !selected;
-                    const pinIdx = pinnedSidebarTabs.indexOf(tab.id);
-                    return (
-                      <button
-                        key={tab.id}
-                        type="button"
-                        disabled={!!isDisabled}
-                        className={`flex items-center gap-1.5 rounded-lg px-2.5 py-2 text-left transition-all text-[11px] ${
-                          isActive
-                            ? "bg-accent/20 text-accent font-bold ring-1 ring-accent/40"
-                            : isDisabled
-                            ? "text-foreground/20 cursor-not-allowed bg-foreground/[0.02]"
-                            : "bg-foreground/[0.04] text-foreground/60 hover:bg-foreground/[0.08]"
-                        }`}
-                        onClick={() => {
-                          if (isDisabled) return;
-                          setSidebarTab(tab.id);
-                          if (tab.id !== "groups") setHighlightedGroupId(null);
-                          setSidebarDropdownOpen(false);
-                        }}
-                      >
-                        <span className="text-sm leading-none">{tab.icon}</span>
-                        <span className="flex-1">{tab.label}</span>
-                        {pinIdx >= 0 && <span className="text-[9px] text-foreground/30 font-mono">⌘{pinIdx + 1}</span>}
-                      </button>
-                    );
-                  })}
-                </div>
-                {/* ── Bruger + Admin + Log ud ── */}
-                <div className="border-t border-foreground/10 px-2 pt-1.5 pb-2 space-y-1">
-                  {/* Logged-in user identity */}
-                  {sessionData?.user && (
-                    <div className="flex items-center gap-1.5 px-2.5 py-1.5 text-[10px] text-foreground/40 truncate">
-                      <span className="text-sm leading-none">👤</span>
-                      <span className="truncate">
-                        {sessionData.user.name || sessionData.user.email}
-                        {isAdmin && <span className="ml-1 text-amber-500 font-semibold">(admin)</span>}
-                      </span>
-                    </div>
-                  )}
-                  {isAdmin && (
-                    <a
-                      href="/admin"
-                      className="flex w-full items-center gap-1.5 rounded-lg px-2.5 py-2 text-left text-[11px] bg-foreground/[0.04] text-foreground/60 hover:bg-accent/10 hover:text-accent transition-all"
-                    >
-                      <span className="text-sm leading-none">🛡️</span>
-                      <span className="flex-1">Admin panel</span>
-                    </a>
-                  )}
-                  <button
-                    type="button"
-                    className="flex w-full items-center gap-1.5 rounded-lg px-2.5 py-2 text-left text-[11px] bg-foreground/[0.04] text-foreground/60 hover:bg-accent/10 hover:text-accent transition-all"
-                    onClick={() => { setForceStartTour(true); setSidebarDropdownOpen(false); }}
-                  >
-                    <span className="text-sm leading-none">🎓</span>
-                    <span className="flex-1">Rundvisning</span>
-                  </button>
-                  <button
-                    type="button"
-                    className="flex w-full items-center gap-1.5 rounded-lg px-2.5 py-2 text-left text-[11px] bg-foreground/[0.04] text-foreground/60 hover:bg-red-500/10 hover:text-red-600 transition-all"
-                    onClick={() => signOut({ callbackUrl: "/login" })}
-                  >
-                    <span className="text-sm leading-none">🚪</span>
-                    <span className="flex-1">Log ud</span>
-                  </button>
-                </div>
-              </div>
-            </>
-          )}
-
-          {/* ── ⚙️ Customization picker ── */}
-          {sidebarTabPickerOpen && (
-            <>
-              <div className="fixed inset-0 z-[40]" onClick={() => setSidebarTabPickerOpen(false)} />
-              <div className="sidebar-tab-picker z-[41]">
-                <div className="text-[10px] font-bold uppercase tracking-wide text-foreground/40 px-3 pt-2.5 pb-1">Genveje (maks {MAX_PINNED_SIDEBAR}) — træk for at ændre rækkefølge</div>
-
-                {/* Pinned tabs — draggable reorder */}
-                <div className="flex flex-col gap-0.5 px-2 pb-1">
-                  {pinnedSidebarTabs.map((tabId, idx) => {
-                    const def = ALL_SIDEBAR_TABS.find((t) => t.id === tabId);
-                    if (!def) return null;
-                    const isDragOver = dragOverIdx === idx && dragIdx !== idx;
-                    return (
-                      <div
-                        key={tabId}
-                        draggable
-                        onDragStart={() => handlePickerDragStart(idx)}
-                        onDragOver={(e) => handlePickerDragOver(e, idx)}
-                        onDrop={() => handlePickerDrop(idx)}
-                        onDragEnd={handlePickerDragEnd}
-                        className={`flex items-center gap-2 rounded-lg px-2 py-1.5 transition-all cursor-grab active:cursor-grabbing
-                          bg-accent/10 text-accent ring-1 ring-accent/25
-                          ${isDragOver ? "ring-accent/60 bg-accent/20 scale-[1.02]" : ""}
-                          ${dragIdx === idx ? "opacity-40" : ""}
-                        `}
-                      >
-                        <span className="text-foreground/25 text-[10px] cursor-grab select-none" title="Træk for at flytte">⠿</span>
-                        <span className="text-sm leading-none">{def.icon}</span>
-                        <span className="text-[11px] font-semibold flex-1">{def.label}</span>
-                        <span className="text-[9px] text-foreground/30 font-mono">⌘{idx + 1}</span>
-                        <button
-                          type="button"
-                          className="text-[10px] text-foreground/30 hover:text-red-500 transition-colors px-1"
-                          onClick={(e) => { e.stopPropagation(); toggleSidebarPin(tabId); }}
-                          title="Fjern fra genveje"
-                        >✕</button>
-                      </div>
-                    );
-                  })}
-                </div>
-
-                {/* Unpinned tabs — click to add */}
-                {pinnedSidebarTabs.length < ALL_SIDEBAR_TABS.length && (
-                  <>
-                    <div className="text-[9px] font-bold uppercase tracking-wide text-foreground/30 px-3 pt-1.5 pb-0.5">Tilgængelige</div>
-                    <div className="grid grid-cols-2 gap-0.5 px-2 pb-2">
-                      {ALL_SIDEBAR_TABS.filter((t) => !pinnedSidebarTabs.includes(t.id)).map((tab) => (
-                        <button
-                          key={tab.id}
-                          type="button"
-                          disabled={pinnedSidebarTabs.length >= MAX_PINNED_SIDEBAR}
-                          className={`flex items-center gap-1.5 rounded-lg px-2 py-1.5 text-left transition-all text-[11px]
-                            ${pinnedSidebarTabs.length >= MAX_PINNED_SIDEBAR
-                              ? "text-foreground/20 cursor-not-allowed bg-foreground/[0.02]"
-                              : "bg-foreground/[0.04] text-foreground/50 hover:bg-foreground/[0.08] hover:text-foreground/70"
-                            }
-                          `}
-                          onClick={() => toggleSidebarPin(tab.id)}
-                          title={pinnedSidebarTabs.length >= MAX_PINNED_SIDEBAR ? `Maks ${MAX_PINNED_SIDEBAR} genveje — fjern én først` : `Tilføj ${tab.label} som genvej`}
-                        >
-                          <span className="text-sm leading-none">{tab.icon}</span>
-                          <span>{tab.label}</span>
-                          <span className="ml-auto text-[10px] text-foreground/25">＋</span>
-                        </button>
-                      ))}
-                    </div>
-                  </>
-                )}
-
-                <div className="flex items-center justify-between px-3 pb-2 gap-2 border-t border-border/50 pt-1.5">
-                  <button
-                    type="button"
-                    className="text-[10px] text-foreground/35 hover:text-foreground/60 transition-colors"
-                    onClick={() => saveSidebarPins(DEFAULT_SIDEBAR_PINS)}
-                  >
-                    Nulstil
-                  </button>
-                  <button
-                    type="button"
-                    className="text-[10px] text-accent hover:text-accent/80 font-semibold transition-colors"
-                    onClick={() => setSidebarTabPickerOpen(false)}
-                  >
-                    Færdig
-                  </button>
-                </div>
-              </div>
-            </>
-          )}
+        {/* Panel header */}
+        <div className="flex items-center justify-between px-4 pt-3 pb-2 border-b border-border/50 shrink-0">
+          <h2 className="text-sm font-bold text-foreground/80 flex items-center gap-1.5">
+            <span className="text-base">{ALL_SIDEBAR_TABS.find(t => t.id === sidebarTab)?.icon}</span>
+            {ALL_SIDEBAR_TABS.find(t => t.id === sidebarTab)?.label}
+          </h2>
+          <button
+            type="button"
+            className="rounded-md p-1 text-foreground/40 hover:bg-foreground/5 hover:text-foreground/70 transition-colors"
+            onClick={() => { setSidebarPanelOpen(false); closeMobileSidebar(); }}
+            title="Luk panel"
+          >
+            ✕
+          </button>
         </div>
 
         <div className="flex-1 overflow-y-auto sidebar-scroll px-4 pb-4">
@@ -11439,7 +11295,7 @@ export function GardenMapClient({ userId }: { userId: string }) {
                         <button
                           type="button"
                           className="text-[9px] text-accent hover:underline"
-                          onClick={() => setSidebarTab("conflicts")}
+                          onClick={() => { setSidebarTab("conflicts"); setSidebarPanelOpen(true); }}
                         >Se alle konflikter →</button>
                       </div>
 
@@ -13618,7 +13474,7 @@ export function GardenMapClient({ userId }: { userId: string }) {
                       <button
                         type="button"
                         className="mt-1 text-[10px] text-accent underline"
-                        onClick={() => { setSidebarTab("plants"); }}
+                        onClick={() => { setSidebarTab("plants"); setSidebarPanelOpen(true); }}
                       >
                         Gå til Planter →
                       </button>
@@ -13832,7 +13688,7 @@ export function GardenMapClient({ userId }: { userId: string }) {
                       <button
                         type="button"
                         className="mt-1 text-[10px] text-accent underline"
-                        onClick={() => { setSidebarTab("plants"); }}
+                        onClick={() => { setSidebarTab("plants"); setSidebarPanelOpen(true); }}
                       >
                         Gå til Planter →
                       </button>
@@ -14266,7 +14122,7 @@ export function GardenMapClient({ userId }: { userId: string }) {
                           <button
                             type="button"
                             className="flex items-center gap-1 hover:underline text-foreground/70"
-                            onClick={() => { selectFeatureById(c.featureIdA); setSidebarTab("content"); }}
+                            onClick={() => { selectFeatureById(c.featureIdA); setSidebarTab("content"); setSidebarPanelOpen(true); }}
                           >
                             <span>{c.speciesA.icon ?? "🌱"}</span>
                             <span className="font-medium">{c.speciesA.name}</span>
@@ -14275,7 +14131,7 @@ export function GardenMapClient({ userId }: { userId: string }) {
                           <button
                             type="button"
                             className="flex items-center gap-1 hover:underline text-foreground/70"
-                            onClick={() => { selectFeatureById(c.featureIdB); setSidebarTab("content"); }}
+                            onClick={() => { selectFeatureById(c.featureIdB); setSidebarTab("content"); setSidebarPanelOpen(true); }}
                           >
                             <span>{c.speciesB.icon ?? "🌱"}</span>
                             <span className="font-medium">{c.speciesB.name}</span>
@@ -14349,6 +14205,7 @@ export function GardenMapClient({ userId }: { userId: string }) {
             taskVersion={taskVersion}
             goToYearWheel={(_month: number) => {
               setSidebarTab("calendar");
+              setSidebarPanelOpen(true);
             }}
           />
         ) : null}
