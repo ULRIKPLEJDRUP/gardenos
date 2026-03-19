@@ -30,7 +30,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // ── Validate invite code ──
+    // ── Pre-validate invite code (fast fail before hashing) ──
     const invite = await prisma.inviteCode.findUnique({
       where: { code: inviteCode.trim().toUpperCase() },
     });
@@ -68,22 +68,33 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // ── Create user + mark invite as used ──
+    // ── Create user + mark invite as used (atomic transaction) ──
     const hashedPassword = await bcrypt.hash(password.normalize("NFC"), 12);
 
-    const user = await prisma.user.create({
-      data: {
-        email: email.trim().toLowerCase(),
-        name: name?.trim() || null,
-        password: hashedPassword,
-        role: "user",
-        usedInviteId: invite.id,
-      },
-    });
+    await prisma.$transaction(async (tx) => {
+      // Re-check invite inside transaction to prevent race condition
+      const freshInvite = await tx.inviteCode.findUnique({
+        where: { id: invite.id },
+      });
 
-    await prisma.inviteCode.update({
-      where: { id: invite.id },
-      data: { usedById: user.id, usedAt: new Date() },
+      if (!freshInvite || freshInvite.usedById) {
+        throw new Error("INVITE_ALREADY_USED");
+      }
+
+      const user = await tx.user.create({
+        data: {
+          email: email.trim().toLowerCase(),
+          name: name?.trim() || null,
+          password: hashedPassword,
+          role: "user",
+          usedInviteId: invite.id,
+        },
+      });
+
+      await tx.inviteCode.update({
+        where: { id: invite.id },
+        data: { usedById: user.id, usedAt: new Date() },
+      });
     });
 
     return NextResponse.json(
@@ -91,6 +102,12 @@ export async function POST(request: NextRequest) {
       { status: 201 },
     );
   } catch (err) {
+    if (err instanceof Error && err.message === "INVITE_ALREADY_USED") {
+      return NextResponse.json(
+        { error: "Denne invitationskode er allerede brugt." },
+        { status: 400 },
+      );
+    }
     console.error("Register error:", err);
     return NextResponse.json(
       { error: "Der opstod en fejl. Prøv igen." },

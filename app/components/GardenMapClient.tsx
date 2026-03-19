@@ -14354,15 +14354,12 @@ export function GardenMapClient({ userId }: { userId: string }) {
                                                 addedVia: item.type === "seed-packet" ? "seed-packet" : "plant-photo",
                                               }],
                                             };
-                                            console.log("[ScanTransfer] Creating new species:", JSON.stringify(newSpecies, null, 2));
                                             addOrUpdateCustomPlant(newSpecies);
                                           }
 
                                           // Verify it was saved
                                           const verify = getAllPlants();
                                           const found = verify.find((p) => p.id === speciesId);
-                                          console.log("[ScanTransfer] Verify after save:", found ? `✅ Found '${found.name}' in category '${found.category}'` : "❌ NOT FOUND");
-                                          console.log("[ScanTransfer] Total plants:", verify.length);
 
                                           setPlantDataVersion((v) => v + 1);
                                           markScanTransferred(item.id, transferCategory);
@@ -16043,11 +16040,17 @@ export function GardenMapClient({ userId }: { userId: string }) {
                         type="button"
                         className="mt-1.5 rounded border border-foreground/20 bg-foreground/5 px-2 py-0.5 text-[10px] font-medium text-foreground/70 hover:bg-foreground/10"
                         onClick={() => {
-                          setDfUser("RNIOENOTLD");
-                          setDfPass("LaKage!7562Hesten");
+                          const demoUser = process.env.NEXT_PUBLIC_DATAFORDELER_DEMO_USER || "";
+                          const demoPass = process.env.NEXT_PUBLIC_DATAFORDELER_DEMO_PASS || "";
+                          if (!demoUser || !demoPass) {
+                            alert("Demo-credentials er ikke konfigureret. Kontakt admin.");
+                            return;
+                          }
+                          setDfUser(demoUser);
+                          setDfPass(demoPass);
                           setDfTestStatus("idle");
-                          window.localStorage.setItem(userKey("gardenos:df:user"), "RNIOENOTLD");
-                          window.localStorage.setItem(userKey("gardenos:df:pass"), "LaKage!7562Hesten");
+                          window.localStorage.setItem(userKey("gardenos:df:user"), demoUser);
+                          window.localStorage.setItem(userKey("gardenos:df:pass"), demoPass);
                         }}
                       >
                         Prøv med demo-credentials i stedet

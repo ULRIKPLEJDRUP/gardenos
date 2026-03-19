@@ -6,12 +6,28 @@
 // Returns: { icon: string (base64 data-url of generated PNG icon) }
 // ---------------------------------------------------------------------------
 import { NextRequest, NextResponse } from "next/server";
+import { auth } from "@/auth";
+import { rateLimit } from "@/app/lib/rateLimit";
 
 export const maxDuration = 60;
 export const dynamic = "force-dynamic";
 
 export async function POST(request: NextRequest) {
   try {
+    const session = await auth();
+    if (!session?.user?.id) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
+    // Rate limit: 5 icon generations per minute per user (DALL-E is expensive)
+    const rl = rateLimit(`${session.user.id}:generate-icon`, 5, 60_000);
+    if (!rl.allowed) {
+      return NextResponse.json(
+        { error: "For mange ikon-genereringer. Vent et øjeblik." },
+        { status: 429, headers: { "Retry-After": String(Math.ceil(rl.retryAfterMs / 1000)) } },
+      );
+    }
+
     const apiKey = process.env.OPENAI_API_KEY;
     if (!apiKey) {
       return NextResponse.json(

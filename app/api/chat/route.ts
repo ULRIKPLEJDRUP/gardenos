@@ -3,6 +3,8 @@
 // Streaming chat with OpenAI gpt-4o – garden-aware AI advisor
 // ---------------------------------------------------------------------------
 import { NextRequest } from "next/server";
+import { auth } from "@/auth";
+import { rateLimit } from "@/app/lib/rateLimit";
 
 export const maxDuration = 60;
 export const dynamic = "force-dynamic";
@@ -155,6 +157,23 @@ type ChatRequestBody = {
 // ---------------------------------------------------------------------------
 export async function POST(request: NextRequest) {
   try {
+    const session = await auth();
+    if (!session?.user?.id) {
+      return new Response(JSON.stringify({ error: "Unauthorized" }), {
+        status: 401,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+
+    // Rate limit: 20 messages per minute per user
+    const rl = rateLimit(`${session.user.id}:chat`, 20, 60_000);
+    if (!rl.allowed) {
+      return new Response(
+        JSON.stringify({ error: "For mange beskeder. Vent et øjeblik og prøv igen." }),
+        { status: 429, headers: { "Content-Type": "application/json", "Retry-After": String(Math.ceil(rl.retryAfterMs / 1000)) } },
+      );
+    }
+
     const body = (await request.json()) as ChatRequestBody;
     const { messages, persona = "organic", gardenContext } = body;
 

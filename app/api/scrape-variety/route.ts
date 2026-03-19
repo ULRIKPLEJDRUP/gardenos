@@ -2,9 +2,52 @@
 // GardenOS – API: Scrape variety info from a web page
 // ---------------------------------------------------------------------------
 import { NextRequest, NextResponse } from "next/server";
+import { auth } from "@/auth";
+import { rateLimit } from "@/app/lib/rateLimit";
+
+// Allowlist of trusted domains for scraping (SSRF protection)
+const ALLOWED_DOMAINS = [
+  "floradania.dk",
+  "plantorama.dk",
+  "blomsterlandet.dk",
+  "bilka.dk",
+  "bauhaus.dk",
+  "silvan.dk",
+  "jfrø.dk",
+  "xn--jfr-0na.dk",
+  "impecta.dk",
+  "grantoftegaard.dk",
+  "spirekassen.dk",
+  "nykaalund.dk",
+  "vikima.dk",
+  "legeplanter.dk",
+  "planter.dk",
+  "froehandleren.dk",
+  "wikipedia.org",
+  "da.wikipedia.org",
+];
+
+function isDomainAllowed(hostname: string): boolean {
+  const h = hostname.toLowerCase().replace(/^www\./, "");
+  return ALLOWED_DOMAINS.some((d) => h === d || h.endsWith("." + d));
+}
 
 export async function POST(request: NextRequest) {
   try {
+    const session = await auth();
+    if (!session?.user?.id) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
+    // Rate limit: 10 scrapes per minute per user
+    const rl = rateLimit(`${session.user.id}:scrape`, 10, 60_000);
+    if (!rl.allowed) {
+      return NextResponse.json(
+        { error: "For mange forespørgsler. Vent et øjeblik." },
+        { status: 429, headers: { "Retry-After": String(Math.ceil(rl.retryAfterMs / 1000)) } },
+      );
+    }
+
     const { url } = await request.json();
 
     if (!url || typeof url !== "string") {
@@ -17,6 +60,21 @@ export async function POST(request: NextRequest) {
       parsedUrl = new URL(url);
     } catch {
       return NextResponse.json({ error: "Ugyldig URL" }, { status: 400 });
+    }
+
+    // SSRF protection: only allow HTTPS and trusted domains
+    if (parsedUrl.protocol !== "https:") {
+      return NextResponse.json(
+        { error: "Kun HTTPS-URL'er er tilladt." },
+        { status: 400 },
+      );
+    }
+
+    if (!isDomainAllowed(parsedUrl.hostname)) {
+      return NextResponse.json(
+        { error: "Denne hjemmeside er ikke på listen over tilladte kilder. Kontakt admin hvis den bør tilføjes." },
+        { status: 403 },
+      );
     }
 
     // Fetch the page

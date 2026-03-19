@@ -3,6 +3,8 @@
 // Uses OpenAI Vision API (gpt-4o) when OPENAI_API_KEY is configured.
 // ---------------------------------------------------------------------------
 import { NextRequest, NextResponse } from "next/server";
+import { auth } from "@/auth";
+import { rateLimit } from "@/app/lib/rateLimit";
 
 // Route segment config – allow large base64 image payloads & longer AI timeout
 export const maxDuration = 60; // seconds (Vercel Pro: up to 300)
@@ -10,6 +12,20 @@ export const dynamic = "force-dynamic";
 
 export async function POST(request: NextRequest) {
   try {
+    const session = await auth();
+    if (!session?.user?.id) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
+    // Rate limit: 10 image analyses per minute per user
+    const rl = rateLimit(`${session.user.id}:analyze-image`, 10, 60_000);
+    if (!rl.allowed) {
+      return NextResponse.json(
+        { error: "For mange billedanalyser. Vent et øjeblik." },
+        { status: 429, headers: { "Retry-After": String(Math.ceil(rl.retryAfterMs / 1000)) } },
+      );
+    }
+
     const { image, type } = await request.json();
 
     if (!image || typeof image !== "string") {
