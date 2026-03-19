@@ -9139,7 +9139,7 @@ export function GardenMapClient({ userId }: { userId: string }) {
               const capacity = spacing > 0 ? Math.floor(rowLengthCm / spacing) : 0;
               const parentSoilId = (() => {
                 if (!selectedParentFeature) return undefined;
-                const pf = features.find((f) => (f as GardenFeature).properties?.gardenosId === selectedParentFeature.id) as GardenFeature | undefined;
+                const pf = layoutForContainment.features.find((f) => (f as GardenFeature).properties?.gardenosId === selectedParentFeature.id) as GardenFeature | undefined;
                 return pf?.properties?.soilProfileId;
               })();
               const parentSoil = parentSoilId ? getSoilProfileById(parentSoilId) : undefined;
@@ -9172,7 +9172,7 @@ export function GardenMapClient({ userId }: { userId: string }) {
                       {selectedParentFeature ? (
                         <p className="text-[10px] text-foreground/50">
                           📍 I: <button type="button" className="text-accent hover:underline" onClick={() => selectFeatureById(selectedParentFeature.id)}>{selectedParentFeature.name}</button>
-                          {parentSoil ? <span> · 🪴 Jord: {parentSoil.soilType ?? "ukendt"}</span> : null}
+                          {parentSoil ? <span> · 🪴 Jord: {parentSoil.baseType ?? "ukendt"}</span> : null}
                         </p>
                       ) : null}
                     </div>
