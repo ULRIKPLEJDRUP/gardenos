@@ -20,13 +20,17 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
         if (!credentials?.email || !credentials?.password) return null;
 
         const user = await prisma.user.findUnique({
-          where: { email: credentials.email as string },
+          where: { email: (credentials.email as string).trim().toLowerCase() },
         });
 
         if (!user?.password) return null;
 
+        // Normalize to NFC – macOS often sends NFD (a + combining ring)
+        // which makes Danish chars like å/æ/ø fail bcrypt.compare
+        const normalizedPw = (credentials.password as string).normalize("NFC");
+
         const valid = await bcrypt.compare(
-          credentials.password as string,
+          normalizedPw,
           user.password,
         );
 

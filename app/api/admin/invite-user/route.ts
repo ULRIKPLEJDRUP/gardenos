@@ -55,7 +55,7 @@ export async function POST(request: NextRequest) {
 
   // Generate password and hash it
   const password = generatePassword();
-  const hashedPassword = await bcrypt.hash(password, 12);
+  const hashedPassword = await bcrypt.hash(password.normalize("NFC"), 12);
 
   // Create the user
   const user = await prisma.user.create({

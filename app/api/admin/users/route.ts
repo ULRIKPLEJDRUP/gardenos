@@ -191,7 +191,8 @@ export async function PUT(request: NextRequest) {
     );
   }
 
-  const hashedPassword = await bcrypt.hash(password, 12);
+  // Normalize to NFC – macOS sends NFD for Danish chars (å/æ/ø)
+  const hashedPassword = await bcrypt.hash(password.normalize("NFC"), 12);
   await prisma.user.update({
     where: { id: userId },
     data: { password: hashedPassword },

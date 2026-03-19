@@ -69,7 +69,7 @@ export async function POST(request: NextRequest) {
     }
 
     // ── Create user + mark invite as used ──
-    const hashedPassword = await bcrypt.hash(password, 12);
+    const hashedPassword = await bcrypt.hash(password.normalize("NFC"), 12);
 
     const user = await prisma.user.create({
       data: {
