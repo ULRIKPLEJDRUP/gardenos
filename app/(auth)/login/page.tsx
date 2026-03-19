@@ -26,8 +26,6 @@ export default function LoginPage() {
         redirect: false,
       });
 
-      console.log("signIn result:", JSON.stringify(result));
-
       if (result?.error) {
         setError("Forkert email eller adgangskode.");
       } else if (result?.ok) {

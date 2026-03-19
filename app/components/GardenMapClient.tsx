@@ -222,6 +222,12 @@ function distToSegmentPx(p: L.Point, v: L.Point, w: L.Point): number {
   return Math.sqrt((p.x - projX) ** 2 + (p.y - projY) ** 2);
 }
 
+/** Approximate meters per degree of latitude (constant for all latitudes). */
+const M_PER_DEG_LAT = 111_320;
+
+/** Maximum photo file size in bytes (2 MB). */
+const MAX_PHOTO_SIZE_BYTES = 2 * 1024 * 1024;
+
 /** Labels for area/condition SubGroups shown as headers in palette */
 const SUB_GROUP_LABELS: Partial<Record<KindSubGroup, string>> = {
   zone: "🌿 Havezoner",
@@ -1081,8 +1087,7 @@ function detectExistingRowDirection(
 
   const midLat = ring.reduce((s, p) => s + p[1], 0) / ring.length;
   const midLng = ring.reduce((s, p) => s + p[0], 0) / ring.length;
-  const M_PER_DEG_LAT = 111_320;
-  const M_PER_DEG_LNG = 111_320 * Math.cos((midLat * Math.PI) / 180);
+  const M_PER_DEG_LNG = M_PER_DEG_LAT * Math.cos((midLat * Math.PI) / 180);
 
   const mRing: [number, number][] = ring.map(([lng, lat]) => [
     (lng - midLng) * M_PER_DEG_LNG,
@@ -1143,8 +1148,7 @@ function getExistingRowOffsetsInBed(
 
   const midLat = ring.reduce((s, p) => s + p[1], 0) / ring.length;
   const midLng = ring.reduce((s, p) => s + p[0], 0) / ring.length;
-  const M_PER_DEG_LAT = 111_320;
-  const M_PER_DEG_LNG = 111_320 * Math.cos((midLat * Math.PI) / 180);
+  const M_PER_DEG_LNG = M_PER_DEG_LAT * Math.cos((midLat * Math.PI) / 180);
 
   const mRing: [number, number][] = ring.map(([lng, lat]) => [
     (lng - midLng) * M_PER_DEG_LNG,
@@ -1806,8 +1810,7 @@ function computeAutoElements(
   // ── 1. Convert ring to local metric coords ──
   const midLat = ring.reduce((s, p) => s + p[1], 0) / ring.length;
   const midLng = ring.reduce((s, p) => s + p[0], 0) / ring.length;
-  const M_PER_DEG_LAT = 111_320;
-  const M_PER_DEG_LNG = 111_320 * Math.cos((midLat * Math.PI) / 180);
+  const M_PER_DEG_LNG = M_PER_DEG_LAT * Math.cos((midLat * Math.PI) / 180);
 
   const mRing: [number, number][] = ring.map(([lng, lat]) => [
     (lng - midLng) * M_PER_DEG_LNG,
@@ -1977,8 +1980,7 @@ function computeAutoRows(
   // ── 1. Convert ring to local metric coords (meters from centroid) ──
   const midLat = ring.reduce((s, p) => s + p[1], 0) / ring.length;
   const midLng = ring.reduce((s, p) => s + p[0], 0) / ring.length;
-  const M_PER_DEG_LAT = 111_320;
-  const M_PER_DEG_LNG = 111_320 * Math.cos((midLat * Math.PI) / 180);
+  const M_PER_DEG_LNG = M_PER_DEG_LAT * Math.cos((midLat * Math.PI) / 180);
 
   const mRing: [number, number][] = ring.map(([lng, lat]) => [
     (lng - midLng) * M_PER_DEG_LNG,
@@ -2287,7 +2289,6 @@ function computeBedResizeProposal(
     const dx0 = row.coords[1][0] - row.coords[0][0];
     const dy0 = row.coords[1][1] - row.coords[0][1];
     const midLat = (row.coords[0][1] + row.coords[1][1]) / 2;
-    const M_PER_DEG_LAT = 111_320;
     const M_PER_DEG_LNG = M_PER_DEG_LAT * Math.cos((midLat * Math.PI) / 180);
     const oldLengthM = Math.sqrt((dx0 * M_PER_DEG_LNG) ** 2 + (dy0 * M_PER_DEG_LAT) ** 2);
 
@@ -4137,7 +4138,7 @@ export function GardenMapClient({ userId }: { userId: string }) {
   const [autoRowCount, setAutoRowCount] = useState(0); // 0 = auto-max
   const [autoRowEdgeMarginCm, setAutoRowEdgeMarginCm] = useState(10);
   const [autoRowDirection, setAutoRowDirection] = useState<"length" | "width">("length");
-  const [_autoRowOverflow, setAutoRowOverflow] = useState(false); // true when requested > max
+  const [, setAutoRowOverflow] = useState(false); // true when requested > max
 
   // ── Auto-element placement state ──
   const [autoElementOpen, setAutoElementOpen] = useState(false);
@@ -7394,17 +7395,6 @@ export function GardenMapClient({ userId }: { userId: string }) {
   }, [allPlants, bedPlantSearch, selected]);
 
   // ── Create-flow plant picker: driven by elementMode ──
-
-  /** Map plant species category → map feature kind */
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  const kindForPlantCategory = useCallback((cat: PlantCategory): GardenFeatureKind => {
-    switch (cat) {
-      case "tree": return "tree";
-      case "bush": return "bush";
-      case "flower": return "flower";
-      default: return "plant";
-    }
-  }, []);
 
   /** Map elementMode → feature kind (for non-planter modes) */
   const kindForElementMode = useCallback((mode: string): GardenFeatureKind => {
@@ -12530,7 +12520,7 @@ export function GardenMapClient({ userId }: { userId: string }) {
                             onChange={(e) => {
                               const file = e.target.files?.[0];
                               if (!file) return;
-                              if (file.size > 2 * 1024 * 1024) { showToast("Foto må max være 2 MB", "error"); return; }
+                              if (file.size > MAX_PHOTO_SIZE_BYTES) { showToast("Foto må max være 2 MB", "error"); return; }
                               const reader = new FileReader();
                               reader.onload = () => {
                                 if (typeof reader.result === "string") updateSelectedProperty({ photoUrl: reader.result });
@@ -12551,7 +12541,7 @@ export function GardenMapClient({ userId }: { userId: string }) {
                           onChange={(e) => {
                             const file = e.target.files?.[0];
                             if (!file) return;
-                            if (file.size > 2 * 1024 * 1024) { showToast("Foto må max være 2 MB", "error"); return; }
+                            if (file.size > MAX_PHOTO_SIZE_BYTES) { showToast("Foto må max være 2 MB", "error"); return; }
                             const reader = new FileReader();
                             reader.onload = () => {
                               if (typeof reader.result === "string") updateSelectedProperty({ photoUrl: reader.result });
