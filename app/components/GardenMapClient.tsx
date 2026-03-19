@@ -195,6 +195,33 @@ const CATEGORY_DESCRIPTIONS: Record<GardenFeatureCategory, string> = {
   condition: "Jordforhold, klima og miljøpåvirkninger",
 };
 
+/** Z-order priority for categories: higher number = rendered in front. */
+const CATEGORY_Z_PRIORITY: Record<string, number> = {
+  condition: 0,
+  area: 1,
+  seedbed: 2,
+  container: 3,
+  row: 4,
+  element: 5,
+};
+
+/** Polygon categories that should pass clicks through to child features. */
+const POLYGON_CONTAINER_CATS = new Set(["seedbed", "container", "area", "condition"]);
+
+/**
+ * Minimum pixel distance from point `p` to the line segment `v→w`.
+ * Used for detecting clicks near row polylines inside polygon containers.
+ */
+function distToSegmentPx(p: L.Point, v: L.Point, w: L.Point): number {
+  const l2 = (v.x - w.x) ** 2 + (v.y - w.y) ** 2;
+  if (l2 === 0) return Math.sqrt((p.x - v.x) ** 2 + (p.y - v.y) ** 2);
+  let t = ((p.x - v.x) * (w.x - v.x) + (p.y - v.y) * (w.y - v.y)) / l2;
+  t = Math.max(0, Math.min(1, t));
+  const projX = v.x + t * (w.x - v.x);
+  const projY = v.y + t * (w.y - v.y);
+  return Math.sqrt((p.x - projX) ** 2 + (p.y - projY) ** 2);
+}
+
 /** Labels for area/condition SubGroups shown as headers in palette */
 const SUB_GROUP_LABELS: Partial<Record<KindSubGroup, string>> = {
   zone: "🌿 Havezoner",
@@ -4817,19 +4844,11 @@ export function GardenMapClient({ userId }: { userId: string }) {
       // --- Z-order: ensure areas/conditions are behind smaller shapes so
       //     rows, containers, seedbeds etc. are clickable even when inside
       //     a large area/seedbed polygon. ---
-      const zPriority: Record<string, number> = {
-        condition: 0,
-        area: 1,
-        seedbed: 2,
-        container: 3,
-        row: 4,
-        element: 5,
-      };
       const allLayersForZ: Array<{ layer: L.Layer; pri: number }> = [];
       group.eachLayer((layer) => {
         const f = (layer as L.Layer & { feature?: GardenFeature }).feature;
         const cat = f?.properties?.category ?? "element";
-        allLayersForZ.push({ layer, pri: zPriority[cat] ?? 3 });
+        allLayersForZ.push({ layer, pri: CATEGORY_Z_PRIORITY[cat] ?? 3 });
       });
       allLayersForZ.sort((a, b) => a.pri - b.pri);
       for (const { layer: zLayer } of allLayersForZ) {
@@ -4928,6 +4947,31 @@ export function GardenMapClient({ userId }: { userId: string }) {
           // Base visuals already applied above.
         }
       });
+
+      // --- Re-establish z-order for categories ABOVE the selected item ---
+      // bringToFront() above may have moved a selected seedbed/area on top
+      // of rows and elements.  Re-bring higher-priority layers to front so
+      // they remain clickable.
+      if (selectedId) {
+        let selectedPri = 5;
+        group.eachLayer((layer) => {
+          const f = (layer as L.Layer & { feature?: GardenFeature }).feature;
+          if (f?.properties?.gardenosId === selectedId) {
+            selectedPri = CATEGORY_Z_PRIORITY[f.properties?.category ?? "element"] ?? 3;
+          }
+        });
+        const higherLayers: Array<{ layer: L.Layer; pri: number }> = [];
+        group.eachLayer((layer) => {
+          const f = (layer as L.Layer & { feature?: GardenFeature }).feature;
+          const cat = f?.properties?.category ?? "element";
+          const pri = CATEGORY_Z_PRIORITY[cat] ?? 3;
+          if (pri > selectedPri) higherLayers.push({ layer, pri });
+        });
+        higherLayers.sort((a, b) => a.pri - b.pri);
+        for (const { layer: zLayer } of higherLayers) {
+          (zLayer as unknown as { bringToFront?: () => void }).bringToFront?.();
+        }
+      }
     },
     [applyLayerVisuals, featureGroupRef]
   );
@@ -5425,6 +5469,67 @@ export function GardenMapClient({ userId }: { userId: string }) {
             return next;
           });
           return;
+        }
+
+        // ── Click-through for polygon containers ──
+        // When clicking on a polygon container (seedbed, bed, area, etc.),
+        // check if a more specific child feature (row, element) is within
+        // 15px of the click point.  If found, select the child instead —
+        // this makes rows inside beds clickable even when the polyline is
+        // too thin to hit directly.
+        const cat = currentFeature.properties?.category;
+        if (POLYGON_CONTAINER_CATS.has(cat ?? "")) {
+          const map = mapRef.current;
+          const group = featureGroupRef.current;
+          if (map && group) {
+            const clickPx = map.latLngToContainerPoint(e.latlng);
+            const TOLERANCE_PX = 15;
+            const containerPri = CATEGORY_Z_PRIORITY[cat ?? "element"] ?? 3;
+            const bestChild: { id: string; feature: GardenFeature; dist: number }[] = [];
+
+            group.eachLayer((otherLayer) => {
+              if (otherLayer === layer) return;
+              const of = (otherLayer as L.Layer & { feature?: GardenFeature }).feature;
+              if (!of) return;
+              const oCat = of.properties?.category;
+              const oPri = CATEGORY_Z_PRIORITY[oCat ?? "element"] ?? 3;
+              if (oPri <= containerPri) return; // only more-specific features
+
+              // Polylines (rows, infra lines)
+              if (otherLayer instanceof L.Polyline && !(otherLayer instanceof L.Polygon)) {
+                const lls = otherLayer.getLatLngs();
+                const flat = (Array.isArray(lls[0]) && lls[0] instanceof L.LatLng === false)
+                  ? (lls as L.LatLng[][]).flat()
+                  : (lls as L.LatLng[]);
+                const pts = flat.map((ll) => map.latLngToContainerPoint(ll));
+                let minDist = Infinity;
+                for (let i = 1; i < pts.length; i++) {
+                  const d = distToSegmentPx(clickPx, pts[i - 1], pts[i]);
+                  if (d < minDist) minDist = d;
+                }
+                if (minDist < TOLERANCE_PX) {
+                  bestChild.push({ id: of.properties!.gardenosId, feature: of, dist: minDist });
+                }
+              }
+
+              // Markers (elements)
+              if (otherLayer instanceof L.Marker) {
+                const mPx = map.latLngToContainerPoint(otherLayer.getLatLng());
+                const dist = Math.sqrt((clickPx.x - mPx.x) ** 2 + (clickPx.y - mPx.y) ** 2);
+                if (dist < TOLERANCE_PX) {
+                  bestChild.push({ id: of.properties!.gardenosId, feature: of, dist });
+                }
+              }
+            });
+
+            if (bestChild.length > 0) {
+              bestChild.sort((a, b) => a.dist - b.dist);
+              const winner = bestChild[0];
+              setMultiSelectedIds(new Set());
+              setSelectedAndFocus({ gardenosId: winner.id, feature: winner.feature });
+              return;
+            }
+          }
         }
 
         // Normal click: single-select, clear multi-selection
