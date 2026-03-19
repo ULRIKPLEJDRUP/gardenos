@@ -47,6 +47,10 @@ model User {
   // Icon bank submissions
   iconSubmissions IconBank[]
 
+  // Activity tracking
+  lastLoginAt DateTime?
+  activityLog ActivityLog[]
+
   @@map("users")
 }
 
@@ -180,4 +184,21 @@ model DesignVersion {
 
   @@index([designId])
   @@map("design_versions")
+}
+
+// ---------------------------------------------------------------------------
+// ActivityLog – tracks user actions for admin insight
+// ---------------------------------------------------------------------------
+model ActivityLog {
+  id        String   @id @default(cuid())
+  userId    String
+  action    String   // "login" | "chat" | "scan" | "create-feature" | "tab:xxx" etc.
+  detail    String?  // optional extra info e.g. "plant-scan", "soil-scan"
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([createdAt])
+  @@map("activity_log")
 }

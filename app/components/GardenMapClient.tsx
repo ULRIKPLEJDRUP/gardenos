@@ -3269,16 +3269,27 @@ export function GardenMapClient({ userId }: { userId: string }) {
   const [undoStack, setUndoStack] = useState<UndoSnapshot[]>([]);
   const [sidebarTab, setSidebarTab] = useState<"create" | "content" | "groups" | "plants" | "view" | "scan" | "chat" | "tasks" | "conflicts" | "designs" | "climate">("create");
   const [sidebarPanelOpen, setSidebarPanelOpen] = useState(true);
+
+  // ── Lightweight activity tracker (fire-and-forget) ──
+  const trackActivity = useCallback((action: string, detail?: string) => {
+    fetch("/api/activity", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action, detail }),
+    }).catch(() => {/* ignore */});
+  }, []);
+
   const toggleSidebarPanel = useCallback((tabId?: typeof sidebarTab) => {
     if (tabId && tabId !== sidebarTab) {
       setSidebarTab(tabId);
       setSidebarPanelOpen(true);
+      trackActivity(`tab:${tabId}`);
     } else if (tabId && tabId === sidebarTab) {
       setSidebarPanelOpen((v) => !v);
     } else {
       setSidebarPanelOpen((v) => !v);
     }
-  }, [sidebarTab]);
+  }, [sidebarTab, trackActivity]);
   // ── Invalidate Leaflet size when sidebar panel opens/closes ──
   useEffect(() => {
     const t1 = setTimeout(() => mapRef.current?.invalidateSize(), 50);
@@ -3936,6 +3947,7 @@ export function GardenMapClient({ userId }: { userId: string }) {
     setChatMessages((prev) => [...prev, userMsg]);
     setChatInput("");
     setChatLoading(true);
+    trackActivity("chat:message", chatPersona);
 
     try {
       const gardenContext = buildGardenContext();
@@ -4032,7 +4044,8 @@ export function GardenMapClient({ userId }: { userId: string }) {
       scannedAt: new Date().toISOString(),
     };
     setScanHistory((prev) => { const next = [item, ...prev]; saveScanHistory(next); return next; });
-  }, []);
+    trackActivity(`scan:${type}`, name);
+  }, [trackActivity]);
 
   const removeScanHistoryItem = useCallback((id: string) => {
     setScanHistory((prev) => { const next = prev.filter((i) => i.id !== id); saveScanHistory(next); return next; });

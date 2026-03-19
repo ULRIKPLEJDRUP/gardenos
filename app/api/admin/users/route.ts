@@ -32,6 +32,7 @@ export async function GET() {
       role: true,
       feedbackEnabled: true,
       maxDesigns: true,
+      lastLoginAt: true,
       createdAt: true,
     },
   });

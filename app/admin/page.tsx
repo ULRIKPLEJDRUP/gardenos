@@ -24,6 +24,25 @@ type AdminUser = {
   dataKeys: number;
   feedbackEnabled: boolean;
   maxDesigns: number;
+  lastLoginAt: string | null;
+};
+
+type ActivityUser = {
+  id: string;
+  email: string;
+  name: string | null;
+  lastLoginAt: string | null;
+  lastActivity: string | null;
+  totalLogins: number;
+  createdAt: string;
+  actions: Record<string, number>;
+};
+
+type ActivityLogEntry = {
+  id: string;
+  action: string;
+  detail: string | null;
+  createdAt: string;
 };
 
 export default function AdminPage() {
@@ -89,6 +108,12 @@ export default function AdminPage() {
   const [bankIcons, setBankIcons] = useState<BankIcon[]>([]);
   const [bankBusy, setBankBusy] = useState<string | null>(null);
 
+  // Activity tracking state
+  const [activityUsers, setActivityUsers] = useState<ActivityUser[]>([]);
+  const [activityDetailId, setActivityDetailId] = useState<string | null>(null);
+  const [activityLogs, setActivityLogs] = useState<ActivityLogEntry[]>([]);
+  const [activityLogsLoading, setActivityLogsLoading] = useState(false);
+
   const fetchCodes = useCallback(async () => {
     try {
       const res = await fetch("/api/admin/invite-codes");
@@ -129,29 +154,54 @@ export default function AdminPage() {
     }
   }, []);
 
+  const fetchActivity = useCallback(async () => {
+    try {
+      const res = await fetch("/api/admin/activity");
+      const data = await res.json();
+      if (data.users) setActivityUsers(data.users);
+    } catch {
+      /* ignore */
+    }
+  }, []);
+
+  const fetchActivityDetail = useCallback(async (userId: string) => {
+    setActivityLogsLoading(true);
+    try {
+      const res = await fetch(`/api/admin/activity?id=${userId}`);
+      const data = await res.json();
+      if (data.logs) setActivityLogs(data.logs);
+    } catch {
+      /* ignore */
+    }
+    setActivityLogsLoading(false);
+  }, []);
+
   useEffect(() => {
     if (status !== "authenticated") return;
     let cancelled = false;
     (async () => {
       setLoading(true);
       try {
-        const [codesRes, usersRes, feedbackRes, bankRes] = await Promise.all([
+        const [codesRes, usersRes, feedbackRes, bankRes, activityRes] = await Promise.all([
           fetch("/api/admin/invite-codes"),
           fetch("/api/admin/users"),
           fetch("/api/admin/feedback"),
           fetch("/api/admin/icon-bank"),
+          fetch("/api/admin/activity"),
         ]);
-        const [codesData, usersData, feedbackData, bankData] = await Promise.all([
+        const [codesData, usersData, feedbackData, bankData, activityData] = await Promise.all([
           codesRes.json(),
           usersRes.json(),
           feedbackRes.json(),
           bankRes.json(),
+          activityRes.json(),
         ]);
         if (!cancelled) {
           if (codesData.codes) setCodes(codesData.codes);
           if (usersData.users) setUsers(usersData.users);
           if (feedbackData.feedback) setFeedbackItems(feedbackData.feedback);
           if (bankData.icons) setBankIcons(bankData.icons);
+          if (activityData.users) setActivityUsers(activityData.users);
         }
       } catch { /* ignore */ }
       if (!cancelled) setLoading(false);
@@ -661,7 +711,10 @@ export default function AdminPage() {
                         </p>
                         <p className="text-xs text-gray-400 truncate">
                           {u.email} · {u.dataKeys} synk-nøgler ·{" "}
-                          {new Date(u.createdAt).toLocaleDateString("da-DK")}
+                          oprettet {new Date(u.createdAt).toLocaleDateString("da-DK")}
+                          {u.lastLoginAt && (
+                            <> · login {new Date(u.lastLoginAt).toLocaleDateString("da-DK")}</>
+                          )}
                         </p>
                       </div>
                       <div className="flex items-center gap-1.5 shrink-0">
@@ -770,6 +823,205 @@ export default function AdminPage() {
                         >
                           Annullér
                         </button>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+
+        {/* ── User Activity ── */}
+        <div className="rounded-xl border border-gray-200 bg-white p-6 shadow-sm">
+          <div className="flex items-center justify-between">
+            <div>
+              <h2 className="text-lg font-semibold text-gray-900">
+                📊 Brugeraktivitet
+              </h2>
+              <p className="mt-1 text-sm text-gray-500">
+                Logins og feature-brug (sidste 30 dage)
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={fetchActivity}
+              className="rounded-md border border-gray-300 bg-white px-3 py-1.5 text-xs text-gray-600 hover:bg-gray-50 transition-colors"
+            >
+              🔄 Opdatér
+            </button>
+          </div>
+          {loading ? (
+            <p className="mt-3 text-sm text-gray-400">Indlæser…</p>
+          ) : activityUsers.length === 0 ? (
+            <p className="mt-3 text-sm text-gray-400 italic">
+              Ingen aktivitetsdata endnu.
+            </p>
+          ) : (
+            <div className="mt-4 space-y-2">
+              {activityUsers.map((au) => {
+                const isExpanded = activityDetailId === au.id;
+                const totalActions = Object.values(au.actions).reduce((s, n) => s + n, 0);
+
+                // Friendly labels for action types
+                const ACTION_LABELS: Record<string, { icon: string; label: string }> = {
+                  login: { icon: "🔑", label: "Logins" },
+                  "chat:message": { icon: "💬", label: "Chat" },
+                  "tab:create": { icon: "✏️", label: "Opret" },
+                  "tab:content": { icon: "📋", label: "Indhold" },
+                  "tab:groups": { icon: "📁", label: "Grupper" },
+                  "tab:plants": { icon: "🌱", label: "Bibliotek" },
+                  "tab:view": { icon: "🗺️", label: "Visning" },
+                  "tab:scan": { icon: "📷", label: "Værktøj" },
+                  "tab:chat": { icon: "💬", label: "Rådgiver" },
+                  "tab:tasks": { icon: "📝", label: "Opgaver" },
+                  "tab:conflicts": { icon: "⚠️", label: "Konflikter" },
+                  "tab:designs": { icon: "💾", label: "Designs" },
+                  "tab:climate": { icon: "🌡️", label: "Klima" },
+                  "scan:plant": { icon: "🌿", label: "Plantescan" },
+                  "scan:disease": { icon: "🔬", label: "Sygdomsscan" },
+                  "scan:soil": { icon: "🪨", label: "Jordscan" },
+                  "scan:weed": { icon: "🌾", label: "Ukrudtsscan" },
+                  "advisor:open": { icon: "🧑‍🌾", label: "Rådgiver" },
+                  "guide:open": { icon: "❓", label: "Guide" },
+                };
+
+                // Time ago helper
+                const timeAgo = (isoStr: string | null) => {
+                  if (!isoStr) return "Aldrig";
+                  const diff = Date.now() - new Date(isoStr).getTime();
+                  const mins = Math.floor(diff / 60000);
+                  if (mins < 1) return "Lige nu";
+                  if (mins < 60) return `${mins} min siden`;
+                  const hours = Math.floor(mins / 60);
+                  if (hours < 24) return `${hours}t siden`;
+                  const days = Math.floor(hours / 24);
+                  if (days < 7) return `${days}d siden`;
+                  return new Date(isoStr).toLocaleDateString("da-DK");
+                };
+
+                // Activity status indicator
+                const lastAct = au.lastActivity ? new Date(au.lastActivity).getTime() : 0;
+                const daysSinceActive = lastAct ? Math.floor((Date.now() - lastAct) / (24 * 60 * 60 * 1000)) : 999;
+                const statusColor = daysSinceActive <= 1 ? "bg-green-400" : daysSinceActive <= 7 ? "bg-yellow-400" : daysSinceActive <= 30 ? "bg-orange-400" : "bg-gray-300";
+
+                return (
+                  <div key={au.id} className="rounded-lg border border-gray-100 bg-gray-50 overflow-hidden">
+                    <button
+                      type="button"
+                      className="w-full text-left px-4 py-3 hover:bg-gray-100 transition-colors"
+                      onClick={() => {
+                        if (isExpanded) {
+                          setActivityDetailId(null);
+                          setActivityLogs([]);
+                        } else {
+                          setActivityDetailId(au.id);
+                          fetchActivityDetail(au.id);
+                        }
+                      }}
+                    >
+                      <div className="flex items-center gap-3">
+                        <span className={`w-2.5 h-2.5 rounded-full shrink-0 ${statusColor}`} title={`Sidst aktiv: ${timeAgo(au.lastActivity)}`} />
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm font-medium text-gray-800 truncate">
+                            {au.name || au.email}
+                          </p>
+                          <p className="text-xs text-gray-400 mt-0.5">
+                            Sidst login: {timeAgo(au.lastLoginAt)} · {au.totalLogins} logins totalt · {totalActions} handlinger (30d)
+                          </p>
+                        </div>
+                        {/* Top used features as pills */}
+                        <div className="flex gap-1 shrink-0">
+                          {Object.entries(au.actions)
+                            .filter(([k]) => k !== "login")
+                            .sort((a, b) => b[1] - a[1])
+                            .slice(0, 4)
+                            .map(([action, count]) => {
+                              const info = ACTION_LABELS[action] ?? { icon: "•", label: action };
+                              return (
+                                <span
+                                  key={action}
+                                  className="inline-flex items-center gap-0.5 rounded-full bg-white border border-gray-200 px-2 py-0.5 text-[10px] text-gray-600"
+                                  title={`${info.label}: ${count}×`}
+                                >
+                                  {info.icon} {count}
+                                </span>
+                              );
+                            })}
+                        </div>
+                        <span className="text-gray-300 text-xs shrink-0">
+                          {isExpanded ? "▼" : "›"}
+                        </span>
+                      </div>
+                    </button>
+
+                    {/* Expanded detail */}
+                    {isExpanded && (
+                      <div className="border-t border-gray-100 px-4 py-3 bg-white space-y-3">
+                        {/* Action summary grid */}
+                        <div>
+                          <p className="text-xs font-semibold text-gray-500 mb-2">Feature-brug (30 dage)</p>
+                          {Object.keys(au.actions).length === 0 ? (
+                            <p className="text-xs text-gray-400 italic">Ingen aktivitet registreret endnu.</p>
+                          ) : (
+                            <div className="flex flex-wrap gap-1.5">
+                              {Object.entries(au.actions)
+                                .sort((a, b) => b[1] - a[1])
+                                .map(([action, count]) => {
+                                  const info = ACTION_LABELS[action] ?? { icon: "•", label: action.replace("tab:", "").replace("scan:", "") };
+                                  return (
+                                    <span
+                                      key={action}
+                                      className="inline-flex items-center gap-1 rounded-md bg-gray-100 border border-gray-200 px-2.5 py-1 text-xs text-gray-700"
+                                    >
+                                      {info.icon} {info.label}: <strong>{count}</strong>
+                                    </span>
+                                  );
+                                })}
+                            </div>
+                          )}
+                        </div>
+
+                        {/* Recent activity log */}
+                        <div>
+                          <p className="text-xs font-semibold text-gray-500 mb-2">Seneste aktivitet</p>
+                          {activityLogsLoading ? (
+                            <p className="text-xs text-gray-400">Indlæser…</p>
+                          ) : activityLogs.length === 0 ? (
+                            <p className="text-xs text-gray-400 italic">Ingen logposter.</p>
+                          ) : (
+                            <div className="max-h-60 overflow-y-auto space-y-1">
+                              {activityLogs.slice(0, 50).map((log) => {
+                                const info = ACTION_LABELS[log.action] ?? { icon: "•", label: log.action };
+                                return (
+                                  <div
+                                    key={log.id}
+                                    className="flex items-center gap-2 text-xs text-gray-600 py-0.5"
+                                  >
+                                    <span className="text-gray-400 w-28 shrink-0 text-[10px]">
+                                      {new Date(log.createdAt).toLocaleString("da-DK", {
+                                        day: "numeric",
+                                        month: "short",
+                                        hour: "2-digit",
+                                        minute: "2-digit",
+                                      })}
+                                    </span>
+                                    <span>{info.icon}</span>
+                                    <span className="font-medium">{info.label}</span>
+                                    {log.detail && (
+                                      <span className="text-gray-400 truncate">– {log.detail}</span>
+                                    )}
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          )}
+                        </div>
+
+                        {/* Meta info */}
+                        <div className="text-[10px] text-gray-400 pt-1 border-t border-gray-100">
+                          Konto oprettet: {new Date(au.createdAt).toLocaleDateString("da-DK")} · Sidst aktiv: {timeAgo(au.lastActivity)}
+                        </div>
                       </div>
                     )}
                   </div>
