@@ -3148,6 +3148,7 @@ export function GardenMapClient({ userId }: { userId: string }) {
   const designsLoadedOnce = useRef(false);
   const [activeDesignId, setActiveDesignId] = useState<string | null>(null);
   const [activeDesignName, setActiveDesignName] = useState<string | null>(null);
+  const [quickSaveFlash, setQuickSaveFlash] = useState(false);
 
   // Auto-load designs on mount (so toolbar quick-save works immediately)
   useEffect(() => {
@@ -3174,6 +3175,8 @@ export function GardenMapClient({ userId }: { userId: string }) {
       setSavedDesigns((prev) => prev.map((x) => (x.id === activeDesignId ? d : x)));
       setDesignLoadedFlash("Gemt!");
       setTimeout(() => setDesignLoadedFlash(false), 2000);
+      setQuickSaveFlash(true);
+      setTimeout(() => setQuickSaveFlash(false), 2000);
     } catch (e: unknown) {
       setDesignError(e instanceof Error ? e.message : "Fejl");
     } finally {
@@ -7130,32 +7133,6 @@ export function GardenMapClient({ userId }: { userId: string }) {
             </button>
           </div>
           <div className="h-5 w-px bg-border hidden md:block" />
-          {/* ── Designs button (permanent in toolbar) ── */}
-          <button
-            type="button"
-            className={`rounded-md px-2 md:px-2.5 py-1.5 text-xs font-medium transition-colors ${
-              sidebarTab === "designs"
-                ? "bg-accent text-white shadow-sm"
-                : "text-foreground/70 hover:bg-foreground/5"
-            }`}
-            onClick={() => setSidebarTab("designs")}
-            title="Gemte designs"
-          >
-            💾 <span className="hidden md:inline">Designs</span>
-          </button>
-          {/* Quick-save active design */}
-          {activeDesignId && (
-            <button
-              type="button"
-              className="rounded-md px-2 md:px-2.5 py-1.5 text-xs font-medium text-accent hover:bg-accent/10 transition-colors disabled:opacity-40"
-              onClick={handleQuickSave}
-              disabled={designSaving}
-              title={`Gem ændringer til "${activeDesignName}"`}
-            >
-              {designSaving ? "⏳" : "⬆️"} <span className="hidden md:inline">Gem</span>
-            </button>
-          )}
-          <div className="h-5 w-px bg-border hidden md:block" />
           <div className="flex items-center gap-1">
             <button
               type="button"
@@ -7188,16 +7165,46 @@ export function GardenMapClient({ userId }: { userId: string }) {
               </button>
             ) : null}
           </div>
+          {/* ── Design pill ── */}
+          <div className="h-5 w-px bg-border hidden md:block" />
+          <div className="flex items-center gap-0">
+            <button
+              type="button"
+              className={`rounded-l-full border border-r-0 px-2.5 py-1 text-xs font-medium transition-colors flex items-center gap-1 ${
+                sidebarTab === "designs"
+                  ? "border-accent bg-accent/10 text-accent"
+                  : "border-border text-foreground/60 hover:bg-foreground/5 hover:border-foreground/20"
+              }`}
+              onClick={() => setSidebarTab("designs")}
+              title="Gemte designs"
+            >
+              💾 <span className="hidden md:inline truncate max-w-[100px]">{activeDesignName || "Designs"}</span> <span className="text-[9px] opacity-50">▾</span>
+            </button>
+            {activeDesignId && (
+              <button
+                type="button"
+                className={`rounded-r-full border border-l-0 px-2 py-1 text-xs font-medium transition-colors ${
+                  quickSaveFlash
+                    ? "border-green-400 bg-green-50 text-green-600"
+                    : "border-border text-foreground/50 hover:bg-accent/10 hover:text-accent hover:border-accent/30"
+                } disabled:opacity-40`}
+                onClick={handleQuickSave}
+                disabled={designSaving}
+                title={`Gem ændringer til "${activeDesignName}"`}
+              >
+                {quickSaveFlash ? "✓" : designSaving ? "⏳" : "⬆️"}
+              </button>
+            )}
+            {!activeDesignId && (
+              <span className="rounded-r-full border border-l-0 border-border px-2 py-1 text-[9px] text-foreground/25">
+                —
+              </span>
+            )}
+          </div>
         </div>
-        {/* ── Brugernavn + aktivt design ── */}
-        <div className="flex items-center gap-1.5 text-xs text-foreground/50 truncate max-w-[140px] md:max-w-none">
-          <span className="truncate">👤 {sessionData?.user?.name || sessionData?.user?.email || ""}</span>
-          {activeDesignName && (
-            <>
-              <span className="text-foreground/20">·</span>
-              <span className="truncate text-accent font-medium" title={`Aktivt design: ${activeDesignName}`}>💾 {activeDesignName}</span>
-            </>
-          )}
+        {/* ── Brugernavn ── */}
+        <div className="flex items-center text-xs text-foreground/50 truncate max-w-[100px] md:max-w-none">
+          👤 {sessionData?.user?.name || sessionData?.user?.email || ""}
         </div>
         <div className="flex items-center gap-2">
           {/* ── Favorite bookmark pills (desktop only) ── */}
