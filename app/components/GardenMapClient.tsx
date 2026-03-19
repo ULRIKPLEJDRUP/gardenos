@@ -228,6 +228,28 @@ const M_PER_DEG_LAT = 111_320;
 /** Maximum photo file size in bytes (2 MB). */
 const MAX_PHOTO_SIZE_BYTES = 2 * 1024 * 1024;
 
+/**
+ * Convert a GeoJSON coordinate ring ([lng, lat]) to local metric coordinates
+ * (meters from centroid).  Returns the centroid, scale factors, and the
+ * converted ring so callers don't need to repeat this boilerplate.
+ */
+function ringToMetric(ring: [number, number][]): {
+  midLat: number;
+  midLng: number;
+  mpLat: number;
+  mpLng: number;
+  mRing: [number, number][];
+} {
+  const midLat = ring.reduce((s, p) => s + p[1], 0) / ring.length;
+  const midLng = ring.reduce((s, p) => s + p[0], 0) / ring.length;
+  const mpLng = M_PER_DEG_LAT * Math.cos((midLat * Math.PI) / 180);
+  const mRing: [number, number][] = ring.map(([lng, lat]) => [
+    (lng - midLng) * mpLng,
+    (lat - midLat) * M_PER_DEG_LAT,
+  ]);
+  return { midLat, midLng, mpLat: M_PER_DEG_LAT, mpLng, mRing };
+}
+
 /** Labels for area/condition SubGroups shown as headers in palette */
 const SUB_GROUP_LABELS: Partial<Record<KindSubGroup, string>> = {
   zone: "🌿 Havezoner",
@@ -1085,14 +1107,7 @@ function detectExistingRowDirection(
 ): "length" | "width" | null {
   if (ring.length < 3 || existingRows.length === 0) return null;
 
-  const midLat = ring.reduce((s, p) => s + p[1], 0) / ring.length;
-  const midLng = ring.reduce((s, p) => s + p[0], 0) / ring.length;
-  const M_PER_DEG_LNG = M_PER_DEG_LAT * Math.cos((midLat * Math.PI) / 180);
-
-  const mRing: [number, number][] = ring.map(([lng, lat]) => [
-    (lng - midLng) * M_PER_DEG_LNG,
-    (lat - midLat) * M_PER_DEG_LAT,
-  ]);
+  const { midLng, midLat, mpLng, mRing } = ringToMetric(ring);
 
   // Find longest edge
   let longestDist = 0, longestIdx = 0;
@@ -1116,7 +1131,7 @@ function detectExistingRowDirection(
   let perpVotes = 0;
   for (const row of existingRows) {
     if (row.length < 2) continue;
-    const rdx = (row[1][0] - row[0][0]) * M_PER_DEG_LNG;
+    const rdx = (row[1][0] - row[0][0]) * mpLng;
     const rdy = (row[1][1] - row[0][1]) * M_PER_DEG_LAT;
     const rLen = Math.sqrt(rdx * rdx + rdy * rdy);
     if (rLen < 1e-6) continue;
@@ -1146,14 +1161,7 @@ function getExistingRowOffsetsInBed(
 ): OccupiedSlot[] {
   if (ring.length < 3 || existingRows.length === 0) return [];
 
-  const midLat = ring.reduce((s, p) => s + p[1], 0) / ring.length;
-  const midLng = ring.reduce((s, p) => s + p[0], 0) / ring.length;
-  const M_PER_DEG_LNG = M_PER_DEG_LAT * Math.cos((midLat * Math.PI) / 180);
-
-  const mRing: [number, number][] = ring.map(([lng, lat]) => [
-    (lng - midLng) * M_PER_DEG_LNG,
-    (lat - midLat) * M_PER_DEG_LAT,
-  ]);
+  const { midLng, midLat, mpLng, mRing } = ringToMetric(ring);
 
   // Find principal axes — same logic as computeAutoRows (min-perpendicular-span)
   let minPerpSpan = Infinity;
@@ -1195,11 +1203,11 @@ function getExistingRowOffsetsInBed(
     if (rowCoords.length < 2) continue;
     // Project midpoint of each existing row onto shortDir
     const mP0: [number, number] = [
-      (rowCoords[0][0] - midLng) * M_PER_DEG_LNG,
+      (rowCoords[0][0] - midLng) * mpLng,
       (rowCoords[0][1] - midLat) * M_PER_DEG_LAT,
     ];
     const mP1: [number, number] = [
-      (rowCoords[1][0] - midLng) * M_PER_DEG_LNG,
+      (rowCoords[1][0] - midLng) * mpLng,
       (rowCoords[1][1] - midLat) * M_PER_DEG_LAT,
     ];
     const mid: [number, number] = [(mP0[0] + mP1[0]) / 2, (mP0[1] + mP1[1]) / 2];
@@ -1808,19 +1816,12 @@ function computeAutoElements(
   if (ring.length < 3) return null;
 
   // ── 1. Convert ring to local metric coords ──
-  const midLat = ring.reduce((s, p) => s + p[1], 0) / ring.length;
-  const midLng = ring.reduce((s, p) => s + p[0], 0) / ring.length;
-  const M_PER_DEG_LNG = M_PER_DEG_LAT * Math.cos((midLat * Math.PI) / 180);
-
-  const mRing: [number, number][] = ring.map(([lng, lat]) => [
-    (lng - midLng) * M_PER_DEG_LNG,
-    (lat - midLat) * M_PER_DEG_LAT,
-  ]);
+  const { midLng, midLat, mpLng, mRing } = ringToMetric(ring);
 
   // Convert circle obstacles to metric
   const mCircles = circleObstacles.map((o) => ({
     center: [
-      (o.center[0] - midLng) * M_PER_DEG_LNG,
+      (o.center[0] - midLng) * mpLng,
       (o.center[1] - midLat) * M_PER_DEG_LAT,
     ] as [number, number],
     radiusM: o.radiusM,
@@ -1832,7 +1833,7 @@ function computeAutoElements(
   // Convert row obstacles to metric
   const mRows = rowObstacles.map((r) => ({
     coords: r.coords.map(([lng, lat]) => [
-      (lng - midLng) * M_PER_DEG_LNG,
+      (lng - midLng) * mpLng,
       (lat - midLat) * M_PER_DEG_LAT,
     ] as [number, number]),
     halfWidthM: r.halfWidthM,
@@ -1938,7 +1939,7 @@ function computeAutoElements(
 
   // ── 7. Convert back to [lng, lat] ──
   const geoPositions: [number, number][] = positions.map(([x, y]) => [
-    x / M_PER_DEG_LNG + midLng,
+    x / mpLng + midLng,
     y / M_PER_DEG_LAT + midLat,
   ]);
 
@@ -1978,20 +1979,13 @@ function computeAutoRows(
   if (ring.length < 3) return null;
 
   // ── 1. Convert ring to local metric coords (meters from centroid) ──
-  const midLat = ring.reduce((s, p) => s + p[1], 0) / ring.length;
-  const midLng = ring.reduce((s, p) => s + p[0], 0) / ring.length;
-  const M_PER_DEG_LNG = M_PER_DEG_LAT * Math.cos((midLat * Math.PI) / 180);
-
-  const mRing: [number, number][] = ring.map(([lng, lat]) => [
-    (lng - midLng) * M_PER_DEG_LNG,
-    (lat - midLat) * M_PER_DEG_LAT,
-  ]);
+  const { midLng, midLat, mpLng, mRing } = ringToMetric(ring);
 
   // Convert 2D obstacles to metric space
   const mObstacles: { center: [number, number]; radiusM: number; label: string }[] =
     obstacles2D.map((o) => ({
       center: [
-        (o.center[0] - midLng) * M_PER_DEG_LNG,
+        (o.center[0] - midLng) * mpLng,
         (o.center[1] - midLat) * M_PER_DEG_LAT,
       ] as [number, number],
       radiusM: o.radiusM,
@@ -2211,11 +2205,11 @@ function computeAutoRows(
       const lengthM = Math.sqrt(dx * dx + dy * dy);
       if (lengthM > 0.05) {
         const ll0: [number, number] = [
-          seg[0][0] / M_PER_DEG_LNG + midLng,
+          seg[0][0] / mpLng + midLng,
           seg[0][1] / M_PER_DEG_LAT + midLat,
         ];
         const ll1: [number, number] = [
-          seg[1][0] / M_PER_DEG_LNG + midLng,
+          seg[1][0] / mpLng + midLng,
           seg[1][1] / M_PER_DEG_LAT + midLat,
         ];
         const mid: [number, number] = [
