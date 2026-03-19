@@ -3146,17 +3146,40 @@ export function GardenMapClient({ userId }: { userId: string }) {
   const [designLoadedFlash, setDesignLoadedFlash] = useState<string | false>(false);
   const [userMaxDesigns, setUserMaxDesigns] = useState(DEFAULT_MAX_DESIGNS);
   const designsLoadedOnce = useRef(false);
+  const [activeDesignId, setActiveDesignId] = useState<string | null>(null);
+  const [activeDesignName, setActiveDesignName] = useState<string | null>(null);
 
-  // Auto-load designs when tab first opened
+  // Auto-load designs on mount (so toolbar quick-save works immediately)
   useEffect(() => {
-    if (sidebarTab !== "designs" || designsLoadedOnce.current) return;
+    if (designsLoadedOnce.current) return;
     designsLoadedOnce.current = true;
     setDesignsLoading(true);
     fetchDesigns()
       .then((resp) => { setSavedDesigns(resp.designs); setUserMaxDesigns(resp.maxDesigns); })
       .catch(() => setDesignError("Kunne ikke hente designs"))
       .finally(() => setDesignsLoading(false));
-  }, [sidebarTab]);
+  }, []);
+
+  // Quick-save: overwrite active design from toolbar
+  const handleQuickSave = useCallback(async () => {
+    if (!activeDesignId) return;
+    setDesignSaving(true);
+    setDesignError(null);
+    try {
+      const group = featureGroupRef.current;
+      if (!group) return;
+      const layoutJson = JSON.stringify(serializeGroup(group));
+      const plantsJson = JSON.stringify(loadPlantInstances());
+      const d = await updateDesign(activeDesignId, { layout: layoutJson, plants: plantsJson });
+      setSavedDesigns((prev) => prev.map((x) => (x.id === activeDesignId ? d : x)));
+      setDesignLoadedFlash("Gemt!");
+      setTimeout(() => setDesignLoadedFlash(false), 2000);
+    } catch (e: unknown) {
+      setDesignError(e instanceof Error ? e.message : "Fejl");
+    } finally {
+      setDesignSaving(false);
+    }
+  }, [activeDesignId]);
 
   // ── Scan / frøpose-genkendelse state ──
   const [scanMode, setScanMode] = useState<"seed-packet" | "identify">("seed-packet");
@@ -7107,6 +7130,32 @@ export function GardenMapClient({ userId }: { userId: string }) {
             </button>
           </div>
           <div className="h-5 w-px bg-border hidden md:block" />
+          {/* ── Designs button (permanent in toolbar) ── */}
+          <button
+            type="button"
+            className={`rounded-md px-2 md:px-2.5 py-1.5 text-xs font-medium transition-colors ${
+              sidebarTab === "designs"
+                ? "bg-accent text-white shadow-sm"
+                : "text-foreground/70 hover:bg-foreground/5"
+            }`}
+            onClick={() => setSidebarTab("designs")}
+            title="Gemte designs"
+          >
+            💾 <span className="hidden md:inline">Designs</span>
+          </button>
+          {/* Quick-save active design */}
+          {activeDesignId && (
+            <button
+              type="button"
+              className="rounded-md px-2 md:px-2.5 py-1.5 text-xs font-medium text-accent hover:bg-accent/10 transition-colors disabled:opacity-40"
+              onClick={handleQuickSave}
+              disabled={designSaving}
+              title={`Gem ændringer til "${activeDesignName}"`}
+            >
+              {designSaving ? "⏳" : "⬆️"} <span className="hidden md:inline">Gem</span>
+            </button>
+          )}
+          <div className="h-5 w-px bg-border hidden md:block" />
           <div className="flex items-center gap-1">
             <button
               type="button"
@@ -7140,9 +7189,15 @@ export function GardenMapClient({ userId }: { userId: string }) {
             ) : null}
           </div>
         </div>
-        {/* ── Brugernavn ── */}
-        <div className="flex items-center text-xs text-foreground/50 truncate max-w-[100px] md:max-w-none">
-          👤 {sessionData?.user?.name || sessionData?.user?.email || ""}
+        {/* ── Brugernavn + aktivt design ── */}
+        <div className="flex items-center gap-1.5 text-xs text-foreground/50 truncate max-w-[140px] md:max-w-none">
+          <span className="truncate">👤 {sessionData?.user?.name || sessionData?.user?.email || ""}</span>
+          {activeDesignName && (
+            <>
+              <span className="text-foreground/20">·</span>
+              <span className="truncate text-accent font-medium" title={`Aktivt design: ${activeDesignName}`}>💾 {activeDesignName}</span>
+            </>
+          )}
         </div>
         <div className="flex items-center gap-2">
           {/* ── Favorite bookmark pills (desktop only) ── */}
@@ -13880,6 +13935,8 @@ export function GardenMapClient({ userId }: { userId: string }) {
               const d = await createDesign({ name: trimmed, layout: layoutJson, plants: plantsJson });
               setSavedDesigns((prev) => [d, ...prev]);
               setDesignNewName("");
+              setActiveDesignId(d.id);
+              setActiveDesignName(d.name);
               setDesignLoadedFlash("Gemt!");
               setTimeout(() => setDesignLoadedFlash(false), 2000);
             } catch (e: unknown) {
@@ -13932,6 +13989,8 @@ export function GardenMapClient({ userId }: { userId: string }) {
               setPlantInstancesVersion((v) => v + 1);
 
               setSelectedAndFocus(null);
+              setActiveDesignId(design.id);
+              setActiveDesignName(design.name);
               setDesignLoadedFlash(`"${design.name}" indlæst`);
               setTimeout(() => setDesignLoadedFlash(false), 2500);
             } catch {
@@ -13944,6 +14003,7 @@ export function GardenMapClient({ userId }: { userId: string }) {
               await deleteDesign(id);
               setSavedDesigns((prev) => prev.filter((d) => d.id !== id));
               setDesignConfirmDelete(null);
+              if (id === activeDesignId) { setActiveDesignId(null); setActiveDesignName(null); }
             } catch (e: unknown) {
               setDesignError(e instanceof Error ? e.message : "Fejl");
             }
@@ -13956,6 +14016,7 @@ export function GardenMapClient({ userId }: { userId: string }) {
               const d = await updateDesign(id, { name: trimmed });
               setSavedDesigns((prev) => prev.map((x) => (x.id === id ? d : x)));
               setDesignRenamingId(null);
+              if (id === activeDesignId) setActiveDesignName(trimmed);
             } catch (e: unknown) {
               setDesignError(e instanceof Error ? e.message : "Fejl");
             }
@@ -14036,7 +14097,11 @@ export function GardenMapClient({ userId }: { userId: string }) {
                   {savedDesigns.map((design) => (
                     <div
                       key={design.id}
-                      className="rounded-lg border border-border bg-background p-3 hover:border-accent/30 transition-colors"
+                      className={`rounded-lg border p-3 transition-colors ${
+                        design.id === activeDesignId
+                          ? "border-accent bg-accent/5 shadow-sm"
+                          : "border-border bg-background hover:border-accent/30"
+                      }`}
                     >
                       <div className="flex items-center justify-between mb-1">
                         {designRenamingId === design.id ? (
@@ -14059,9 +14124,18 @@ export function GardenMapClient({ userId }: { userId: string }) {
                         ) : (
                           <span className="text-sm font-semibold text-foreground/80 truncate">{design.name}</span>
                         )}
-                        <span className="text-[10px] text-foreground/35 whitespace-nowrap ml-2">
-                          {new Date(design.updatedAt).toLocaleDateString("da-DK", { day: "numeric", month: "short", year: "numeric" })}
-                        </span>
+                        <div className="text-right ml-2 shrink-0">
+                          <div className="text-[10px] text-foreground/35 whitespace-nowrap">
+                            {new Date(design.updatedAt).toLocaleDateString("da-DK", { day: "numeric", month: "short", year: "numeric" })}{" "}
+                            {new Date(design.updatedAt).toLocaleTimeString("da-DK", { hour: "2-digit", minute: "2-digit" })}
+                          </div>
+                          {design.createdAt !== design.updatedAt && (
+                            <div className="text-[9px] text-foreground/25 whitespace-nowrap">
+                              oprettet {new Date(design.createdAt).toLocaleDateString("da-DK", { day: "numeric", month: "short" })}{" "}
+                              {new Date(design.createdAt).toLocaleTimeString("da-DK", { hour: "2-digit", minute: "2-digit" })}
+                            </div>
+                          )}
+                        </div>
                       </div>
 
                       <div className="flex gap-1.5 mt-2">
