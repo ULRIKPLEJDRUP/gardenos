@@ -91,6 +91,8 @@ const MIGRATABLE_KEYS = [
   "gardenos:yearwheel:completed:v1",
   "gardenos:weather:cache:v1",
   "gardenos:weather:history:v1",
+  "gardenos:soil:profiles:v1",
+  "gardenos:soil:log:v1",
 ];
 
 // Keys that are synced to server (subset of MIGRATABLE — excludes ephemeral/device-specific)
@@ -111,6 +113,8 @@ const SYNCABLE_BASE_KEYS = [
   "gardenos:tasks:v1",
   "gardenos:yearwheel:custom:v1",
   "gardenos:yearwheel:completed:v1",
+  "gardenos:soil:profiles:v1",
+  "gardenos:soil:log:v1",
 ];
 const SYNCABLE_SHORT_KEYS = new Set(SYNCABLE_BASE_KEYS.map(toSyncKey));
 

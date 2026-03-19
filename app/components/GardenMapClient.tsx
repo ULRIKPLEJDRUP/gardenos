@@ -60,6 +60,42 @@ import FeedbackPanel from "./FeedbackPanel";
 import GuidedTour from "./GuidedTour";
 import { createTask, parseAiResponse } from "../lib/taskStore";
 import {
+  loadSoilProfiles,
+  saveSoilProfiles,
+  getSoilProfileById,
+  addOrUpdateSoilProfile,
+  deleteSoilProfile,
+  createBlankSoilProfile,
+  getLogForProfile,
+  addSoilLogEntry,
+  deleteSoilLogEntry,
+} from "../lib/soilStore";
+import type { SoilProfile, SoilLogEntry, SoilLogAction, SoilKnowledgeLevel } from "../lib/soilTypes";
+import {
+  SOIL_BASE_TYPE_LABELS,
+  SOIL_BASE_TYPE_DESC,
+  SOIL_COLOR_LABELS,
+  SOIL_TEXTURE_LABELS,
+  DRAINAGE_LABELS,
+  MOISTURE_LABELS,
+  EARTHWORM_LABELS,
+  SOIL_HEALTH_LABELS,
+  ORGANIC_LABELS,
+  COMPOST_TYPE_LABELS,
+  COMPOST_MATURITY_LABELS,
+  COMPOST_AMOUNT_LABELS,
+  PH_CATEGORY_LABELS,
+  PH_METHOD_LABELS,
+  LIME_CONTENT_LABELS,
+  LIME_TYPE_LABELS,
+  NUTRIENT_LABELS,
+  NPK_SOURCE_LABELS,
+  COMPRESSION_LABELS,
+  SOIL_SECTIONS,
+  SOIL_LOG_ACTION_LABELS,
+  computeSoilRecommendations,
+} from "../lib/soilTypes";
+import {
   fetchDesigns,
   createDesign,
   updateDesign,
@@ -101,7 +137,6 @@ type KnownGardenFeatureKind =
   | "bed" | "row" | "pot" | "raised-bed"
   | "planter-box" | "balcony-box" | "grow-bag" | "barrel-planter" | "hanging-basket" | "trough" | "window-box"
   | "tree" | "bush" | "flower" | "plant"
-  | "greenhouse" | "kitchen-garden" | "slope" | "production-garden"
   | "water" | "electric" | "lamp"
   // ── Granular water kinds ──
   | "water-pipe" | "water-hose" | "water-drip" | "water-tap" | "water-sprinkler" | "water-timer" | "water-barrel"
@@ -109,7 +144,21 @@ type KnownGardenFeatureKind =
   | "electric-cable" | "electric-lv" | "electric-outlet" | "electric-junction" | "electric-panel" | "electric-solar"
   // ── Granular lamp kinds ──
   | "lamp-garden" | "lamp-spot" | "lamp-led-string" | "lamp-wall" | "lamp-solar" | "lamp-path" | "lamp-battery" | "lamp-flood"
-  | "shade" | "moist-soil" | "sandy-soil" | "wind" | "clay-soil";
+  // ── Havezoner (area/zone) ──
+  | "kitchen-garden" | "fruit-grove" | "front-garden" | "flower-garden" | "herb-garden" | "berry-garden"
+  | "forest-garden" | "lawn" | "meadow" | "field" | "production-garden" | "playground" | "slope"
+  // ── Bygninger & strukturer (area/structure) ──
+  | "house" | "shed" | "garage" | "terrace" | "patio" | "path-area" | "pond" | "stream"
+  | "compost" | "woodpile" | "firepit" | "trampoline" | "sandbox" | "wall" | "parking" | "well"
+  // ── Overdækninger & indhegninger (area/cover) ──
+  | "greenhouse" | "polytunnel" | "cold-frame" | "pergola" | "shade-sail" | "row-cover"
+  | "cloche" | "netting" | "fence-enclosure" | "espalier" | "windbreak"
+  // ── Jordforhold (condition/soil) ──
+  | "clay-soil" | "sandy-soil" | "moist-soil" | "chalky-soil" | "acidic-soil" | "humus-soil"
+  | "contaminated" | "rocky-soil" | "peat-soil" | "compacted"
+  // ── Klima & miljø (condition/climate) ──
+  | "shade" | "partial-shade" | "wind" | "frost-pocket" | "wetland" | "dry-zone"
+  | "heat-island" | "salt-exposure" | "erosion" | "deer-area" | "slug-zone" | "bird-damage";
 type GardenFeatureKind = KnownGardenFeatureKind | (string & {});
 
 // Six primary categories matching the user's domain model
@@ -118,7 +167,7 @@ type GardenFeatureCategory = "element" | "row" | "seedbed" | "container" | "area
 type KindGeometry = "point" | "polygon" | "polyline";
 
 // Sub-groups within each category
-type KindSubGroup = "plant" | "infra" | "default";
+type KindSubGroup = "plant" | "infra" | "default" | "zone" | "structure" | "cover" | "soil" | "climate";
 
 type KindDef = {
   kind: string;
@@ -142,8 +191,17 @@ const CATEGORY_DESCRIPTIONS: Record<GardenFeatureCategory, string> = {
   row: "Rækker – indeholder elementer",
   seedbed: "Såbede – indeholder rækker, containere, elementer",
   container: "Krukker, kasser, højbede, ampler – indeholder elementer",
-  area: "Område – indeholder såbede, containere, rækker, elementer",
-  condition: "Skygge, fugtig jord, sandjord, vind",
+  area: "Havezoner, bygninger, overdækninger og indhegninger",
+  condition: "Jordforhold, klima og miljøpåvirkninger",
+};
+
+/** Labels for area/condition SubGroups shown as headers in palette */
+const SUB_GROUP_LABELS: Partial<Record<KindSubGroup, string>> = {
+  zone: "🌿 Havezoner",
+  structure: "🏠 Bygninger & strukturer",
+  cover: "🏡 Overdækninger & indhegninger",
+  soil: "🪨 Jordforhold",
+  climate: "🌤️ Klima & miljø",
 };
 
 type GardenFeatureProperties = {
@@ -172,6 +230,9 @@ type GardenFeatureProperties = {
   // ── Custom icon (emoji) ──
   customIcon?: string;    // emoji icon for map marker display
 
+  // ── Soil profile reference ──
+  soilProfileId?: string; // links to SoilProfile in soilStore
+
   // ── Auto-row parent tracking ──
   parentBedId?: string;   // gardenosId of the bed this row was created in
   rowDirection?: "length" | "width"; // direction rows run in the parent bed
@@ -194,13 +255,38 @@ type GardenFeatureProperties = {
   placement?: string;     // placering (sol/halvskygge/skygge)
   winterProtection?: string; // vinterbeskyttelse (ingen/indendørs/isoleret)
 
-  // ── Area-specific ──
+  // ── Area: zone-specific ──
   shelter?: string;       // læforhold
-  heating?: string;       // opvarmning (drivhus)
+  sunlight?: string;      // lysforhold (fuld sol/halvskygge/skygge)
+  orientation?: string;   // orientering (nord/syd/øst/vest)
+  purpose?: string;       // formål
 
-  // ── Condition-specific ──
-  conditionDesc?: string; // beskrivelse af forholdet
-  intensity?: string;     // intensitet (svag/middel/stærk)
+  // ── Area: structure-specific ──
+  structureMaterial?: string; // materiale
+  structureHeight?: string;   // ca. højde
+  shadowDirection?: string;   // kaster skygge mod
+  structureUse?: string;      // formål/brug
+
+  // ── Area: cover-specific ──
+  heating?: string;           // opvarmning (drivhus)
+  coverMaterial?: string;     // materiale (glas/polycarbonat/plastik/net)
+  ventilation?: string;       // ventilation
+  protectionAgainst?: string; // beskyttelse mod (komma-separeret)
+  minTemperature?: string;    // min. temperatur
+
+  // ── Condition: soil-specific ──
+  conditionDesc?: string;     // beskrivelse
+  intensity?: string;         // intensitet (svag/middel/stærk)
+  soilPh?: string;            // pH-værdi
+  soilDrainage?: string;      // dræning
+  soilDepth?: string;         // mulddybde
+  soilImproved?: string;      // jordforbedring
+
+  // ── Condition: climate-specific ──
+  timeOfDay?: string;         // tidspunkt (morgen/eftermiddag/hele dagen)
+  season?: string;            // sæson
+  conditionDirection?: string; // retning
+  conditionSource?: string;   // kilde
 };
 
 type GardenFeature = Feature<Geometry, GardenFeatureProperties>;
@@ -507,18 +593,77 @@ const KNOWN_KIND_DEFS: KindDef[] = [
   { kind: "trough", label: "Trug/Plantebakke", category: "container", geometry: "polygon", subGroup: "default" },
   { kind: "window-box", label: "Vindueskarme-kasse", category: "container", geometry: "polygon", subGroup: "default" },
 
-  // ── Områder ──
-  { kind: "greenhouse", label: "Drivhus", category: "area", geometry: "polygon", subGroup: "default" },
-  { kind: "kitchen-garden", label: "Køkkenhave", category: "area", geometry: "polygon", subGroup: "default" },
-  { kind: "slope", label: "Skråning", category: "area", geometry: "polygon", subGroup: "default" },
-  { kind: "production-garden", label: "Produktionshave", category: "area", geometry: "polygon", subGroup: "default" },
+  // ── Områder: Havezoner ──
+  { kind: "kitchen-garden", label: "🥬 Køkkenhave", category: "area", geometry: "polygon", subGroup: "zone" },
+  { kind: "fruit-grove", label: "🍎 Frugtlund", category: "area", geometry: "polygon", subGroup: "zone" },
+  { kind: "front-garden", label: "🌷 Forhave", category: "area", geometry: "polygon", subGroup: "zone" },
+  { kind: "flower-garden", label: "🌸 Blomsterhave", category: "area", geometry: "polygon", subGroup: "zone" },
+  { kind: "herb-garden", label: "🌿 Urtehave", category: "area", geometry: "polygon", subGroup: "zone" },
+  { kind: "berry-garden", label: "🫐 Bærhave", category: "area", geometry: "polygon", subGroup: "zone" },
+  { kind: "forest-garden", label: "🌳 Skovhave", category: "area", geometry: "polygon", subGroup: "zone" },
+  { kind: "lawn", label: "☘️ Græsplæne", category: "area", geometry: "polygon", subGroup: "zone" },
+  { kind: "meadow", label: "🌼 Eng/vildblomst", category: "area", geometry: "polygon", subGroup: "zone" },
+  { kind: "field", label: "🌾 Mark", category: "area", geometry: "polygon", subGroup: "zone" },
+  { kind: "production-garden", label: "🏭 Produktionshave", category: "area", geometry: "polygon", subGroup: "zone" },
+  { kind: "playground", label: "🎪 Legeplads", category: "area", geometry: "polygon", subGroup: "zone" },
+  { kind: "slope", label: "⛰️ Skråning", category: "area", geometry: "polygon", subGroup: "zone" },
 
-  // ── Særlige forhold (overlay zones) ──
-  { kind: "shade", label: "Skygge", category: "condition", geometry: "polygon", subGroup: "default" },
-  { kind: "moist-soil", label: "Fugtig jord", category: "condition", geometry: "polygon", subGroup: "default" },
-  { kind: "sandy-soil", label: "Sandjord", category: "condition", geometry: "polygon", subGroup: "default" },
-  { kind: "wind", label: "Vindforhold", category: "condition", geometry: "polygon", subGroup: "default" },
-  { kind: "clay-soil", label: "Lerjord", category: "condition", geometry: "polygon", subGroup: "default" },
+  // ── Områder: Bygninger & strukturer ──
+  { kind: "house", label: "🏠 Hus", category: "area", geometry: "polygon", subGroup: "structure" },
+  { kind: "shed", label: "🏚️ Skur", category: "area", geometry: "polygon", subGroup: "structure" },
+  { kind: "garage", label: "🅿️ Garage/carport", category: "area", geometry: "polygon", subGroup: "structure" },
+  { kind: "terrace", label: "🪑 Terrasse", category: "area", geometry: "polygon", subGroup: "structure" },
+  { kind: "patio", label: "🏡 Gårdhave", category: "area", geometry: "polygon", subGroup: "structure" },
+  { kind: "path-area", label: "🛤️ Sti/gangsti", category: "area", geometry: "polygon", subGroup: "structure" },
+  { kind: "pond", label: "🌊 Dam/sø", category: "area", geometry: "polygon", subGroup: "structure" },
+  { kind: "stream", label: "💧 Bæk/vandløb", category: "area", geometry: "polygon", subGroup: "structure" },
+  { kind: "compost", label: "♻️ Kompost", category: "area", geometry: "polygon", subGroup: "structure" },
+  { kind: "woodpile", label: "🪵 Brændestabel", category: "area", geometry: "polygon", subGroup: "structure" },
+  { kind: "firepit", label: "🔥 Bålplads", category: "area", geometry: "polygon", subGroup: "structure" },
+  { kind: "trampoline", label: "⭕ Trampolin", category: "area", geometry: "polygon", subGroup: "structure" },
+  { kind: "sandbox", label: "🏖️ Sandkasse", category: "area", geometry: "polygon", subGroup: "structure" },
+  { kind: "wall", label: "🧱 Mur/stenmur", category: "area", geometry: "polygon", subGroup: "structure" },
+  { kind: "parking", label: "🚗 Parkering", category: "area", geometry: "polygon", subGroup: "structure" },
+  { kind: "well", label: "🪣 Brønd", category: "area", geometry: "polygon", subGroup: "structure" },
+
+  // ── Områder: Overdækninger & indhegninger ──
+  { kind: "greenhouse", label: "🏡 Drivhus", category: "area", geometry: "polygon", subGroup: "cover" },
+  { kind: "polytunnel", label: "🫧 Dækningstunnel", category: "area", geometry: "polygon", subGroup: "cover" },
+  { kind: "cold-frame", label: "📦 Drivbænk", category: "area", geometry: "polygon", subGroup: "cover" },
+  { kind: "pergola", label: "🪟 Pergola", category: "area", geometry: "polygon", subGroup: "cover" },
+  { kind: "shade-sail", label: "⛵ Solsejl", category: "area", geometry: "polygon", subGroup: "cover" },
+  { kind: "row-cover", label: "🧊 Fiberdug", category: "area", geometry: "polygon", subGroup: "cover" },
+  { kind: "cloche", label: "🔔 Klokke/dækglas", category: "area", geometry: "polygon", subGroup: "cover" },
+  { kind: "netting", label: "🕸️ Insektnet", category: "area", geometry: "polygon", subGroup: "cover" },
+  { kind: "fence-enclosure", label: "🔲 Indhegning", category: "area", geometry: "polygon", subGroup: "cover" },
+  { kind: "espalier", label: "🪜 Espalier", category: "area", geometry: "polygon", subGroup: "cover" },
+  { kind: "windbreak", label: "🌲 Læhegn", category: "area", geometry: "polygon", subGroup: "cover" },
+
+  // ── Særlige forhold: Jordforhold ──
+  { kind: "clay-soil", label: "🟤 Lerjord", category: "condition", geometry: "polygon", subGroup: "soil" },
+  { kind: "sandy-soil", label: "🟡 Sandjord", category: "condition", geometry: "polygon", subGroup: "soil" },
+  { kind: "moist-soil", label: "💧 Fugtig jord", category: "condition", geometry: "polygon", subGroup: "soil" },
+  { kind: "chalky-soil", label: "⬜ Kalkjord", category: "condition", geometry: "polygon", subGroup: "soil" },
+  { kind: "acidic-soil", label: "🟠 Surbund", category: "condition", geometry: "polygon", subGroup: "soil" },
+  { kind: "humus-soil", label: "🟫 Muldjord", category: "condition", geometry: "polygon", subGroup: "soil" },
+  { kind: "contaminated", label: "☢️ Forurenet jord", category: "condition", geometry: "polygon", subGroup: "soil" },
+  { kind: "rocky-soil", label: "🪨 Stenet jord", category: "condition", geometry: "polygon", subGroup: "soil" },
+  { kind: "peat-soil", label: "🫘 Tørvejord", category: "condition", geometry: "polygon", subGroup: "soil" },
+  { kind: "compacted", label: "🧱 Kompakt jord", category: "condition", geometry: "polygon", subGroup: "soil" },
+
+  // ── Særlige forhold: Klima & miljø ──
+  { kind: "shade", label: "⬛ Skygge", category: "condition", geometry: "polygon", subGroup: "climate" },
+  { kind: "partial-shade", label: "🌤️ Halvskygge", category: "condition", geometry: "polygon", subGroup: "climate" },
+  { kind: "wind", label: "💨 Stærk vind", category: "condition", geometry: "polygon", subGroup: "climate" },
+  { kind: "frost-pocket", label: "🥶 Frostlomme", category: "condition", geometry: "polygon", subGroup: "climate" },
+  { kind: "wetland", label: "🌊 Vådområde", category: "condition", geometry: "polygon", subGroup: "climate" },
+  { kind: "dry-zone", label: "☀️ Tør zone", category: "condition", geometry: "polygon", subGroup: "climate" },
+  { kind: "heat-island", label: "🌡️ Varmeø", category: "condition", geometry: "polygon", subGroup: "climate" },
+  { kind: "salt-exposure", label: "🧂 Saltpåvirkning", category: "condition", geometry: "polygon", subGroup: "climate" },
+  { kind: "erosion", label: "🏜️ Erosion", category: "condition", geometry: "polygon", subGroup: "climate" },
+  { kind: "deer-area", label: "🦌 Vildtområde", category: "condition", geometry: "polygon", subGroup: "climate" },
+  { kind: "slug-zone", label: "🐌 Sneglezone", category: "condition", geometry: "polygon", subGroup: "climate" },
+  { kind: "bird-damage", label: "🐦 Fugletryk", category: "condition", geometry: "polygon", subGroup: "climate" },
 ];
 
 const KNOWN_KIND_SET = new Set(KNOWN_KIND_DEFS.map((d) => d.kind.toLowerCase()));
@@ -560,6 +705,9 @@ function loadCustomKindDefsFromStorage(): KindDef[] {
     if (v.geometry !== "point" && v.geometry !== "polygon" && v.geometry !== "polyline") continue;
     const subGroup: KindSubGroup = v.subGroup === "infra" ? "infra" : v.subGroup === "plant" ? "plant" : "default";
     if (isKnownKind(v.kind)) continue;
+    // Strip invalid container kinds (e.g. user-added "skur"/"slot" that belong under area/structure)
+    const kindLower = v.kind.toLowerCase();
+    if (v.category === "container" && (kindLower === "skur" || kindLower === "slot")) continue;
     parsed.push({ kind: v.kind, label: v.label, category: v.category as GardenFeatureCategory, geometry: v.geometry, subGroup });
   }
   return dedupeKindDefs(parsed);
@@ -700,6 +848,7 @@ function ensureDefaultProperties(feature: GardenFeature): GardenFeature {
       photoUrl: feature.properties?.photoUrl ?? "",
       // container
       soilType: feature.properties?.soilType ?? "",
+      soilProfileId: feature.properties?.soilProfileId ?? "",
       fertilizer: feature.properties?.fertilizer ?? "",
       bedType: feature.properties?.bedType ?? "",
       // area
@@ -3744,9 +3893,22 @@ export function GardenMapClient({ userId }: { userId: string }) {
   const [contentPlantDetailsOpen, setContentPlantDetailsOpen] = useState(false);
   const [contentTypeOpen, setContentTypeOpen] = useState(false);
   const [contentNameOpen, setContentNameOpen] = useState(false);
+  const [contentContainsOpen, setContentContainsOpen] = useState(true);
+  const [contentGrowingOpen, setContentGrowingOpen] = useState(false);
   const [contentNotesOpen, setContentNotesOpen] = useState(false);
   const [contentSpeciesOpen, setContentSpeciesOpen] = useState(false);
+  const [contentAreaFieldsOpen, setContentAreaFieldsOpen] = useState(false);
+  const [contentConditionFieldsOpen, setContentConditionFieldsOpen] = useState(false);
   const [speciesPickerSearch, setSpeciesPickerSearch] = useState("");
+
+  // ── Soil profile edit state ──
+  const [soilPanelOpen, setSoilPanelOpen] = useState(false);
+  const [soilDataVersion, setSoilDataVersion] = useState(0);
+  const [soilOpenSections, setSoilOpenSections] = useState<Set<string>>(new Set(["type"]));
+  const [soilLevelFilter, setSoilLevelFilter] = useState<SoilKnowledgeLevel | "all">("all");
+  const [soilLogOpen, setSoilLogOpen] = useState(false);
+  const [soilLogAction, setSoilLogAction] = useState<SoilLogAction>("compost-added");
+  const [soilLogNotes, setSoilLogNotes] = useState("");
 
   // ── Auto-row creation state ──
   const [autoRowOpen, setAutoRowOpen] = useState(false);
@@ -3780,6 +3942,8 @@ export function GardenMapClient({ userId }: { userId: string }) {
   // ── Create-flow plant picker state ──
   type ElementMode = "planter" | "el" | "vand" | "lampe";
   const [elementMode, setElementMode] = useState<ElementMode>("planter");
+  /** SubGroup filter tab for area / condition palettes */
+  const [createSubGroupFilter, setCreateSubGroupFilter] = useState<KindSubGroup | null>(null);
   const [createPlantSearch, setCreatePlantSearch] = useState("");
   const [createPlantCategoryFilter, setCreatePlantCategoryFilter] = useState<PlantCategory | "all">("all");
   const [createSelectedSpeciesId, setCreateSelectedSpeciesId] = useState<string | null>(null);
@@ -4151,6 +4315,34 @@ export function GardenMapClient({ userId }: { userId: string }) {
     return containment.countsByContainerId.get(selected.gardenosId) ?? null;
   }, [containment, selected]);
 
+  /** Find the parent feature that contains the currently selected feature */
+  const selectedParentFeature = useMemo(() => {
+    if (!selected) return null;
+    const myId = selected.gardenosId;
+    // Check parentBedId first (auto-rows store this)
+    const parentBedId = selected.feature.properties?.parentBedId;
+    if (parentBedId) {
+      const pf = layoutForContainment.features.find((f) => (f as GardenFeature).properties?.gardenosId === parentBedId) as GardenFeature | undefined;
+      if (pf) {
+        const cat = pf.properties?.category ?? "";
+        const catLabel = CATEGORY_LABELS[cat as GardenFeatureCategory] ?? cat;
+        return { id: parentBedId, name: pf.properties?.name ?? catLabel, category: cat };
+      }
+    }
+    // Fallback: scan containment map for who contains this feature
+    for (const [containerId, childIds] of containment.childIdsByContainerId) {
+      if (childIds.includes(myId)) {
+        const pf = layoutForContainment.features.find((f) => (f as GardenFeature).properties?.gardenosId === containerId) as GardenFeature | undefined;
+        if (pf) {
+          const cat = pf.properties?.category ?? "";
+          const catLabel = CATEGORY_LABELS[cat as GardenFeatureCategory] ?? cat;
+          return { id: containerId, name: pf.properties?.name ?? catLabel, category: cat };
+        }
+      }
+    }
+    return null;
+  }, [selected, containment, layoutForContainment]);
+
   const selectedContainedItemsPreview = useMemo(() => {
     if (!selected) return [] as { id: string; text: string }[];
     const ids = containment.childIdsByContainerId.get(selected.gardenosId) ?? [];
@@ -4244,9 +4436,22 @@ export function GardenMapClient({ userId }: { userId: string }) {
         const details: string[] = [];
         if (feature?.properties?.sowingMethod) details.push(`Såmetode: ${feature.properties.sowingMethod}`);
         if (feature?.properties?.bedSeason) details.push(`Sæson: ${feature.properties.bedSeason}`);
-        if (feature?.properties?.soilType) details.push(`Jord: ${feature.properties.soilType}`);
+        if (feature?.properties?.soilProfileId) {
+          const sp = getSoilProfileById(feature.properties.soilProfileId);
+          if (sp?.baseType) details.push(`Jord: ${SOIL_BASE_TYPE_LABELS[sp.baseType]}`);
+          else if (sp?.name) details.push(`Jord: ${sp.name}`);
+        } else if (feature?.properties?.soilType) {
+          details.push(`Jord: ${feature.properties.soilType}`);
+        }
         if (feature?.properties?.fertilizer) details.push(`Gødning: ${feature.properties.fertilizer}`);
         if (details.length > 0) plantSuffix += `\n${details.join(" · ")}`;
+      }
+
+      // Add container soil profile info to tooltip
+      if (featureCat === "container" && feature?.properties?.soilProfileId) {
+        const sp = getSoilProfileById(feature.properties.soilProfileId);
+        if (sp?.baseType) plantSuffix += `\nJord: ${SOIL_BASE_TYPE_LABELS[sp.baseType]}`;
+        else if (sp?.name) plantSuffix += `\nJord: ${sp.name}`;
       }
 
       // Add linked species info to element (plant) tooltips
@@ -4297,39 +4502,67 @@ export function GardenMapClient({ userId }: { userId: string }) {
       if (typeof maybePath.setStyle !== "function") return;
 
       // Distinguish containers without introducing new colors.
-      if (kind === "greenhouse") {
-        maybePath.setStyle({
-          color: "var(--foreground)",
-          weight: 2,
-          opacity: 0.9,
-          fillOpacity: 0.03,
-          dashArray: "6 6",
-        });
-        return;
-      }
+      // Resolve SubGroup for current feature
+      const featureSubGroup = (() => {
+        const k = (kind ?? "") as string;
+        const def = KNOWN_KIND_DEFS.find((d) => d.kind === k);
+        return def?.subGroup ?? "default";
+      })();
 
-      // Area polygons: thin dashed border, very faint fill
+      // Area polygons: style per SubGroup
       const cat = feature?.properties?.category;
       if (cat === "area") {
-        maybePath.setStyle({
-          color: "var(--foreground)",
-          weight: 2,
-          opacity: 0.7,
-          fillOpacity: 0.03,
-          dashArray: "8 4",
-        });
+        if (featureSubGroup === "cover") {
+          // Overdækninger – distinct dashes, slight opacity
+          maybePath.setStyle({
+            color: "var(--foreground)",
+            weight: 2,
+            opacity: 0.9,
+            fillOpacity: 0.03,
+            dashArray: "6 6",
+          });
+        } else if (featureSubGroup === "structure") {
+          // Bygninger – solid-ish, more fill to show occupied space
+          maybePath.setStyle({
+            color: "var(--foreground)",
+            weight: 2,
+            opacity: 0.6,
+            fillOpacity: 0.08,
+            dashArray: "4 2",
+          });
+        } else {
+          // Havezoner (default/zone) – light dashed border
+          maybePath.setStyle({
+            color: "var(--foreground)",
+            weight: 2,
+            opacity: 0.7,
+            fillOpacity: 0.03,
+            dashArray: "8 4",
+          });
+        }
         return;
       }
 
-      // Condition overlays: very translucent, dotted
+      // Condition overlays: style per SubGroup
       if (cat === "condition") {
-        maybePath.setStyle({
-          color: "var(--foreground)",
-          weight: 1,
-          opacity: 0.5,
-          fillOpacity: 0.06,
-          dashArray: "2 4",
-        });
+        if (featureSubGroup === "soil") {
+          maybePath.setStyle({
+            color: "var(--foreground)",
+            weight: 1,
+            opacity: 0.5,
+            fillOpacity: 0.06,
+            dashArray: "2 4",
+          });
+        } else {
+          // Climate – slightly different pattern
+          maybePath.setStyle({
+            color: "var(--foreground)",
+            weight: 1,
+            opacity: 0.4,
+            fillOpacity: 0.08,
+            dashArray: "3 5",
+          });
+        }
         return;
       }
 
@@ -4551,11 +4784,21 @@ export function GardenMapClient({ userId }: { userId: string }) {
       const midLat = (first[1] + last[1]) / 2;
       const midLng = (first[0] + last[0]) / 2;
 
-      // Resolve emoji icon
+      // Resolve emoji icon: check feature prop, then PlantInstances
       let rowIcon = f.properties?.customIcon;
       if (!rowIcon && f.properties?.speciesId) {
         const sp = getPlantById(f.properties.speciesId);
         if (sp?.icon) rowIcon = sp.icon;
+      }
+      if (!rowIcon) {
+        const fId = f.properties?.gardenosId;
+        if (fId) {
+          const instances = getInstancesForFeature(fId);
+          if (instances.length > 0) {
+            const sp = getPlantById(instances[0].speciesId);
+            if (sp?.icon) rowIcon = sp.icon;
+          }
+        }
       }
       if (!rowIcon) rowIcon = "🌱";
 
@@ -4580,7 +4823,7 @@ export function GardenMapClient({ userId }: { userId: string }) {
 
     emojiGroup.addTo(map);
     rowEmojiLayerGroupRef.current = emojiGroup;
-  }, [featureGroupRef, mapRef, hiddenCategories, hiddenVisibilityKinds]);
+  }, [featureGroupRef, mapRef, hiddenCategories, hiddenVisibilityKinds, plantInstancesVersion]);
 
   // ---------------------------------------------------------------------------
   // Edge-length labels: show meter measurements on each polygon edge when
@@ -6783,6 +7026,14 @@ export function GardenMapClient({ userId }: { userId: string }) {
   const selectedCategory = selected?.feature.properties?.category;
   const selectedGroupId = selected?.feature.properties?.groupId;
 
+  /** Resolve SubGroup of the currently selected feature */
+  const selectedSubGroup = useMemo<KindSubGroup>(() => {
+    const k = selectedKind as string | undefined;
+    if (!k) return "default";
+    const def = KNOWN_KIND_DEFS.find((d) => d.kind === k);
+    return (def?.subGroup ?? "default") as KindSubGroup;
+  }, [selectedKind]);
+
   // ── Plant computed values ──
   const allPlants = useMemo(() => { void plantDataVersion; return getAllPlants(); }, [plantDataVersion]);
 
@@ -7005,10 +7256,20 @@ export function GardenMapClient({ userId }: { userId: string }) {
   }, [allKindDefsIncludingHidden, selected, selectedGeometry]);
 
   const createKindOptions = useMemo(() => {
-    return allKindDefs
+    const items = allKindDefs
       .filter((d) => d.category === createPalette)
-      .map((d) => ({ value: d.kind as GardenFeatureKind, label: d.label }));
+      .map((d) => ({ value: d.kind as GardenFeatureKind, label: d.label, subGroup: d.subGroup ?? "default" }));
+    return items;
   }, [allKindDefs, createPalette]);
+
+  /** SubGroups present in current palette (for optgroup rendering) */
+  const createKindSubGroups = useMemo(() => {
+    const groups: KindSubGroup[] = [];
+    for (const opt of createKindOptions) {
+      if (!groups.includes(opt.subGroup)) groups.push(opt.subGroup);
+    }
+    return groups;
+  }, [createKindOptions]);
 
   const addCustomKind = useCallback(() => {
     const label = newKindText.trim();
@@ -7025,7 +7286,10 @@ export function GardenMapClient({ userId }: { userId: string }) {
 
     const category: GardenFeatureCategory = createPalette;
     const subGroup: KindSubGroup =
-      category === "element" ? "plant" : "default";
+      category === "element" ? "plant"
+      : category === "area" ? "zone"
+      : category === "condition" ? "climate"
+      : "default";
     // Default geometry based on category
     const geometry: KindGeometry =
       category === "element" ? "point" : "polygon";
@@ -7099,6 +7363,17 @@ export function GardenMapClient({ userId }: { userId: string }) {
     if (area == null) return "";
     return formatAreaSquareMeters(area);
   }, [selected, selectedCategory, selectedIsPolygon]);
+
+  /** Row length in metres (LineString only) */
+  const selectedRowLengthM = useMemo(() => {
+    if (!selected || selectedCategory !== "row") return 0;
+    const geom = selected.feature.geometry;
+    if (geom.type !== "LineString") return 0;
+    const coords = geom.coordinates as [number, number][];
+    let total = 0;
+    for (let i = 1; i < coords.length; i++) total += haversineM(coords[i - 1], coords[i]);
+    return total;
+  }, [selected, selectedCategory]);
 
   return (
     <div className="grid h-[calc(100dvh)] w-full grid-cols-1 grid-rows-[auto_1fr] md:grid-cols-[1fr_340px]">
@@ -8259,6 +8534,7 @@ export function GardenMapClient({ userId }: { userId: string }) {
                       setNewKindError(null);
                       // Reset plant picker & element mode
                       setElementMode("planter");
+                      setCreateSubGroupFilter(null);
                       setCreateSelectedSpeciesId(null);
                       setCreateSelectedVarietyId(null);
                       setCreateSelectedVarietyName(null);
@@ -8542,72 +8818,127 @@ export function GardenMapClient({ userId }: { userId: string }) {
               </>
             ) : (
               /* ════════════════════════════════════════════════════════════════
-                 NON-ELEMENT categories: existing TYPE dropdown + Ny type
+                 NON-ELEMENT categories: type picker
+                 Area & Condition → SubGroup tabs + scrollable type list
+                 Other → simple <select> dropdown
                  ════════════════════════════════════════════════════════════════ */
               <>
-                <div className="col-span-2">
-                  <label className="block text-[11px] font-semibold text-foreground/60 uppercase tracking-wide">Type</label>
-                  <div className="mt-1 grid grid-cols-[1fr_auto] gap-2">
-                    <select
-                      className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm shadow-sm"
-                      value={createKind}
-                      onChange={(e) => {
-                        const next = e.target.value as GardenFeatureKind;
-                        setCreateKind(next);
-                        createKindRef.current = next;
-                        setNewKindError(null);
-                      }}
-                    >
-                      {createKindOptions.map((opt) => (
-                        <option key={opt.value} value={opt.value}>
-                          {opt.label}
-                        </option>
-                      ))}
-                    </select>
-                    {canRemoveCreateKind ? (
+                {/* ── All non-element categories: SubGroup tabs (when 2+) + scrollable type list ── */}
+                <div className="col-span-2 space-y-2">
+                    <label className="block text-[11px] font-semibold text-foreground/60 uppercase tracking-wide">Type</label>
+
+                    {/* SubGroup tab buttons — only when 2+ SubGroups */}
+                    {createKindSubGroups.length > 1 ? (
+                    <div className="grid gap-1.5" style={{ gridTemplateColumns: `repeat(${createKindSubGroups.length}, 1fr)` }}>
+                      {createKindSubGroups.map((sg) => {
+                        const active = (createSubGroupFilter ?? createKindSubGroups[0]) === sg;
+                        const count = createKindOptions.filter((o) => o.subGroup === sg).length;
+                        return (
+                          <button
+                            key={sg}
+                            type="button"
+                            className={`rounded-lg border px-2 py-2 text-[11px] text-center leading-tight transition-all ${
+                              active
+                                ? "border-accent/40 bg-accent-light text-accent-dark font-semibold shadow-sm"
+                                : "border-border bg-background hover:bg-foreground/5 text-foreground/60"
+                            }`}
+                            onClick={() => {
+                              setCreateSubGroupFilter(sg);
+                              const first = createKindOptions.find((o) => o.subGroup === sg);
+                              if (first) {
+                                setCreateKind(first.value);
+                                createKindRef.current = first.value;
+                              }
+                            }}
+                          >
+                            <span className="block">{SUB_GROUP_LABELS[sg] ?? sg}</span>
+                            <span className="block text-[9px] font-normal opacity-60 mt-0.5">{count} typer</span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                    ) : null}
+
+                    {/* Scrollable type list */}
+                    {(() => {
+                      const activeSg = createKindSubGroups.length > 1
+                        ? (createSubGroupFilter ?? createKindSubGroups[0])
+                        : createKindSubGroups[0];
+                      const items = activeSg
+                        ? createKindOptions.filter((o) => o.subGroup === activeSg)
+                        : createKindOptions;
+                      return items.length > 0 ? (
+                        <div className="max-h-52 space-y-0.5 overflow-y-auto">
+                          {items.map((opt) => (
+                            <button
+                              key={opt.value}
+                              type="button"
+                              className={`flex w-full items-center gap-2 rounded-md border px-3 py-2 text-left text-xs transition-all ${
+                                createKind === opt.value
+                                  ? "border-accent/30 bg-accent-light/50 text-accent-dark font-semibold"
+                                  : "border-transparent hover:border-foreground/15 hover:bg-foreground/5 text-foreground/70"
+                              }`}
+                              onClick={() => {
+                                setCreateKind(opt.value);
+                                createKindRef.current = opt.value;
+                                setNewKindError(null);
+                              }}
+                            >
+                              <span className="flex-1 truncate">{opt.label}</span>
+                              {createKind === opt.value ? <span className="text-accent text-[10px]">✓</span> : null}
+                              {canRemoveCreateKind && createKind === opt.value ? (
+                                <span
+                                  role="button"
+                                  tabIndex={0}
+                                  className="shrink-0 rounded px-1 text-foreground/30 hover:text-red-500 hover:bg-red-50"
+                                  onClick={(e) => { e.stopPropagation(); removeKind(opt.value); }}
+                                  title="Fjern denne type"
+                                >
+                                  ✕
+                                </span>
+                              ) : null}
+                            </button>
+                          ))}
+                        </div>
+                      ) : null;
+                    })()}
+
+                    {hiddenInCurrentPalette.length > 0 ? (
                       <button
                         type="button"
-                        className="rounded-md border border-foreground/20 bg-background px-2 py-2 text-xs text-foreground/60 hover:border-red-300 hover:text-red-600 hover:bg-red-50"
-                        onClick={() => removeKind(createKind)}
-                        title="Fjern denne type fra listen"
+                        className="text-[10px] text-foreground/40 hover:text-foreground/70 hover:underline"
+                        onClick={() => restoreHiddenKinds(createPalette)}
                       >
-                        ✕
+                        Gendan {hiddenInCurrentPalette.length} skjulte standardtype{hiddenInCurrentPalette.length > 1 ? "r" : ""}
                       </button>
                     ) : null}
-                  </div>
-                  {hiddenInCurrentPalette.length > 0 ? (
-                    <button
-                      type="button"
-                      className="mt-1 text-[10px] text-foreground/40 hover:text-foreground/70 hover:underline"
-                      onClick={() => restoreHiddenKinds(createPalette)}
-                    >
-                      Gendan {hiddenInCurrentPalette.length} skjulte standardtype{hiddenInCurrentPalette.length > 1 ? "r" : ""}
-                    </button>
-                  ) : null}
-                </div>
 
-                <div className="col-span-2">
-                  <label className="block text-[11px] font-semibold text-foreground/60 uppercase tracking-wide">Ny type</label>
-                  <div className="mt-1 grid grid-cols-[1fr_auto] gap-2">
-                    <input
-                      className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm shadow-sm"
-                      value={newKindText}
-                      onChange={(e) => setNewKindText(e.target.value)}
-                      placeholder={
-                        createPalette === "container" ? "Fx Pottebænk"
-                        : createPalette === "area" ? "Fx Frugtplantage"
-                        : "Fx Halvskygge"
-                      }
-                    />
-                    <button
-                      type="button"
-                      className="rounded-lg border border-border bg-background px-3 py-2 text-sm font-medium text-foreground/70 hover:bg-foreground/5 transition-colors shadow-sm"
-                      onClick={addCustomKind}
-                    >
-                      Tilføj
-                    </button>
-                  </div>
-                  {newKindError ? <p className="mt-1 text-xs text-foreground/70">{newKindError}</p> : null}
+                    {/* Ny type */}
+                    <div>
+                      <label className="block text-[11px] font-semibold text-foreground/60 uppercase tracking-wide">Ny type</label>
+                      <div className="mt-1 grid grid-cols-[1fr_auto] gap-2">
+                        <input
+                          className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm shadow-sm"
+                          value={newKindText}
+                          onChange={(e) => setNewKindText(e.target.value)}
+                          placeholder={
+                            createPalette === "area" ? "Fx Orangeri, Hegn"
+                            : createPalette === "condition" ? "Fx Læside, Muldrig jord"
+                            : createPalette === "container" ? "Fx Pottebænk"
+                            : createPalette === "row" ? "Fx Dobbeltrække"
+                            : "Fx Spirebakke"
+                          }
+                        />
+                        <button
+                          type="button"
+                          className="rounded-lg border border-border bg-background px-3 py-2 text-sm font-medium text-foreground/70 hover:bg-foreground/5 transition-colors shadow-sm"
+                          onClick={addCustomKind}
+                        >
+                          Tilføj
+                        </button>
+                      </div>
+                      {newKindError ? <p className="mt-1 text-xs text-foreground/70">{newKindError}</p> : null}
+                    </div>
                 </div>
               </>
             )}
@@ -8655,6 +8986,19 @@ export function GardenMapClient({ userId }: { userId: string }) {
             </p>
           ) : (
             <div className="mt-3 space-y-3">
+
+            {/* ── Parent back-navigation ── */}
+            {selectedParentFeature ? (
+              <button
+                type="button"
+                className="flex w-full items-center gap-1.5 rounded-md border border-foreground/10 bg-foreground/[0.02] px-2.5 py-1.5 text-left text-xs text-foreground/60 hover:bg-foreground/5 hover:text-foreground transition-colors"
+                onClick={() => selectFeatureById(selectedParentFeature.id)}
+              >
+                <span>←</span>
+                <span className="truncate">Tilbage til {selectedParentFeature.name}</span>
+              </button>
+            ) : null}
+
             <div>
               {/* Compact type chip — click to expand and change */}
               {selectedCategory === "element" ? (() => {
@@ -8719,11 +9063,10 @@ export function GardenMapClient({ userId }: { userId: string }) {
                     className="flex w-full items-center gap-2 px-2.5 py-1.5 text-left hover:bg-foreground/[0.03] transition-colors"
                     onClick={() => setContentTypeOpen(!contentTypeOpen)}
                   >
-                    <span className="text-[10px] font-semibold text-foreground/50 uppercase tracking-wide">{selectedKindDef?.label ?? "Type"}</span>
+                    <span className="text-[10px] font-semibold text-foreground/50 uppercase tracking-wide">{CATEGORY_LABELS[selectedCategory as GardenFeatureCategory] ?? "Type"}</span>
                     <span className="text-[9px] text-foreground/30">·</span>
-                    <span className="text-[10px] text-foreground/40">{CATEGORY_LABELS[selectedCategory as GardenFeatureCategory] ?? "—"}</span>
-                    <span className="flex-1" />
-                    <span className="text-[9px] text-foreground/30">{contentTypeOpen ? "▲" : "▼"}</span>
+                    <span className="text-[11px] text-foreground/70 truncate flex-1">{selectedKindDef?.label ?? "(vælg type)"}</span>
+                    <span className="text-[9px] text-foreground/30 shrink-0">{contentTypeOpen ? "▲" : "▼"}</span>
                   </button>
                   {contentTypeOpen ? (
                     <div className="px-2.5 pb-2 pt-1">
@@ -8756,7 +9099,7 @@ export function GardenMapClient({ userId }: { userId: string }) {
               >
                 <span className="text-[10px] font-semibold text-foreground/50 uppercase tracking-wide">✏️ Navn</span>
                 <span className="text-[9px] text-foreground/30">·</span>
-                <span className="text-[11px] text-foreground/70 truncate flex-1">{draftName || "(intet navn)"}</span>
+                <span className="text-[11px] text-foreground/70 truncate flex-1">{draftName || "(intet navn)"}{selectedContainerAreaText ? ` · ${selectedContainerAreaText}` : ""}</span>
                 {draftNameDirty ? <span className="text-[8px] text-amber-500 font-bold">●</span> : null}
                 <span className="text-[9px] text-foreground/30 shrink-0">{contentNameOpen ? "▲" : "▼"}</span>
               </button>
@@ -8786,68 +9129,694 @@ export function GardenMapClient({ userId }: { userId: string }) {
               ) : null}
             </div>
 
-            {selectedContainerAreaText ? (
-              <div>
-                <label className="block text-[11px] font-semibold text-foreground/60 uppercase tracking-wide">Areal</label>
-                <div className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm shadow-sm">
-                  {selectedContainerAreaText}
-                </div>
-              </div>
-            ) : null}
+            {/* ══════════════════════════════════════════════════════════ */}
+            {/* ── AFGRØDE ── specialised single-crop row section       ── */}
+            {/* ══════════════════════════════════════════════════════════ */}
+            {selectedCategory === "row" ? (() => {
+              const rowCrop = selectedFeatureInstances[0] ?? null;
+              const rowLengthCm = selectedRowLengthM * 100;
+              const spacing = rowCrop?.species?.spacingCm ?? 0;
+              const capacity = spacing > 0 ? Math.floor(rowLengthCm / spacing) : 0;
+              const parentSoilId = (() => {
+                if (!selectedParentFeature) return undefined;
+                const pf = features.find((f) => (f as GardenFeature).properties?.gardenosId === selectedParentFeature.id) as GardenFeature | undefined;
+                return pf?.properties?.soilProfileId;
+              })();
+              const parentSoil = parentSoilId ? getSoilProfileById(parentSoilId) : undefined;
+              return (
+              <div className="rounded-lg border border-foreground/10 bg-foreground/[0.02] overflow-hidden">
+                <button
+                  type="button"
+                  className="flex w-full items-center gap-2 px-2.5 py-1.5 text-left hover:bg-foreground/[0.03] transition-colors"
+                  onClick={() => setContentContainsOpen(!contentContainsOpen)}
+                >
+                  <span className="text-[10px] font-semibold text-foreground/50 uppercase tracking-wide">🌱 Afgrøde</span>
+                  <span className="text-[9px] text-foreground/30">·</span>
+                  <span className="text-[11px] text-foreground/70 truncate flex-1">
+                    {rowCrop ? `${rowCrop.species?.icon ?? "🌱"} ${rowCrop.species?.name ?? rowCrop.speciesId}` : "(ingen afgrøde)"}
+                  </span>
+                  <span className="text-[9px] text-foreground/30 shrink-0">{contentContainsOpen ? "▲" : "▼"}</span>
+                </button>
 
-            {selectedIsPolygon && (selectedCategory === "container" || selectedCategory === "area" || selectedCategory === "seedbed") ? (
-              <div>
-                <label className="block text-[11px] font-semibold text-foreground/60 uppercase tracking-wide">Indeholder</label>
-                <div className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm shadow-sm">
-                  {selectedContainment && selectedContainment.total > 0
-                    ? [selectedContainment.seedbeds ? `${selectedContainment.seedbeds} såbed` : "", selectedContainment.containers ? `${selectedContainment.containers} cont.` : "", selectedContainment.rows ? `${selectedContainment.rows} række` : "", selectedContainment.elements ? `${selectedContainment.elements} elem.` : "", selectedContainment.infra ? `${selectedContainment.infra} infra` : ""].filter(Boolean).join(", ") || "Ingen (endnu)"
-                    : "Ingen (endnu)"}
-                </div>
+                {contentContainsOpen ? (
+                  <div className="px-2.5 pb-2.5 pt-1 space-y-2">
 
-                {selectedContainment && selectedContainment.total > 0 ? (
-                  <div className="mt-2 space-y-1">
-                    {selectedContainedItemsPreview.slice(0, 12).map((item) => (
-                      <div key={item.id} className="flex items-center gap-1">
-                        <button
-                          type="button"
-                          className="flex-1 cursor-pointer text-left text-xs text-foreground/70 hover:text-foreground hover:underline"
-                          onClick={() => selectFeatureById(item.id)}
-                          title="Gå til element i Indholdsfanen"
-                        >
-                          • {item.text}
-                        </button>
-                        <button
-                          type="button"
-                          className="shrink-0 rounded px-1 text-xs text-foreground/40 hover:bg-red-50 hover:text-red-500"
-                          onClick={() => deleteFeatureById(item.id)}
-                          title="Slet element"
-                        >
-                          ✕
-                        </button>
-                      </div>
-                    ))}
-                    {selectedContainedItemsPreview.length > 12 ? (
-                      <div className="text-xs text-foreground/60">
-                        … +{selectedContainedItemsPreview.length - 12} flere
+                    {/* ── Row info block ── */}
+                    <div className="rounded border border-foreground/10 bg-foreground/[0.02] px-2 py-1.5 space-y-1">
+                      <p className="text-[10px] text-foreground/50">
+                        📏 Længde: <span className="font-medium text-foreground/70">{selectedRowLengthM >= 1 ? `${selectedRowLengthM.toFixed(1)} m` : `${Math.round(rowLengthCm)} cm`}</span>
+                        {rowCrop && spacing > 0 ? (
+                          <span> · 📐 Afstand: <span className="font-medium text-foreground/70">{spacing} cm</span> · Kapacitet: <span className="font-medium text-foreground/70">{capacity} stk</span></span>
+                        ) : null}
+                      </p>
+                      {selectedParentFeature ? (
+                        <p className="text-[10px] text-foreground/50">
+                          📍 I: <button type="button" className="text-accent hover:underline" onClick={() => selectFeatureById(selectedParentFeature.id)}>{selectedParentFeature.name}</button>
+                          {parentSoil ? <span> · 🪴 Jord: {parentSoil.soilType ?? "ukendt"}</span> : null}
+                        </p>
+                      ) : null}
+                    </div>
+
+                    {/* ── Current crop display ── */}
+                    {rowCrop ? (
+                      <div className="rounded border border-foreground/10 bg-foreground/[0.02] px-2 py-1.5 space-y-1">
+                        <div className="flex items-center gap-1.5">
+                          <span className="text-sm leading-none">{rowCrop.species?.icon ?? "🌱"}</span>
+                          <div className="flex-1 min-w-0">
+                            <p className="text-xs font-medium truncate">
+                              {rowCrop.species?.name ?? rowCrop.speciesId}
+                              {rowCrop.varietyName ? <span className="text-foreground/50 font-normal"> ({rowCrop.varietyName})</span> : <span className="text-foreground/30 font-normal italic"> (uspecificeret)</span>}
+                            </p>
+                            <p className="text-[10px] text-foreground/50">
+                              {capacity > 0 ? `${capacity} stk på rækken` : ""}
+                              {rowCrop.plantedAt ? ` · plantet ${rowCrop.plantedAt}` : ""}
+                              {rowCrop.season ? ` · sæson ${rowCrop.season}` : ""}
+                            </p>
+                          </div>
+                          {(() => {
+                            const instVarieties = getVarietiesForSpecies(rowCrop.speciesId);
+                            return instVarieties.length > 0 ? (
+                              <button
+                                type="button"
+                                className="shrink-0 rounded px-1 py-0.5 text-[10px] text-accent hover:bg-accent/10"
+                                onClick={() => setEditingInstanceId(editingInstanceId === rowCrop.id ? null : rowCrop.id)}
+                                title="Vælg/skift sort"
+                              >
+                                🏷️
+                              </button>
+                            ) : null;
+                          })()}
+                          <button
+                            type="button"
+                            className="shrink-0 rounded px-1 text-xs text-foreground/40 hover:bg-red-50 hover:text-red-500"
+                            onClick={() => {
+                              removePlantInstance(rowCrop.id);
+                              setPlantInstancesVersion((v) => v + 1);
+                              setEditingInstanceId(null);
+                            }}
+                            title="Fjern afgrøde"
+                          >
+                            ✕
+                          </button>
+                        </div>
+                        {/* Inline variety selector */}
+                        {editingInstanceId === rowCrop.id ? (() => {
+                          const instVarieties = getVarietiesForSpecies(rowCrop.speciesId);
+                          return (
+                            <div className="ml-5 space-y-0.5 border-l-2 border-accent/30 pl-2">
+                              <p className="text-[10px] font-medium text-foreground/50 uppercase tracking-wide">Vælg sort:</p>
+                              <button
+                                type="button"
+                                className={`flex w-full items-center gap-1.5 rounded px-1.5 py-1 text-left text-[11px] hover:bg-foreground/5 ${
+                                  !rowCrop.varietyId ? "bg-accent/10 font-medium text-accent" : "text-foreground/70"
+                                }`}
+                                onClick={() => {
+                                  updatePlantInstance(rowCrop.id, { varietyId: undefined, varietyName: undefined });
+                                  setPlantInstancesVersion((v) => v + 1);
+                                  setEditingInstanceId(null);
+                                }}
+                              >
+                                <span className="text-sm leading-none">🌱</span>
+                                <span className="truncate">Uspecificeret sort</span>
+                                {!rowCrop.varietyId ? <span className="ml-auto text-[9px]">✓</span> : null}
+                              </button>
+                              {instVarieties.map((v) => (
+                                <button
+                                  key={v.id}
+                                  type="button"
+                                  className={`flex w-full items-center gap-1.5 rounded px-1.5 py-1 text-left text-[11px] hover:bg-foreground/5 ${
+                                    rowCrop.varietyId === v.id ? "bg-accent/10 font-medium text-accent" : "text-foreground/70"
+                                  }`}
+                                  onClick={() => {
+                                    updatePlantInstance(rowCrop.id, { varietyId: v.id, varietyName: v.name });
+                                    setPlantInstancesVersion((v2) => v2 + 1);
+                                    setEditingInstanceId(null);
+                                  }}
+                                >
+                                  <span className="text-sm leading-none">🏷️</span>
+                                  <span className="truncate">{v.name}</span>
+                                  {v.taste ? <span className="text-[9px] text-foreground/40">{v.taste}</span> : null}
+                                  {rowCrop.varietyId === v.id ? <span className="ml-auto text-[9px]">✓</span> : null}
+                                </button>
+                              ))}
+                            </div>
+                          );
+                        })() : null}
                       </div>
                     ) : null}
+
+                    {/* Companion planting checks */}
+                    {selectedCompanionChecks.length > 0 ? (
+                      <div className="space-y-0.5">
+                        <p className="text-[10px] font-medium uppercase tracking-wide text-foreground/50">Samdyrkning</p>
+                        {selectedCompanionChecks.map((c, idx) => (
+                          <p
+                            key={idx}
+                            className={`text-xs ${
+                              c.type === "good"
+                                ? "text-green-700 dark:text-green-400"
+                                : "text-red-600 dark:text-red-400"
+                            }`}
+                          >
+                            {c.type === "good" ? "✓" : "⚠"} {c.plantA.name} + {c.plantB.name}
+                            {c.type === "good" ? " — gode naboer" : " — dårlig kombination"}
+                          </p>
+                        ))}
+                      </div>
+                    ) : null}
+
+                    {/* Rotation warnings */}
+                    {selectedRotationWarnings.length > 0 ? (
+                      <div className="space-y-0.5">
+                        <p className="text-[10px] font-medium uppercase tracking-wide text-foreground/50">Sædskifte</p>
+                        {selectedRotationWarnings.map((w, idx) => (
+                          <p key={idx} className="text-xs text-amber-600 dark:text-amber-400">
+                            🔄 {w.plant.name} — samme familie dyrket i {w.lastSeason} (vent {w.minYears} år)
+                          </p>
+                        ))}
+                      </div>
+                    ) : null}
+
+                    {/* ── Pick / change crop ── */}
+                    {!showBedPlantPicker ? (
+                      <button
+                        type="button"
+                        className="w-full rounded-md border border-dashed border-foreground/20 px-2 py-1.5 text-xs text-foreground/60 hover:border-foreground/30 hover:bg-foreground/5"
+                        onClick={() => { setShowBedPlantPicker(true); setBedPlantSearch(""); setBedPickerSpeciesId(null); }}
+                      >
+                        {rowCrop ? "↻ Skift afgrøde" : "+ Vælg afgrøde"}
+                      </button>
+                    ) : bedPickerSpeciesId ? (() => {
+                      const pickedSpecies = getPlantById(bedPickerSpeciesId);
+                      const varieties = getVarietiesForSpecies(bedPickerSpeciesId);
+                      const pickedSpacing = pickedSpecies?.spacingCm ?? 0;
+                      const pickedCap = pickedSpacing > 0 ? Math.floor(rowLengthCm / pickedSpacing) : 0;
+                      return (
+                        <div className="space-y-1.5">
+                          <div className="flex items-center gap-1">
+                            <button type="button" className="rounded px-1.5 py-1 text-xs text-foreground/50 hover:bg-foreground/5" onClick={() => setBedPickerSpeciesId(null)}>← Tilbage</button>
+                            <span className="text-xs font-medium truncate flex-1">
+                              {pickedSpecies?.icon ?? "🌱"} {pickedSpecies?.name} — vælg sort
+                              {pickedCap > 0 ? <span className="text-foreground/40 font-normal"> · {pickedCap} stk</span> : null}
+                            </span>
+                            <button type="button" className="rounded px-1.5 py-1 text-xs text-foreground/50 hover:bg-foreground/5" onClick={() => { setShowBedPlantPicker(false); setBedPickerSpeciesId(null); }}>✕</button>
+                          </div>
+                          <div className="max-h-48 space-y-0.5 overflow-y-auto">
+                            <button
+                              type="button"
+                              className="flex w-full items-center gap-1.5 rounded border border-transparent px-2 py-1 text-left text-xs hover:border-foreground/15 hover:bg-foreground/5"
+                              onClick={() => {
+                                const featureId = selected?.feature.properties?.gardenosId;
+                                if (!featureId) return;
+                                // Remove existing crop first
+                                for (const inst of selectedFeatureInstances) removePlantInstance(inst.id);
+                                addPlantInstance({
+                                  id: crypto.randomUUID(),
+                                  speciesId: bedPickerSpeciesId,
+                                  featureId,
+                                  count: pickedCap || 1,
+                                  plantedAt: new Date().toISOString().slice(0, 10),
+                                  season: new Date().getFullYear(),
+                                });
+                                setPlantInstancesVersion((v) => v + 1);
+                                setShowBedPlantPicker(false);
+                                setBedPickerSpeciesId(null);
+                              }}
+                            >
+                              <span className="text-sm leading-none">🌱</span>
+                              <span className="truncate">{pickedSpecies?.name} (uspecificeret sort)</span>
+                            </button>
+                            {varieties.map((v) => {
+                              const vSpacing = v.spacingCm ?? pickedSpacing;
+                              const vCap = vSpacing > 0 ? Math.floor(rowLengthCm / vSpacing) : 0;
+                              return (
+                              <button
+                                key={v.id}
+                                type="button"
+                                className="flex w-full items-center gap-1.5 rounded border border-transparent px-2 py-1 text-left text-xs hover:border-foreground/15 hover:bg-foreground/5"
+                                onClick={() => {
+                                  const featureId = selected?.feature.properties?.gardenosId;
+                                  if (!featureId) return;
+                                  for (const inst of selectedFeatureInstances) removePlantInstance(inst.id);
+                                  addPlantInstance({
+                                    id: crypto.randomUUID(),
+                                    speciesId: bedPickerSpeciesId,
+                                    varietyId: v.id,
+                                    varietyName: v.name,
+                                    featureId,
+                                    count: vCap || 1,
+                                    plantedAt: new Date().toISOString().slice(0, 10),
+                                    season: new Date().getFullYear(),
+                                  });
+                                  setPlantInstancesVersion((vv) => vv + 1);
+                                  setShowBedPlantPicker(false);
+                                  setBedPickerSpeciesId(null);
+                                }}
+                              >
+                                <span className="text-sm leading-none">🏷️</span>
+                                <span className="truncate">{v.name}</span>
+                                {vCap > 0 ? <span className="ml-auto text-[10px] text-foreground/40">{vCap} stk</span> : null}
+                              </button>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      );
+                    })() : (
+                      <div className="space-y-1.5">
+                        <div className="flex items-center gap-1">
+                          <input
+                            className="flex-1 rounded-md border border-foreground/20 bg-background px-2 py-1.5 text-xs"
+                            placeholder="Søg afgrøde…"
+                            value={bedPlantSearch}
+                            onChange={(e) => setBedPlantSearch(e.target.value)}
+                            autoFocus
+                          />
+                          <button type="button" className="rounded px-1.5 py-1.5 text-xs text-foreground/50 hover:bg-foreground/5" onClick={() => setShowBedPlantPicker(false)}>✕</button>
+                        </div>
+                        <div className="max-h-40 space-y-0.5 overflow-y-auto">
+                          {bedPlantResults.map((plant) => {
+                            const pSpacing = plant.spacingCm ?? 0;
+                            const pCap = pSpacing > 0 ? Math.floor(rowLengthCm / pSpacing) : 0;
+                            return (
+                            <button
+                              key={plant.id}
+                              type="button"
+                              className="flex w-full items-center gap-1.5 rounded border border-transparent px-2 py-1 text-left text-xs hover:border-foreground/15 hover:bg-foreground/5"
+                              onClick={() => {
+                                const varieties = getVarietiesForSpecies(plant.id);
+                                if (varieties.length > 0) {
+                                  setBedPickerSpeciesId(plant.id);
+                                } else {
+                                  const featureId = selected?.feature.properties?.gardenosId;
+                                  if (!featureId) return;
+                                  for (const inst of selectedFeatureInstances) removePlantInstance(inst.id);
+                                  addPlantInstance({
+                                    id: crypto.randomUUID(),
+                                    speciesId: plant.id,
+                                    featureId,
+                                    count: pCap || 1,
+                                    plantedAt: new Date().toISOString().slice(0, 10),
+                                    season: new Date().getFullYear(),
+                                  });
+                                  setPlantInstancesVersion((v) => v + 1);
+                                  setShowBedPlantPicker(false);
+                                  setBedPlantSearch("");
+                                }
+                              }}
+                            >
+                              <span className="text-sm leading-none">{plant.icon ?? "🌱"}</span>
+                              <span className="truncate">{plant.name}</span>
+                              <span className="ml-auto text-[10px] text-foreground/40">
+                                {pCap > 0 ? `${pCap} stk` : ""}
+                                {plant.spacingCm ? ` · ${plant.spacingCm} cm` : ""}
+                              </span>
+                            </button>
+                            );
+                          })}
+                          {bedPlantResults.length === 0 ? (
+                            <p className="px-2 py-1 text-xs text-foreground/50 italic">Ingen planter fundet.</p>
+                          ) : null}
+                        </div>
+                      </div>
+                    )}
                   </div>
                 ) : null}
               </div>
-            ) : null}
+              );
+            })() : null}
+
+            {/* ══════════════════════════════════════════════════════════ */}
+            {/* ── INDEHOLDER ── unified containment + plant instances  ── */}
+            {/* ══════════════════════════════════════════════════════════ */}
+            {(selectedCategory === "seedbed" || selectedCategory === "container" || selectedCategory === "area") ? (() => {
+              const childCount = (selectedContainment?.total ?? 0);
+              const plantCount = (selectedCategory !== "area" ? selectedFeatureInstances.length : 0);
+              const totalItems = childCount + plantCount;
+              return (
+              <div className="rounded-lg border border-foreground/10 bg-foreground/[0.02] overflow-hidden">
+                <button
+                  type="button"
+                  className="flex w-full items-center gap-2 px-2.5 py-1.5 text-left hover:bg-foreground/[0.03] transition-colors"
+                  onClick={() => setContentContainsOpen(!contentContainsOpen)}
+                >
+                  <span className="text-[10px] font-semibold text-foreground/50 uppercase tracking-wide">🌱 Indeholder</span>
+                  <span className="text-[9px] text-foreground/30">·</span>
+                  <span className="text-[11px] text-foreground/70 truncate flex-1">
+                    {totalItems > 0 ? `${totalItems} element${totalItems !== 1 ? "er" : ""}` : "(tomt)"}
+                  </span>
+                  <span className="text-[9px] text-foreground/30 shrink-0">{contentContainsOpen ? "▲" : "▼"}</span>
+                </button>
+
+                {contentContainsOpen ? (
+                  <div className="px-2.5 pb-2.5 pt-1 space-y-2">
+
+                {/* ── Child features (polygon containment) ── */}
+                {selectedIsPolygon && selectedContainment && selectedContainment.total > 0 ? (
+                  <div className="space-y-1">
+                    <p className="text-[9px] text-foreground/40 leading-snug">
+                      {[selectedContainment.seedbeds ? `${selectedContainment.seedbeds} såbed` : "", selectedContainment.containers ? `${selectedContainment.containers} cont.` : "", selectedContainment.rows ? `${selectedContainment.rows} række` : "", selectedContainment.elements ? `${selectedContainment.elements} elem.` : "", selectedContainment.infra ? `${selectedContainment.infra} infra` : ""].filter(Boolean).join(", ")}
+                    </p>
+                    {selectedContainedItemsPreview.slice(0, 12).map((item) => (
+                      <div key={item.id} className="rounded border border-foreground/10 bg-foreground/[0.02] px-2 py-1">
+                        <div className="flex items-center gap-1.5">
+                          <button
+                            type="button"
+                            className="flex-1 cursor-pointer text-left text-xs text-foreground/70 hover:text-foreground truncate"
+                            onClick={() => selectFeatureById(item.id)}
+                            title="Gå til element"
+                          >
+                            {item.text}
+                          </button>
+                          <button
+                            type="button"
+                            className="shrink-0 rounded px-1 text-xs text-foreground/40 hover:bg-red-50 hover:text-red-500"
+                            onClick={() => deleteFeatureById(item.id)}
+                            title="Slet element"
+                          >
+                            ✕
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                    {selectedContainedItemsPreview.length > 12 ? (
+                      <p className="text-[10px] text-foreground/40 italic">… +{selectedContainedItemsPreview.length - 12} flere</p>
+                    ) : null}
+                  </div>
+                ) : null}
+
+                {/* ── Plant instances (seedbed, container, row — NOT area) ── */}
+                {(selectedCategory === "seedbed" || selectedCategory === "container") ? (
+                  <>
+                    {selectedFeatureInstances.length > 0 ? (
+                      <div className="space-y-1">
+                        {selectedFeatureInstances.map((inst) => {
+                          const instVarieties = getVarietiesForSpecies(inst.speciesId);
+                          const isEditing = editingInstanceId === inst.id;
+                          return (
+                            <div
+                              key={inst.id}
+                              className="rounded border border-foreground/10 bg-foreground/[0.02] px-2 py-1 space-y-1"
+                            >
+                              <div className="flex items-center gap-1.5">
+                                <span className="text-sm leading-none">{inst.species?.icon ?? "🌱"}</span>
+                                <div className="flex-1 min-w-0">
+                                  <p className="text-xs font-medium truncate">
+                                    {inst.species?.name ?? inst.speciesId}
+                                    {inst.varietyName ? <span className="text-foreground/50 font-normal"> ({inst.varietyName})</span> : <span className="text-foreground/30 font-normal italic"> (uspecificeret)</span>}
+                                  </p>
+                                  <p className="text-[10px] text-foreground/50">
+                                    {inst.count ? `${inst.count} stk` : ""}
+                                    {inst.plantedAt ? ` · plantet ${inst.plantedAt}` : ""}
+                                    {inst.season ? ` · sæson ${inst.season}` : ""}
+                                  </p>
+                                </div>
+                                {instVarieties.length > 0 ? (
+                                  <button
+                                    type="button"
+                                    className="shrink-0 rounded px-1 py-0.5 text-[10px] text-accent hover:bg-accent/10"
+                                    onClick={() => setEditingInstanceId(isEditing ? null : inst.id)}
+                                    title="Vælg/skift sort"
+                                  >
+                                    🏷️
+                                  </button>
+                                ) : null}
+                                <button
+                                  type="button"
+                                  className="shrink-0 rounded px-1 text-xs text-foreground/40 hover:bg-red-50 hover:text-red-500"
+                                  onClick={() => {
+                                    removePlantInstance(inst.id);
+                                    setPlantInstancesVersion((v) => v + 1);
+                                    if (isEditing) setEditingInstanceId(null);
+                                  }}
+                                  title="Fjern plantning"
+                                >
+                                  ✕
+                                </button>
+                              </div>
+                              {/* Inline variety selector */}
+                              {isEditing ? (
+                                <div className="ml-5 space-y-0.5 border-l-2 border-accent/30 pl-2">
+                                  <p className="text-[10px] font-medium text-foreground/50 uppercase tracking-wide">Vælg sort:</p>
+                                  <button
+                                    type="button"
+                                    className={`flex w-full items-center gap-1.5 rounded px-1.5 py-1 text-left text-[11px] hover:bg-foreground/5 ${
+                                      !inst.varietyId ? "bg-accent/10 font-medium text-accent" : "text-foreground/70"
+                                    }`}
+                                    onClick={() => {
+                                      updatePlantInstance(inst.id, { varietyId: undefined, varietyName: undefined });
+                                      setPlantInstancesVersion((v) => v + 1);
+                                      setEditingInstanceId(null);
+                                    }}
+                                  >
+                                    <span className="text-sm leading-none">🌱</span>
+                                    <span className="truncate">Uspecificeret sort</span>
+                                    {!inst.varietyId ? <span className="ml-auto text-[9px]">✓</span> : null}
+                                  </button>
+                                  {instVarieties.map((v) => (
+                                    <button
+                                      key={v.id}
+                                      type="button"
+                                      className={`flex w-full items-center gap-1.5 rounded px-1.5 py-1 text-left text-[11px] hover:bg-foreground/5 ${
+                                        inst.varietyId === v.id ? "bg-accent/10 font-medium text-accent" : "text-foreground/70"
+                                      }`}
+                                      onClick={() => {
+                                        updatePlantInstance(inst.id, { varietyId: v.id, varietyName: v.name });
+                                        setPlantInstancesVersion((v2) => v2 + 1);
+                                        setEditingInstanceId(null);
+                                      }}
+                                    >
+                                      <span className="text-sm leading-none">🏷️</span>
+                                      <span className="truncate">{v.name}</span>
+                                      {v.taste ? <span className="text-[9px] text-foreground/40">{v.taste}</span> : null}
+                                      {inst.varietyId === v.id ? <span className="ml-auto text-[9px]">✓</span> : null}
+                                    </button>
+                                  ))}
+                                </div>
+                              ) : null}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    ) : null}
+
+                    {/* Companion planting checks */}
+                    {selectedCompanionChecks.length > 0 ? (
+                      <div className="space-y-0.5">
+                        <p className="text-[10px] font-medium uppercase tracking-wide text-foreground/50">Samdyrkning</p>
+                        {selectedCompanionChecks.map((c, idx) => (
+                          <p
+                            key={idx}
+                            className={`text-xs ${
+                              c.type === "good"
+                                ? "text-green-700 dark:text-green-400"
+                                : "text-red-600 dark:text-red-400"
+                            }`}
+                          >
+                            {c.type === "good" ? "✓" : "⚠"} {c.plantA.name} + {c.plantB.name}
+                            {c.type === "good" ? " — gode naboer" : " — dårlig kombination"}
+                          </p>
+                        ))}
+                      </div>
+                    ) : null}
+
+                    {/* Rotation warnings */}
+                    {selectedRotationWarnings.length > 0 ? (
+                      <div className="space-y-0.5">
+                        <p className="text-[10px] font-medium uppercase tracking-wide text-foreground/50">Sædskifte</p>
+                        {selectedRotationWarnings.map((w, idx) => (
+                          <p key={idx} className="text-xs text-amber-600 dark:text-amber-400">
+                            🔄 {w.plant.name} — samme familie dyrket i {w.lastSeason} (vent {w.minYears} år)
+                          </p>
+                        ))}
+                      </div>
+                    ) : null}
+
+                    {/* Add plant picker */}
+                    {!showBedPlantPicker ? (
+                      <button
+                        type="button"
+                        className="w-full rounded-md border border-dashed border-foreground/20 px-2 py-1.5 text-xs text-foreground/60 hover:border-foreground/30 hover:bg-foreground/5"
+                        onClick={() => { setShowBedPlantPicker(true); setBedPlantSearch(""); setBedPickerSpeciesId(null); }}
+                      >
+                        + Tilføj plante
+                      </button>
+                    ) : bedPickerSpeciesId ? (() => {
+                      const pickedSpecies = getPlantById(bedPickerSpeciesId);
+                      const varieties = getVarietiesForSpecies(bedPickerSpeciesId);
+                      return (
+                        <div className="space-y-1.5">
+                          <div className="flex items-center gap-1">
+                            <button
+                              type="button"
+                              className="rounded px-1.5 py-1 text-xs text-foreground/50 hover:bg-foreground/5"
+                              onClick={() => setBedPickerSpeciesId(null)}
+                            >
+                              ← Tilbage
+                            </button>
+                            <span className="text-xs font-medium truncate flex-1">
+                              {pickedSpecies?.icon ?? "🌱"} {pickedSpecies?.name} — vælg sort
+                            </span>
+                            <button
+                              type="button"
+                              className="rounded px-1.5 py-1 text-xs text-foreground/50 hover:bg-foreground/5"
+                              onClick={() => { setShowBedPlantPicker(false); setBedPickerSpeciesId(null); }}
+                            >
+                              ✕
+                            </button>
+                          </div>
+                          <div className="max-h-48 space-y-0.5 overflow-y-auto">
+                            {/* Add without specific variety */}
+                            <button
+                              type="button"
+                              className="flex w-full items-center gap-1.5 rounded border border-transparent px-2 py-1 text-left text-xs hover:border-foreground/15 hover:bg-foreground/5"
+                              onClick={() => {
+                                const featureId = selected?.feature.properties?.gardenosId;
+                                if (!featureId) return;
+                                addPlantInstance({
+                                  id: crypto.randomUUID(),
+                                  speciesId: bedPickerSpeciesId,
+                                  featureId,
+                                  count: 1,
+                                  plantedAt: new Date().toISOString().slice(0, 10),
+                                  season: new Date().getFullYear(),
+                                });
+                                setPlantInstancesVersion((v) => v + 1);
+                                setShowBedPlantPicker(false);
+                                setBedPickerSpeciesId(null);
+                              }}
+                            >
+                              <span className="text-sm leading-none">🌱</span>
+                              <span className="truncate">{pickedSpecies?.name} (uspecificeret sort)</span>
+                            </button>
+                            {/* Variety options */}
+                            {varieties.map((v) => (
+                              <button
+                                key={v.id}
+                                type="button"
+                                className="flex w-full items-center gap-1.5 rounded border border-transparent px-2 py-1 text-left text-xs hover:border-foreground/15 hover:bg-foreground/5"
+                                onClick={() => {
+                                  const featureId = selected?.feature.properties?.gardenosId;
+                                  if (!featureId) return;
+                                  addPlantInstance({
+                                    id: crypto.randomUUID(),
+                                    speciesId: bedPickerSpeciesId,
+                                    varietyId: v.id,
+                                    varietyName: v.name,
+                                    featureId,
+                                    count: 1,
+                                    plantedAt: new Date().toISOString().slice(0, 10),
+                                    season: new Date().getFullYear(),
+                                  });
+                                  setPlantInstancesVersion((vv) => vv + 1);
+                                  setShowBedPlantPicker(false);
+                                  setBedPickerSpeciesId(null);
+                                }}
+                              >
+                                <span className="text-sm leading-none">🏷️</span>
+                                <span className="truncate">{v.name}</span>
+                                {v.taste ? <span className="ml-auto text-[10px] text-foreground/40">{v.taste}</span> : null}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      );
+                    })() : (
+                      <div className="space-y-1.5">
+                        <div className="flex items-center gap-1">
+                          <input
+                            className="flex-1 rounded-md border border-foreground/20 bg-background px-2 py-1.5 text-xs"
+                            placeholder="Søg plante…"
+                            value={bedPlantSearch}
+                            onChange={(e) => setBedPlantSearch(e.target.value)}
+                            autoFocus
+                          />
+                          <button
+                            type="button"
+                            className="rounded px-1.5 py-1.5 text-xs text-foreground/50 hover:bg-foreground/5"
+                            onClick={() => setShowBedPlantPicker(false)}
+                          >
+                            ✕
+                          </button>
+                        </div>
+                        <div className="max-h-40 space-y-0.5 overflow-y-auto">
+                          {bedPlantResults.map((plant) => (
+                            <button
+                              key={plant.id}
+                              type="button"
+                              className="flex w-full items-center gap-1.5 rounded border border-transparent px-2 py-1 text-left text-xs hover:border-foreground/15 hover:bg-foreground/5"
+                              onClick={() => {
+                                const varieties = getVarietiesForSpecies(plant.id);
+                                if (varieties.length > 0) {
+                                  setBedPickerSpeciesId(plant.id);
+                                } else {
+                                  const featureId = selected?.feature.properties?.gardenosId;
+                                  if (!featureId) return;
+                                  addPlantInstance({
+                                    id: crypto.randomUUID(),
+                                    speciesId: plant.id,
+                                    featureId,
+                                    count: 1,
+                                    plantedAt: new Date().toISOString().slice(0, 10),
+                                    season: new Date().getFullYear(),
+                                  });
+                                  setPlantInstancesVersion((v) => v + 1);
+                                  setShowBedPlantPicker(false);
+                                  setBedPlantSearch("");
+                                }
+                              }}
+                            >
+                              <span className="text-sm leading-none">{plant.icon ?? "🌱"}</span>
+                              <span className="truncate">{plant.name}</span>
+                              <span className="ml-auto flex items-center gap-1 text-[10px] text-foreground/40">
+                                {plant.varieties?.length ? <span>{plant.varieties.length} sorter</span> : null}
+                                {(() => {
+                                  const placements = getDefaultPlacements(plant);
+                                  const featureCat = selected?.feature.properties?.category;
+                                  const primary = featureCat && placements.includes(featureCat as PlacementType)
+                                    ? featureCat as PlacementType
+                                    : placements[0];
+                                  return <span>{PLACEMENT_ICONS[primary]}</span>;
+                                })()}
+                              </span>
+                            </button>
+                          ))}
+                          {bedPlantResults.length === 0 ? (
+                            <p className="px-2 py-1 text-xs text-foreground/50 italic">Ingen planter fundet.</p>
+                          ) : null}
+                        </div>
+                      </div>
+                    )}
+                  </>
+                ) : null}
+
+                {/* ── Empty state ── */}
+                {totalItems === 0 ? (
+                  <p className="text-xs text-foreground/50 italic">
+                    {selectedCategory === "area" ? "Tegn såbede, rækker eller containere inden i dette område." : "Tilføj planter herunder."}
+                  </p>
+                ) : null}
+
+                  </div>
+                ) : null}
+              </div>
+              );
+            })() : null}
 
 
             {/* ── Auto-row + Auto-element panels ── */}
             {selectedIsPolygon && (selectedCategory === "seedbed" || selectedCategory === "area" || selectedCategory === "container") ? (
               <>
-              <div className="rounded-lg border border-accent/30 bg-accent-light/10 p-2.5 space-y-2">
+              <div className="rounded-lg border border-foreground/10 bg-foreground/[0.02] overflow-hidden">
                 <button
                   type="button"
-                  className="flex w-full items-center gap-1.5 text-left"
+                  className="flex w-full items-center gap-2 px-2.5 py-1.5 text-left hover:bg-foreground/[0.03] transition-colors"
                   onClick={() => { setAutoRowOpen(!autoRowOpen); setAutoRowSearch(""); setAutoRowOverflow(false); }}
                 >
-                  <span className="text-[10px] font-semibold text-foreground/50 uppercase tracking-wide">🌾 Auto-rækker</span>
-                  <span className="ml-auto text-[10px] text-foreground/30">{autoRowOpen ? "▲" : "▼"}</span>
+                  <span className="text-[10px] font-semibold text-foreground/50 uppercase tracking-wide">🌾 Tilføj rækker</span>
+                  <span className="text-[9px] text-foreground/30">·</span>
+                  <span className="text-[11px] text-foreground/40 italic truncate flex-1">Opret planterækker automatisk</span>
+                  <span className="text-[9px] text-foreground/30 shrink-0">{autoRowOpen ? "▲" : "▼"}</span>
                 </button>
 
                 {autoRowOpen ? (() => {
@@ -9004,7 +9973,7 @@ export function GardenMapClient({ userId }: { userId: string }) {
                     : null;
 
                   return (
-                    <div className="space-y-2">
+                    <div className="px-2.5 pb-2.5 pt-1 space-y-2">
                       <p className="text-[9px] text-foreground/40 leading-snug">
                         Vælg en plante og opret automatisk rækker i dette {selectedCategory === "seedbed" ? "såbed" : selectedCategory === "area" ? "område" : "bed"}.
                         Rækker placeres parallelt med bedets {effectiveDirection === "width" ? "korteste" : "længste"} side.{existingRowCount > 0 ? ` Eksisterende rækker (${existingRowCount} stk) respekteres — nye rækker placeres i ledige pladser.` : ""}
@@ -9426,14 +10395,16 @@ export function GardenMapClient({ userId }: { userId: string }) {
               </div>
 
               {/* ── Auto-element placement panel ── */}
-              <div className="rounded-lg border border-green-600/30 bg-green-50/20 p-2.5 space-y-2">
+              <div className="rounded-lg border border-foreground/10 bg-foreground/[0.02] overflow-hidden">
                 <button
                   type="button"
-                  className="flex w-full items-center gap-1.5 text-left"
+                  className="flex w-full items-center gap-2 px-2.5 py-1.5 text-left hover:bg-foreground/[0.03] transition-colors"
                   onClick={() => { setAutoElementOpen(!autoElementOpen); setAutoElementSearch(""); }}
                 >
-                  <span className="text-[10px] font-semibold text-green-800 uppercase tracking-wide">🌿 Auto-elementer</span>
-                  <span className="ml-auto text-[10px] text-foreground/30">{autoElementOpen ? "▲" : "▼"}</span>
+                  <span className="text-[10px] font-semibold text-foreground/50 uppercase tracking-wide">🌳 Tilføj elementer</span>
+                  <span className="text-[9px] text-foreground/30">·</span>
+                  <span className="text-[11px] text-foreground/40 italic truncate flex-1">Placér buske, træer og stauder</span>
+                  <span className="text-[9px] text-foreground/30 shrink-0">{autoElementOpen ? "▲" : "▼"}</span>
                 </button>
 
                 {autoElementOpen ? (() => {
@@ -9509,7 +10480,7 @@ export function GardenMapClient({ userId }: { userId: string }) {
                     : 30;
 
                   return (
-                    <div className="space-y-2">
+                    <div className="px-2.5 pb-2.5 pt-1 space-y-2">
                       <p className="text-[9px] text-foreground/40 leading-snug">
                         Vælg en plante og placér automatisk i bedet. Planter holdes mindst {interElementSpacingCm} cm fra hinanden
                         {bedRowFeatures.length > 0 ? ` og respekterer ${bedRowFeatures.length} eksisterende rækker` : ""}.
@@ -10503,551 +11474,555 @@ export function GardenMapClient({ userId }: { userId: string }) {
               </>
             ) : null}
 
-            {/* ── Seedbed-specific fields ── */}
-            {selectedCategory === "seedbed" ? (
-              <>
-                <div>
-                  <label className="block text-[11px] font-semibold text-foreground/60 uppercase tracking-wide">Såmetode</label>
-                  <select
-                    className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm shadow-sm"
-                    value={selected.feature.properties?.sowingMethod ?? ""}
-                    onChange={(e) => updateSelectedProperty({ sowingMethod: e.target.value })}
-                  >
-                    <option value="">Ikke angivet</option>
-                    <option value="bredsåning">Bredsåning</option>
-                    <option value="rækkesåning">Rækkesåning</option>
-                    <option value="priklet">Priklet / udplantet</option>
-                    <option value="direkte">Direkte såning</option>
-                  </select>
-                </div>
-                <div>
-                  <label className="block text-[11px] font-semibold text-foreground/60 uppercase tracking-wide">Sæson / år</label>
-                  <input
-                    className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm shadow-sm"
-                    value={selected.feature.properties?.bedSeason ?? ""}
-                    onChange={(e) => updateSelectedProperty({ bedSeason: e.target.value })}
-                    placeholder="Fx 2026, Forår 2026"
-                  />
-                </div>
-                <div>
-                  <label className="block text-[11px] font-semibold text-foreground/60 uppercase tracking-wide">Jordtype</label>
-                  <input
-                    className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm shadow-sm"
-                    value={selected.feature.properties?.soilType ?? ""}
-                    onChange={(e) => updateSelectedProperty({ soilType: e.target.value })}
-                    placeholder="Fx muld, sandjord, lerjord"
-                  />
-                </div>
-                <div>
-                  <label className="block text-[11px] font-semibold text-foreground/60 uppercase tracking-wide">Gødning</label>
-                  <input
-                    className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm shadow-sm"
-                    value={selected.feature.properties?.fertilizer ?? ""}
-                    onChange={(e) => updateSelectedProperty({ fertilizer: e.target.value })}
-                    placeholder="Fx kompost april, NPK maj"
-                  />
-                </div>
-              </>
-            ) : null}
-
-            {/* ── Container-specific fields ── */}
-            {selectedCategory === "container" ? (
-              <>
-                <div className="grid grid-cols-2 gap-2">
-                  <div>
-                    <label className="block text-[11px] font-semibold text-foreground/60 uppercase tracking-wide">Jordtype</label>
-                    <select
-                      className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm shadow-sm"
-                      value={selected.feature.properties?.soilType ?? ""}
-                      onChange={(e) => updateSelectedProperty({ soilType: e.target.value })}
-                    >
-                      <option value="">Vælg jordtype…</option>
-                      <option value="muld">Muld/kompost</option>
-                      <option value="pottejord">Pottejord</option>
-                      <option value="kokosfiber">Kokosfiber</option>
-                      <option value="perlit-blanding">Perlit-blanding</option>
-                      <option value="ler">Lerjord</option>
-                      <option value="sand">Sandjord</option>
-                      <option value="sphagnum">Sphagnum</option>
-                      <option value="hydrokultur">Hydrokultur/lecakugler</option>
-                      <option value="blandet">Blandet</option>
-                      <option value="anden">Anden</option>
-                    </select>
-                  </div>
-                  <div>
-                    <label className="block text-[11px] font-semibold text-foreground/60 uppercase tracking-wide">Vandingsbehov</label>
-                    <select
-                      className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm shadow-sm"
-                      value={selected.feature.properties?.wateringNeed ?? ""}
-                      onChange={(e) => updateSelectedProperty({ wateringNeed: e.target.value })}
-                    >
-                      <option value="">Vælg…</option>
-                      <option value="lav">Lav (1–2x/uge)</option>
-                      <option value="middel">Middel (3–4x/uge)</option>
-                      <option value="høj">Høj (dagligt)</option>
-                      <option value="selvvandende">Selvvandende</option>
-                      <option value="dryp">Drypvanding</option>
-                    </select>
-                  </div>
-                </div>
-                <div className="grid grid-cols-2 gap-2">
-                  <div>
-                    <label className="block text-[11px] font-semibold text-foreground/60 uppercase tracking-wide">Dræn</label>
-                    <select
-                      className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm shadow-sm"
-                      value={selected.feature.properties?.drainage ?? ""}
-                      onChange={(e) => updateSelectedProperty({ drainage: e.target.value })}
-                    >
-                      <option value="">Vælg…</option>
-                      <option value="huller">Drænhuller i bund</option>
-                      <option value="drænlag">Drænlag (ler/sten)</option>
-                      <option value="ingen">Ingen dræn</option>
-                      <option value="selvdrænende">Selvdrænende</option>
-                    </select>
-                  </div>
-                  <div>
-                    <label className="block text-[11px] font-semibold text-foreground/60 uppercase tracking-wide">Materiale</label>
-                    <select
-                      className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm shadow-sm"
-                      value={selected.feature.properties?.material ?? ""}
-                      onChange={(e) => updateSelectedProperty({ material: e.target.value })}
-                    >
-                      <option value="">Vælg…</option>
-                      <option value="keramik">Keramik/ler</option>
-                      <option value="plast">Plast</option>
-                      <option value="træ">Træ</option>
-                      <option value="metal">Metal/zink</option>
-                      <option value="beton">Beton/fibercement</option>
-                      <option value="stof">Stof/dyrkningspose</option>
-                      <option value="flettet">Flettet/rattan</option>
-                      <option value="sten">Natursten</option>
-                      <option value="anden">Anden</option>
-                    </select>
-                  </div>
-                </div>
-                <div className="grid grid-cols-2 gap-2">
-                  <div>
-                    <label className="block text-[11px] font-semibold text-foreground/60 uppercase tracking-wide">Volumen (liter)</label>
-                    <input
-                      className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm shadow-sm"
-                      type="number"
-                      min="0"
-                      value={selected.feature.properties?.volume ?? ""}
-                      onChange={(e) => updateSelectedProperty({ volume: e.target.value })}
-                      placeholder="Fx 25, 50, 200"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-[11px] font-semibold text-foreground/60 uppercase tracking-wide">Placering</label>
-                    <select
-                      className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm shadow-sm"
-                      value={selected.feature.properties?.placement ?? ""}
-                      onChange={(e) => updateSelectedProperty({ placement: e.target.value })}
-                    >
-                      <option value="">Vælg…</option>
-                      <option value="fuld-sol">Fuld sol (6+ timer)</option>
-                      <option value="halvskygge">Halvskygge (3–6 timer)</option>
-                      <option value="skygge">Skygge (&lt;3 timer)</option>
-                      <option value="indendørs">Indendørs</option>
-                      <option value="overdækket">Overdækket/altan</option>
-                    </select>
-                  </div>
-                </div>
-                <div className="grid grid-cols-2 gap-2">
-                  <div>
-                    <label className="block text-[11px] font-semibold text-foreground/60 uppercase tracking-wide">Gødning</label>
-                    <input
-                      className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm shadow-sm"
-                      value={selected.feature.properties?.fertilizer ?? ""}
-                      onChange={(e) => updateSelectedProperty({ fertilizer: e.target.value })}
-                      placeholder="Fx kompost april, NPK maj"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-[11px] font-semibold text-foreground/60 uppercase tracking-wide">Vinterbeskyttelse</label>
-                    <select
-                      className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm shadow-sm"
-                      value={selected.feature.properties?.winterProtection ?? ""}
-                      onChange={(e) => updateSelectedProperty({ winterProtection: e.target.value })}
-                    >
-                      <option value="">Vælg…</option>
-                      <option value="ingen">Ingen/hårdfør</option>
-                      <option value="indendørs">Flyttes indendørs</option>
-                      <option value="isoleret">Isoleres/dækkes</option>
-                      <option value="uopvarmet">Uopvarmet rum/garage</option>
-                    </select>
-                  </div>
-                </div>
-              </>
-            ) : null}
-
-            {/* ── Area-specific fields ── */}
-            {selectedCategory === "area" ? (
-              <>
-                <div>
-                  <label className="block text-[11px] font-semibold text-foreground/60 uppercase tracking-wide">Læforhold</label>
-                  <input
-                    className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm shadow-sm"
-                    value={selected.feature.properties?.shelter ?? ""}
-                    onChange={(e) => updateSelectedProperty({ shelter: e.target.value })}
-                    placeholder="Fx læ fra vest, åben"
-                  />
-                </div>
-                <div>
-                  <label className="block text-[11px] font-semibold text-foreground/60 uppercase tracking-wide">Opvarmning</label>
-                  <input
-                    className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm shadow-sm"
-                    value={selected.feature.properties?.heating ?? ""}
-                    onChange={(e) => updateSelectedProperty({ heating: e.target.value })}
-                    placeholder="Fx uopvarmet / gulvvarme"
-                  />
-                </div>
-              </>
-            ) : null}
-
-            {/* ── Condition-specific fields ── */}
-            {selectedCategory === "condition" ? (
-              <>
-                <div>
-                  <label className="block text-[11px] font-semibold text-foreground/60 uppercase tracking-wide">Beskrivelse</label>
-                  <input
-                    className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm shadow-sm"
-                    value={selected.feature.properties?.conditionDesc ?? ""}
-                    onChange={(e) => updateSelectedProperty({ conditionDesc: e.target.value })}
-                    placeholder="Fx morgen-skygge fra hus"
-                  />
-                </div>
-                <div>
-                  <label className="block text-[11px] font-semibold text-foreground/60 uppercase tracking-wide">Intensitet</label>
-                  <select
-                    className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm shadow-sm"
-                    value={selected.feature.properties?.intensity ?? ""}
-                    onChange={(e) => updateSelectedProperty({ intensity: e.target.value })}
-                  >
-                    <option value="">Ikke angivet</option>
-                    <option value="svag">Svag</option>
-                    <option value="middel">Middel</option>
-                    <option value="stærk">Stærk</option>
-                  </select>
-                </div>
-              </>
-            ) : null}
-
-            {/* ══════════════════════════════════════════════════════════ */}
-            {/* ── PLANTNINGER I DETTE BED ── plant instances section ── */}
-            {/* ══════════════════════════════════════════════════════════ */}
-            {(selectedCategory === "seedbed" || selectedCategory === "container" || selectedCategory === "area" || selectedCategory === "row") ? (
-              <div className="rounded-md border border-foreground/20 p-2.5 space-y-2">
-                <p className="text-[10px] font-medium uppercase tracking-wide text-foreground/50">
-                  🌱 Plantninger ({selectedFeatureInstances.length})
-                </p>
-                {selectedCategory !== "area" ? (
-                  <p className="text-[9px] text-foreground/40 leading-snug">
-                    {selectedCategory === "row" && "Række: Planter i rækker – rodfrugter, løg, bønner, kål"}
-                    {selectedCategory === "seedbed" && "Såbed: Bredsåede planter – radiser, salat, urter"}
-                    {selectedCategory === "container" && "Container: Krukker, kasser, højbede – tomater, urter, salat"}
-                  </p>
-                ) : null}
-
-                {/* Current plant instances */}
-                {selectedFeatureInstances.length > 0 ? (
-                  <div className="space-y-1">
-                    {selectedFeatureInstances.map((inst) => {
-                      const instVarieties = getVarietiesForSpecies(inst.speciesId);
-                      const isEditing = editingInstanceId === inst.id;
-                      return (
-                        <div
-                          key={inst.id}
-                          className="rounded border border-foreground/10 bg-foreground/[0.02] px-2 py-1 space-y-1"
-                        >
-                          <div className="flex items-center gap-1.5">
-                            <span className="text-sm leading-none">{inst.species?.icon ?? "🌱"}</span>
-                            <div className="flex-1 min-w-0">
-                              <p className="text-xs font-medium truncate">
-                                {inst.species?.name ?? inst.speciesId}
-                                {inst.varietyName ? <span className="text-foreground/50 font-normal"> ({inst.varietyName})</span> : <span className="text-foreground/30 font-normal italic"> (uspecificeret)</span>}
-                              </p>
-                              <p className="text-[10px] text-foreground/50">
-                                {inst.count ? `${inst.count} stk` : ""}
-                                {inst.plantedAt ? ` · plantet ${inst.plantedAt}` : ""}
-                                {inst.season ? ` · sæson ${inst.season}` : ""}
-                              </p>
-                            </div>
-                            {instVarieties.length > 0 ? (
-                              <button
-                                type="button"
-                                className="shrink-0 rounded px-1 py-0.5 text-[10px] text-accent hover:bg-accent/10"
-                                onClick={() => setEditingInstanceId(isEditing ? null : inst.id)}
-                                title="Vælg/skift sort"
-                              >
-                                🏷️
-                              </button>
-                            ) : null}
-                            <button
-                              type="button"
-                              className="shrink-0 rounded px-1 text-xs text-foreground/40 hover:bg-red-50 hover:text-red-500"
-                              onClick={() => {
-                                removePlantInstance(inst.id);
-                                setPlantInstancesVersion((v) => v + 1);
-                                if (isEditing) setEditingInstanceId(null);
-                              }}
-                              title="Fjern plantning"
-                            >
-                              ✕
-                            </button>
-                          </div>
-                          {/* Inline variety selector */}
-                          {isEditing ? (
-                            <div className="ml-5 space-y-0.5 border-l-2 border-accent/30 pl-2">
-                              <p className="text-[10px] font-medium text-foreground/50 uppercase tracking-wide">Vælg sort:</p>
-                              <button
-                                type="button"
-                                className={`flex w-full items-center gap-1.5 rounded px-1.5 py-1 text-left text-[11px] hover:bg-foreground/5 ${
-                                  !inst.varietyId ? "bg-accent/10 font-medium text-accent" : "text-foreground/70"
-                                }`}
-                                onClick={() => {
-                                  updatePlantInstance(inst.id, { varietyId: undefined, varietyName: undefined });
-                                  setPlantInstancesVersion((v) => v + 1);
-                                  setEditingInstanceId(null);
-                                }}
-                              >
-                                <span className="text-sm leading-none">🌱</span>
-                                <span className="truncate">Uspecificeret sort</span>
-                                {!inst.varietyId ? <span className="ml-auto text-[9px]">✓</span> : null}
-                              </button>
-                              {instVarieties.map((v) => (
-                                <button
-                                  key={v.id}
-                                  type="button"
-                                  className={`flex w-full items-center gap-1.5 rounded px-1.5 py-1 text-left text-[11px] hover:bg-foreground/5 ${
-                                    inst.varietyId === v.id ? "bg-accent/10 font-medium text-accent" : "text-foreground/70"
-                                  }`}
-                                  onClick={() => {
-                                    updatePlantInstance(inst.id, { varietyId: v.id, varietyName: v.name });
-                                    setPlantInstancesVersion((v2) => v2 + 1);
-                                    setEditingInstanceId(null);
-                                  }}
-                                >
-                                  <span className="text-sm leading-none">🏷️</span>
-                                  <span className="truncate">{v.name}</span>
-                                  {v.taste ? <span className="text-[9px] text-foreground/40">{v.taste}</span> : null}
-                                  {inst.varietyId === v.id ? <span className="ml-auto text-[9px]">✓</span> : null}
-                                </button>
-                              ))}
-                            </div>
-                          ) : null}
-                        </div>
-                      );
-                    })}
-                  </div>
-                ) : (
-                  <p className="text-xs text-foreground/50 italic">Ingen planter tilføjet endnu.</p>
-                )}
-
-                {/* Companion planting checks */}
-                {selectedCompanionChecks.length > 0 ? (
-                  <div className="space-y-0.5">
-                    <p className="text-[10px] font-medium uppercase tracking-wide text-foreground/50">Samdyrkning</p>
-                    {selectedCompanionChecks.map((c, idx) => (
-                      <p
-                        key={idx}
-                        className={`text-xs ${
-                          c.type === "good"
-                            ? "text-green-700 dark:text-green-400"
-                            : "text-red-600 dark:text-red-400"
-                        }`}
-                      >
-                        {c.type === "good" ? "✓" : "⚠"} {c.plantA.name} + {c.plantB.name}
-                        {c.type === "good" ? " — gode naboer" : " — dårlig kombination"}
-                      </p>
-                    ))}
-                  </div>
-                ) : null}
-
-                {/* Rotation warnings */}
-                {selectedRotationWarnings.length > 0 ? (
-                  <div className="space-y-0.5">
-                    <p className="text-[10px] font-medium uppercase tracking-wide text-foreground/50">Sædskifte</p>
-                    {selectedRotationWarnings.map((w, idx) => (
-                      <p key={idx} className="text-xs text-amber-600 dark:text-amber-400">
-                        🔄 {w.plant.name} — samme familie dyrket i {w.lastSeason} (vent {w.minYears} år)
-                      </p>
-                    ))}
-                  </div>
-                ) : null}
-
-                {/* Add plant picker */}
-                {!showBedPlantPicker ? (
-                  <button
-                    type="button"
-                    className="w-full rounded-md border border-dashed border-foreground/20 px-2 py-1.5 text-xs text-foreground/60 hover:border-foreground/30 hover:bg-foreground/5"
-                    onClick={() => { setShowBedPlantPicker(true); setBedPlantSearch(""); setBedPickerSpeciesId(null); }}
-                  >
-                    + Tilføj plante
-                  </button>
-                ) : bedPickerSpeciesId ? (() => {
-                  const pickedSpecies = getPlantById(bedPickerSpeciesId);
-                  const varieties = getVarietiesForSpecies(bedPickerSpeciesId);
-                  return (
-                    <div className="space-y-1.5">
-                      <div className="flex items-center gap-1">
-                        <button
-                          type="button"
-                          className="rounded px-1.5 py-1 text-xs text-foreground/50 hover:bg-foreground/5"
-                          onClick={() => setBedPickerSpeciesId(null)}
-                        >
-                          ← Tilbage
-                        </button>
-                        <span className="text-xs font-medium truncate flex-1">
-                          {pickedSpecies?.icon ?? "🌱"} {pickedSpecies?.name} — vælg sort
-                        </span>
-                        <button
-                          type="button"
-                          className="rounded px-1.5 py-1 text-xs text-foreground/50 hover:bg-foreground/5"
-                          onClick={() => { setShowBedPlantPicker(false); setBedPickerSpeciesId(null); }}
-                        >
-                          ✕
-                        </button>
-                      </div>
-                      <div className="max-h-48 space-y-0.5 overflow-y-auto">
-                        {/* Add without specific variety */}
-                        <button
-                          type="button"
-                          className="flex w-full items-center gap-1.5 rounded border border-transparent px-2 py-1 text-left text-xs hover:border-foreground/15 hover:bg-foreground/5"
-                          onClick={() => {
-                            const featureId = selected?.feature.properties?.gardenosId;
-                            if (!featureId) return;
-                            addPlantInstance({
-                              id: crypto.randomUUID(),
-                              speciesId: bedPickerSpeciesId,
-                              featureId,
-                              count: 1,
-                              plantedAt: new Date().toISOString().slice(0, 10),
-                              season: new Date().getFullYear(),
-                            });
-                            setPlantInstancesVersion((v) => v + 1);
-                            setShowBedPlantPicker(false);
-                            setBedPickerSpeciesId(null);
-                          }}
-                        >
-                          <span className="text-sm leading-none">🌱</span>
-                          <span className="truncate">{pickedSpecies?.name} (uspecificeret sort)</span>
-                        </button>
-                        {/* Variety options */}
-                        {varieties.map((v) => (
-                          <button
-                            key={v.id}
-                            type="button"
-                            className="flex w-full items-center gap-1.5 rounded border border-transparent px-2 py-1 text-left text-xs hover:border-foreground/15 hover:bg-foreground/5"
-                            onClick={() => {
-                              const featureId = selected?.feature.properties?.gardenosId;
-                              if (!featureId) return;
-                              addPlantInstance({
-                                id: crypto.randomUUID(),
-                                speciesId: bedPickerSpeciesId,
-                                varietyId: v.id,
-                                varietyName: v.name,
-                                featureId,
-                                count: 1,
-                                plantedAt: new Date().toISOString().slice(0, 10),
-                                season: new Date().getFullYear(),
-                              });
-                              setPlantInstancesVersion((vv) => vv + 1);
-                              setShowBedPlantPicker(false);
-                              setBedPickerSpeciesId(null);
-                            }}
-                          >
-                            <span className="text-sm leading-none">🏷️</span>
-                            <span className="truncate">{v.name}</span>
-                            {v.taste ? <span className="ml-auto text-[10px] text-foreground/40">{v.taste}</span> : null}
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-                  );
-                })() : (
-                  <div className="space-y-1.5">
-                    <div className="flex items-center gap-1">
-                      <input
-                        className="flex-1 rounded-md border border-foreground/20 bg-background px-2 py-1.5 text-xs"
-                        placeholder="Søg plante…"
-                        value={bedPlantSearch}
-                        onChange={(e) => setBedPlantSearch(e.target.value)}
-                        autoFocus
-                      />
-                      <button
-                        type="button"
-                        className="rounded px-1.5 py-1.5 text-xs text-foreground/50 hover:bg-foreground/5"
-                        onClick={() => setShowBedPlantPicker(false)}
-                      >
-                        ✕
-                      </button>
-                    </div>
-                    <div className="max-h-40 space-y-0.5 overflow-y-auto">
-                      {bedPlantResults.map((plant) => (
-                        <button
-                          key={plant.id}
-                          type="button"
-                          className="flex w-full items-center gap-1.5 rounded border border-transparent px-2 py-1 text-left text-xs hover:border-foreground/15 hover:bg-foreground/5"
-                          onClick={() => {
-                            const varieties = getVarietiesForSpecies(plant.id);
-                            if (varieties.length > 0) {
-                              // Has varieties — show variety picker
-                              setBedPickerSpeciesId(plant.id);
-                            } else {
-                              // No varieties — add directly
-                              const featureId = selected?.feature.properties?.gardenosId;
-                              if (!featureId) return;
-                              addPlantInstance({
-                                id: crypto.randomUUID(),
-                                speciesId: plant.id,
-                                featureId,
-                                count: 1,
-                                plantedAt: new Date().toISOString().slice(0, 10),
-                                season: new Date().getFullYear(),
-                              });
-                              setPlantInstancesVersion((v) => v + 1);
-                              setShowBedPlantPicker(false);
-                              setBedPlantSearch("");
-                            }
-                          }}
-                        >
-                          <span className="text-sm leading-none">{plant.icon ?? "🌱"}</span>
-                          <span className="truncate">{plant.name}</span>
-                          <span className="ml-auto flex items-center gap-1 text-[10px] text-foreground/40">
-                            {plant.varieties?.length ? <span>{plant.varieties.length} sorter</span> : null}
-                            {(() => {
-                              const placements = getDefaultPlacements(plant);
-                              const featureCat = selected?.feature.properties?.category;
-                              const primary = featureCat && placements.includes(featureCat as PlacementType)
-                                ? featureCat as PlacementType
-                                : placements[0];
-                              return <span>{PLACEMENT_ICONS[primary]}</span>;
-                            })()}
-                          </span>
-                        </button>
-                      ))}
-                      {bedPlantResults.length === 0 ? (
-                        <p className="px-2 py-1 text-xs text-foreground/50 italic">Ingen planter fundet.</p>
-                      ) : null}
-                    </div>
-                  </div>
-                )}
-              </div>
-            ) : null}
-
-            {selectedGroupId ? (
-              <div className="rounded-md border border-foreground/20">
+            {/* ── Dyrkningsforhold (seedbed + container) ── */}
+            {(selectedCategory === "seedbed" || selectedCategory === "container") ? (() => {
+              const props = selected.feature.properties ?? {};
+              const spId = props.soilProfileId as string | undefined;
+              const sp = spId ? getSoilProfileById(spId) : undefined;
+              const soilLabel = sp ? (sp.baseType ? SOIL_BASE_TYPE_LABELS[sp.baseType] : sp.name) : null;
+              const summaryParts: string[] = [];
+              if (soilLabel) summaryParts.push(soilLabel);
+              if (selectedCategory === "seedbed" && props.sowingMethod) summaryParts.push(String(props.sowingMethod));
+              if (selectedCategory === "container" && props.material) summaryParts.push(String(props.material));
+              if (props.wateringNeed) summaryParts.push(String(props.wateringNeed));
+              return (
+              <div className="rounded-lg border border-foreground/10 bg-foreground/[0.02] overflow-hidden">
                 <button
                   type="button"
-                  className="flex w-full items-center justify-between px-2 py-1.5 text-xs font-medium text-foreground/70 hover:bg-foreground/5"
+                  className="flex w-full items-center gap-2 px-2.5 py-1.5 text-left hover:bg-foreground/[0.03] transition-colors"
+                  onClick={() => setContentGrowingOpen(!contentGrowingOpen)}
+                >
+                  <span className="text-[10px] font-semibold text-foreground/50 uppercase tracking-wide">🌿 Dyrkningsforhold</span>
+                  {summaryParts.length > 0 ? (
+                    <>
+                      <span className="text-[9px] text-foreground/30">·</span>
+                      <span className="text-[11px] text-foreground/70 truncate flex-1">{summaryParts.join(" · ")}</span>
+                    </>
+                  ) : (
+                    <span className="text-[11px] text-foreground/40 italic truncate flex-1">(ikke udfyldt)</span>
+                  )}
+                  <span className="text-[9px] text-foreground/30 shrink-0">{contentGrowingOpen ? "▲" : "▼"}</span>
+                </button>
+
+                {contentGrowingOpen ? (
+                  <div className="px-2.5 pb-2.5 pt-1 space-y-2">
+
+                {/* ── Seedbed fields ── */}
+                {selectedCategory === "seedbed" ? (
+                  <>
+                    <div className="grid grid-cols-2 gap-2">
+                      <div>
+                        <label className="block text-[11px] font-semibold text-foreground/60 uppercase tracking-wide">Såmetode</label>
+                        <select
+                          className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm shadow-sm"
+                          value={String(props.sowingMethod ?? "")}
+                          onChange={(e) => updateSelectedProperty({ sowingMethod: e.target.value })}
+                        >
+                          <option value="">Ikke angivet</option>
+                          <option value="bredsåning">Bredsåning</option>
+                          <option value="rækkesåning">Rækkesåning</option>
+                          <option value="priklet">Priklet / udplantet</option>
+                          <option value="direkte">Direkte såning</option>
+                        </select>
+                      </div>
+                      <div>
+                        <label className="block text-[11px] font-semibold text-foreground/60 uppercase tracking-wide">Sæson / år</label>
+                        <input
+                          className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm shadow-sm"
+                          value={String(props.bedSeason ?? "")}
+                          onChange={(e) => updateSelectedProperty({ bedSeason: e.target.value })}
+                          placeholder="Fx 2026"
+                        />
+                      </div>
+                    </div>
+                    <div>
+                      <label className="block text-[11px] font-semibold text-foreground/60 uppercase tracking-wide">Jordtype</label>
+                      {sp ? (
+                        <button
+                          type="button"
+                          className="mt-1 w-full flex items-center gap-2 rounded-lg border border-accent/30 bg-accent-light/20 px-3 py-2 text-sm text-left hover:bg-accent-light/40 transition-colors"
+                          onClick={() => setSoilPanelOpen(true)}
+                        >
+                          <span>🪨</span>
+                          <span className="flex-1 truncate font-medium">{soilLabel}</span>
+                          <span className="text-[10px] text-foreground/40">Åbn ▼</span>
+                        </button>
+                      ) : (
+                        <button
+                          type="button"
+                          className="mt-1 w-full rounded-lg border border-dashed border-foreground/20 px-3 py-2 text-sm text-foreground/50 hover:border-accent/40 hover:bg-accent-light/30 transition-colors"
+                          onClick={() => setSoilPanelOpen(true)}
+                        >
+                          + Tilknyt jordprofil ↓
+                        </button>
+                      )}
+                    </div>
+                    <div>
+                      <label className="block text-[11px] font-semibold text-foreground/60 uppercase tracking-wide">Gødning</label>
+                      <input
+                        className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm shadow-sm"
+                        value={String(props.fertilizer ?? "")}
+                        onChange={(e) => updateSelectedProperty({ fertilizer: e.target.value })}
+                        placeholder="Fx kompost april, NPK maj"
+                      />
+                    </div>
+                  </>
+                ) : null}
+
+                {/* ── Container fields ── */}
+                {selectedCategory === "container" ? (
+                  <>
+                    <div className="grid grid-cols-2 gap-2">
+                      <div>
+                        <label className="block text-[11px] font-semibold text-foreground/60 uppercase tracking-wide">Jordtype / substrat</label>
+                        {sp ? (
+                          <button
+                            type="button"
+                            className="mt-1 w-full flex items-center gap-2 rounded-lg border border-accent/30 bg-accent-light/20 px-3 py-2 text-sm text-left hover:bg-accent-light/40 transition-colors"
+                            onClick={() => setSoilPanelOpen(true)}
+                          >
+                            <span>🪨</span>
+                            <span className="flex-1 truncate font-medium">{soilLabel}</span>
+                            <span className="text-[10px] text-foreground/40">Åbn ▼</span>
+                          </button>
+                        ) : (
+                          <button
+                            type="button"
+                            className="mt-1 w-full rounded-lg border border-dashed border-foreground/20 px-3 py-2 text-sm text-foreground/50 hover:border-accent/40 hover:bg-accent-light/30 transition-colors"
+                            onClick={() => setSoilPanelOpen(true)}
+                          >
+                            + Tilknyt jordprofil ↓
+                          </button>
+                        )}
+                      </div>
+                      <div>
+                        <label className="block text-[11px] font-semibold text-foreground/60 uppercase tracking-wide">Vandingsbehov</label>
+                        <select
+                          className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm shadow-sm"
+                          value={String(props.wateringNeed ?? "")}
+                          onChange={(e) => updateSelectedProperty({ wateringNeed: e.target.value })}
+                        >
+                          <option value="">Vælg…</option>
+                          <option value="lav">Lav (1–2x/uge)</option>
+                          <option value="middel">Middel (3–4x/uge)</option>
+                          <option value="høj">Høj (dagligt)</option>
+                          <option value="selvvandende">Selvvandende</option>
+                          <option value="dryp">Drypvanding</option>
+                        </select>
+                      </div>
+                    </div>
+                    <div className="grid grid-cols-2 gap-2">
+                      <div>
+                        <label className="block text-[11px] font-semibold text-foreground/60 uppercase tracking-wide">Dræn</label>
+                        <select
+                          className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm shadow-sm"
+                          value={String(props.drainage ?? "")}
+                          onChange={(e) => updateSelectedProperty({ drainage: e.target.value })}
+                        >
+                          <option value="">Vælg…</option>
+                          <option value="huller">Drænhuller i bund</option>
+                          <option value="drænlag">Drænlag (ler/sten)</option>
+                          <option value="ingen">Ingen dræn</option>
+                          <option value="selvdrænende">Selvdrænende</option>
+                        </select>
+                      </div>
+                      <div>
+                        <label className="block text-[11px] font-semibold text-foreground/60 uppercase tracking-wide">Materiale</label>
+                        <select
+                          className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm shadow-sm"
+                          value={String(props.material ?? "")}
+                          onChange={(e) => updateSelectedProperty({ material: e.target.value })}
+                        >
+                          <option value="">Vælg…</option>
+                          <option value="keramik">Keramik/ler</option>
+                          <option value="plast">Plast</option>
+                          <option value="træ">Træ</option>
+                          <option value="metal">Metal/zink</option>
+                          <option value="beton">Beton/fibercement</option>
+                          <option value="stof">Stof/dyrkningspose</option>
+                          <option value="flettet">Flettet/rattan</option>
+                          <option value="sten">Natursten</option>
+                          <option value="anden">Anden</option>
+                        </select>
+                      </div>
+                    </div>
+                    <div className="grid grid-cols-2 gap-2">
+                      <div>
+                        <label className="block text-[11px] font-semibold text-foreground/60 uppercase tracking-wide">Volumen (liter)</label>
+                        <input
+                          className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm shadow-sm"
+                          type="number"
+                          min="0"
+                          value={String(props.volume ?? "")}
+                          onChange={(e) => updateSelectedProperty({ volume: e.target.value })}
+                          placeholder="Fx 25, 50, 200"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-[11px] font-semibold text-foreground/60 uppercase tracking-wide">Placering</label>
+                        <select
+                          className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm shadow-sm"
+                          value={String(props.placement ?? "")}
+                          onChange={(e) => updateSelectedProperty({ placement: e.target.value })}
+                        >
+                          <option value="">Vælg…</option>
+                          <option value="fuld-sol">Fuld sol (6+ timer)</option>
+                          <option value="halvskygge">Halvskygge (3–6 timer)</option>
+                          <option value="skygge">Skygge (&lt;3 timer)</option>
+                          <option value="indendørs">Indendørs</option>
+                          <option value="overdækket">Overdækket/altan</option>
+                        </select>
+                      </div>
+                    </div>
+                    <div className="grid grid-cols-2 gap-2">
+                      <div>
+                        <label className="block text-[11px] font-semibold text-foreground/60 uppercase tracking-wide">Gødning</label>
+                        <input
+                          className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm shadow-sm"
+                          value={String(props.fertilizer ?? "")}
+                          onChange={(e) => updateSelectedProperty({ fertilizer: e.target.value })}
+                          placeholder="Fx kompost april, NPK maj"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-[11px] font-semibold text-foreground/60 uppercase tracking-wide">Vinterbeskyttelse</label>
+                        <select
+                          className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm shadow-sm"
+                          value={String(props.winterProtection ?? "")}
+                          onChange={(e) => updateSelectedProperty({ winterProtection: e.target.value })}
+                        >
+                          <option value="">Vælg…</option>
+                          <option value="ingen">Ingen/hårdfør</option>
+                          <option value="indendørs">Flyttes indendørs</option>
+                          <option value="isoleret">Isoleres/dækkes</option>
+                          <option value="uopvarmet">Uopvarmet rum/garage</option>
+                        </select>
+                      </div>
+                    </div>
+                  </>
+                ) : null}
+
+                  </div>
+                ) : null}
+              </div>
+              );
+            })() : null}
+
+            {/* ── Area-specific fields (per SubGroup) ── */}
+            {selectedCategory === "area" && SUB_GROUP_LABELS[selectedSubGroup] ? (() => {
+              const props = selected.feature.properties ?? {};
+              const summaryParts: string[] = [];
+              if (selectedSubGroup === "zone") {
+                if (props.shelter) summaryParts.push(props.shelter);
+                if (props.sunlight) summaryParts.push(props.sunlight);
+                if (props.orientation) summaryParts.push(props.orientation);
+              } else if (selectedSubGroup === "structure") {
+                if (props.structureMaterial) summaryParts.push(props.structureMaterial);
+                if (props.structureHeight) summaryParts.push(props.structureHeight);
+              } else if (selectedSubGroup === "cover") {
+                if (props.coverMaterial) summaryParts.push(props.coverMaterial);
+                if (props.heating) summaryParts.push(props.heating);
+              }
+              return (
+              <div className="rounded-lg border border-foreground/10 bg-foreground/[0.02] overflow-hidden">
+                <button
+                  type="button"
+                  className="flex w-full items-center gap-2 px-2.5 py-1.5 text-left hover:bg-foreground/[0.03] transition-colors"
+                  onClick={() => setContentAreaFieldsOpen(!contentAreaFieldsOpen)}
+                >
+                  <span className="text-[10px] font-semibold text-foreground/50 uppercase tracking-wide">{SUB_GROUP_LABELS[selectedSubGroup]}</span>
+                  <span className="text-[9px] text-foreground/30">·</span>
+                  <span className="text-[11px] text-foreground/70 truncate flex-1">
+                    {summaryParts.length > 0 ? summaryParts.join(", ") : "(ikke udfyldt)"}
+                  </span>
+                  <span className="text-[9px] text-foreground/30 shrink-0">{contentAreaFieldsOpen ? "▲" : "▼"}</span>
+                </button>
+
+                {contentAreaFieldsOpen ? (
+                  <div className="px-2.5 pb-2.5 pt-1 space-y-2">
+
+                {/* ── Zone fields ── */}
+                {selectedSubGroup === "zone" ? (
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>
+                      <label className="block text-[10px] font-medium text-foreground/50 uppercase tracking-wide">🌬️ Læforhold</label>
+                      <select className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm shadow-sm" value={props.shelter ?? ""} onChange={(e) => updateSelectedProperty({ shelter: e.target.value })}>
+                        <option value="">Vælg…</option>
+                        <option value="åben">Åben</option>
+                        <option value="delvis-læ">Delvis læ</option>
+                        <option value="fuld-læ">Fuld læ</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-[10px] font-medium text-foreground/50 uppercase tracking-wide">☀️ Lysforhold</label>
+                      <select className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm shadow-sm" value={props.sunlight ?? ""} onChange={(e) => updateSelectedProperty({ sunlight: e.target.value })}>
+                        <option value="">Vælg…</option>
+                        <option value="fuld-sol">Fuld sol</option>
+                        <option value="halvskygge">Halvskygge</option>
+                        <option value="skygge">Skygge</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-[10px] font-medium text-foreground/50 uppercase tracking-wide">🧭 Orientering</label>
+                      <select className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm shadow-sm" value={props.orientation ?? ""} onChange={(e) => updateSelectedProperty({ orientation: e.target.value })}>
+                        <option value="">Vælg…</option>
+                        <option value="nord">Nord</option>
+                        <option value="syd">Syd</option>
+                        <option value="øst">Øst</option>
+                        <option value="vest">Vest</option>
+                        <option value="blandet">Blandet</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-[10px] font-medium text-foreground/50 uppercase tracking-wide">🎯 Formål</label>
+                      <input className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm shadow-sm" value={props.purpose ?? ""} onChange={(e) => updateSelectedProperty({ purpose: e.target.value })} placeholder="Fx selvforsyning, rekreation" />
+                    </div>
+                  </div>
+                ) : null}
+
+                {/* ── Structure fields ── */}
+                {selectedSubGroup === "structure" ? (
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>
+                      <label className="block text-[10px] font-medium text-foreground/50 uppercase tracking-wide">🧱 Materiale</label>
+                      <select className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm shadow-sm" value={props.structureMaterial ?? ""} onChange={(e) => updateSelectedProperty({ structureMaterial: e.target.value })}>
+                        <option value="">Vælg…</option>
+                        <option value="træ">Træ</option>
+                        <option value="mursten">Mursten</option>
+                        <option value="beton">Beton</option>
+                        <option value="metal">Metal</option>
+                        <option value="sten">Sten</option>
+                        <option value="fliser">Fliser</option>
+                        <option value="andet">Andet</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-[10px] font-medium text-foreground/50 uppercase tracking-wide">📏 Højde (ca.)</label>
+                      <select className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm shadow-sm" value={props.structureHeight ?? ""} onChange={(e) => updateSelectedProperty({ structureHeight: e.target.value })}>
+                        <option value="">Vælg…</option>
+                        <option value="lav">Lav (&lt;1 m)</option>
+                        <option value="middel">Middel (1–2,5 m)</option>
+                        <option value="høj">Høj (&gt;2,5 m)</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-[10px] font-medium text-foreground/50 uppercase tracking-wide">⬛ Skyggeretning</label>
+                      <select className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm shadow-sm" value={props.shadowDirection ?? ""} onChange={(e) => updateSelectedProperty({ shadowDirection: e.target.value })}>
+                        <option value="">Vælg…</option>
+                        <option value="nord">Mod nord</option>
+                        <option value="syd">Mod syd</option>
+                        <option value="øst">Mod øst</option>
+                        <option value="vest">Mod vest</option>
+                        <option value="minimal">Minimal</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-[10px] font-medium text-foreground/50 uppercase tracking-wide">🎯 Formål</label>
+                      <input className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm shadow-sm" value={props.structureUse ?? ""} onChange={(e) => updateSelectedProperty({ structureUse: e.target.value })} placeholder="Fx opbevaring, ophold" />
+                    </div>
+                  </div>
+                ) : null}
+
+                {/* ── Cover fields ── */}
+                {selectedSubGroup === "cover" ? (
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>
+                      <label className="block text-[10px] font-medium text-foreground/50 uppercase tracking-wide">🌡️ Opvarmning</label>
+                      <select className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm shadow-sm" value={props.heating ?? ""} onChange={(e) => updateSelectedProperty({ heating: e.target.value })}>
+                        <option value="">Ingen</option>
+                        <option value="passiv-sol">Passiv sol</option>
+                        <option value="gulvvarme">Gulvvarme</option>
+                        <option value="el-varme">El-varme</option>
+                        <option value="varmekabel">Varmekabel</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-[10px] font-medium text-foreground/50 uppercase tracking-wide">🪟 Materiale</label>
+                      <select className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm shadow-sm" value={props.coverMaterial ?? ""} onChange={(e) => updateSelectedProperty({ coverMaterial: e.target.value })}>
+                        <option value="">Vælg…</option>
+                        <option value="glas">Glas</option>
+                        <option value="polycarbonat">Polycarbonat</option>
+                        <option value="plastik">Plastik</option>
+                        <option value="fiberdug">Fiberdug</option>
+                        <option value="net">Net</option>
+                        <option value="træ">Træ</option>
+                        <option value="metal">Metal</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-[10px] font-medium text-foreground/50 uppercase tracking-wide">💨 Ventilation</label>
+                      <select className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm shadow-sm" value={props.ventilation ?? ""} onChange={(e) => updateSelectedProperty({ ventilation: e.target.value })}>
+                        <option value="">Vælg…</option>
+                        <option value="ingen">Ingen</option>
+                        <option value="vinduer">Manuelle vinduer</option>
+                        <option value="auto">Auto-åbnere</option>
+                        <option value="åben-side">Åben side</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-[10px] font-medium text-foreground/50 uppercase tracking-wide">❄️ Min. temperatur</label>
+                      <select className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm shadow-sm" value={props.minTemperature ?? ""} onChange={(e) => updateSelectedProperty({ minTemperature: e.target.value })}>
+                        <option value="">Vælg…</option>
+                        <option value="ubeskyttet">Ubeskyttet</option>
+                        <option value="frostfri">Frostfri (&gt;0°)</option>
+                        <option value="kølig">Kølig (&gt;5°)</option>
+                        <option value="varm">Varm (&gt;10°)</option>
+                        <option value="opvarmet">Opvarmet (&gt;15°)</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-[10px] font-medium text-foreground/50 uppercase tracking-wide">🌬️ Læforhold</label>
+                      <select className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm shadow-sm" value={props.shelter ?? ""} onChange={(e) => updateSelectedProperty({ shelter: e.target.value })}>
+                        <option value="">Vælg…</option>
+                        <option value="åben">Åben</option>
+                        <option value="delvis-læ">Delvis læ</option>
+                        <option value="fuld-læ">Fuld læ</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-[10px] font-medium text-foreground/50 uppercase tracking-wide">🛡️ Beskyttelse</label>
+                      <input className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm shadow-sm" value={props.protectionAgainst ?? ""} onChange={(e) => updateSelectedProperty({ protectionAgainst: e.target.value })} placeholder="Fx frost, vind, skadedyr" />
+                    </div>
+                  </div>
+                ) : null}
+
+                  </div>
+                ) : null}
+              </div>
+              );
+            })() : null}
+
+            {/* ── Condition-specific fields (per SubGroup) ── */}
+            {selectedCategory === "condition" ? (() => {
+              const props = selected.feature.properties ?? {};
+              const summaryParts: string[] = [];
+              if (props.intensity) summaryParts.push(props.intensity);
+              if (props.conditionDesc) summaryParts.push(props.conditionDesc);
+              if (selectedSubGroup === "climate" && props.timeOfDay) summaryParts.push(props.timeOfDay);
+              return (
+              <div className="rounded-lg border border-foreground/10 bg-foreground/[0.02] overflow-hidden">
+                <button
+                  type="button"
+                  className="flex w-full items-center gap-2 px-2.5 py-1.5 text-left hover:bg-foreground/[0.03] transition-colors"
+                  onClick={() => setContentConditionFieldsOpen(!contentConditionFieldsOpen)}
+                >
+                  <span className="text-[10px] font-semibold text-foreground/50 uppercase tracking-wide">{SUB_GROUP_LABELS[selectedSubGroup] ?? "⚡ Dyrkningsforhold"}</span>
+                  <span className="text-[9px] text-foreground/30">·</span>
+                  <span className="text-[11px] text-foreground/70 truncate flex-1">
+                    {summaryParts.length > 0 ? summaryParts.join(", ") : "(ikke udfyldt)"}
+                  </span>
+                  <span className="text-[9px] text-foreground/30 shrink-0">{contentConditionFieldsOpen ? "▲" : "▼"}</span>
+                </button>
+
+                {contentConditionFieldsOpen ? (
+                  <div className="px-2.5 pb-2.5 pt-1 space-y-2">
+                <div className="grid grid-cols-2 gap-2">
+                  <div className="col-span-2">
+                    <label className="block text-[10px] font-medium text-foreground/50 uppercase tracking-wide">📝 Beskrivelse</label>
+                    <input className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm shadow-sm" value={props.conditionDesc ?? ""} onChange={(e) => updateSelectedProperty({ conditionDesc: e.target.value })} placeholder="Fx morgen-skygge fra huset" />
+                  </div>
+                  <div>
+                    <label className="block text-[10px] font-medium text-foreground/50 uppercase tracking-wide">📊 Intensitet</label>
+                    <select className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm shadow-sm" value={props.intensity ?? ""} onChange={(e) => updateSelectedProperty({ intensity: e.target.value })}>
+                      <option value="">Ikke angivet</option>
+                      <option value="svag">Svag</option>
+                      <option value="middel">Middel</option>
+                      <option value="stærk">Stærk</option>
+                    </select>
+                  </div>
+
+                  {/* ── Soil-specific: link to Jordprofil ── */}
+                  {selectedSubGroup === "soil" ? (
+                    <div className="col-span-2">
+                      {(() => {
+                        const spId = props.soilProfileId;
+                        const sp = spId ? getSoilProfileById(spId) : undefined;
+                        return sp ? (
+                          <button
+                            type="button"
+                            className="w-full flex items-center gap-2 rounded-lg border border-accent/30 bg-accent-light/20 px-3 py-2 text-sm text-left hover:bg-accent-light/40 transition-colors"
+                            onClick={() => setSoilPanelOpen(true)}
+                          >
+                            <span>🪨</span>
+                            <span className="flex-1 truncate">
+                              <span className="font-medium">{sp.name}</span>
+                              {sp.baseType ? <span className="text-foreground/50 ml-1">({SOIL_BASE_TYPE_LABELS[sp.baseType]})</span> : null}
+                            </span>
+                            <span className="text-[10px] text-foreground/40">Rediger ▼</span>
+                          </button>
+                        ) : (
+                          <button
+                            type="button"
+                            className="w-full rounded-lg border border-dashed border-foreground/20 px-3 py-2 text-xs text-foreground/50 hover:border-accent/40 hover:bg-accent-light/30 transition-colors"
+                            onClick={() => setSoilPanelOpen(true)}
+                          >
+                            🪨 Tilknyt jordprofil for detaljer (pH, dræning, m.m.) ↓
+                          </button>
+                        );
+                      })()}
+                    </div>
+                  ) : null}
+
+                  {/* ── Climate-specific extra fields ── */}
+                  {selectedSubGroup === "climate" ? (
+                    <>
+                      <div>
+                        <label className="block text-[10px] font-medium text-foreground/50 uppercase tracking-wide">🕐 Tidspunkt</label>
+                        <select className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm shadow-sm" value={props.timeOfDay ?? ""} onChange={(e) => updateSelectedProperty({ timeOfDay: e.target.value })}>
+                          <option value="">Vælg…</option>
+                          <option value="morgen">Morgen</option>
+                          <option value="eftermiddag">Eftermiddag</option>
+                          <option value="hele-dagen">Hele dagen</option>
+                        </select>
+                      </div>
+                      <div>
+                        <label className="block text-[10px] font-medium text-foreground/50 uppercase tracking-wide">📅 Sæson</label>
+                        <select className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm shadow-sm" value={props.season ?? ""} onChange={(e) => updateSelectedProperty({ season: e.target.value })}>
+                          <option value="">Helårs</option>
+                          <option value="forår">Forår</option>
+                          <option value="sommer">Sommer</option>
+                          <option value="efterår">Efterår</option>
+                          <option value="vinter">Vinter</option>
+                        </select>
+                      </div>
+                      <div>
+                        <label className="block text-[10px] font-medium text-foreground/50 uppercase tracking-wide">🧭 Retning</label>
+                        <select className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm shadow-sm" value={props.conditionDirection ?? ""} onChange={(e) => updateSelectedProperty({ conditionDirection: e.target.value })}>
+                          <option value="">Vælg…</option>
+                          <option value="nord">Nord</option>
+                          <option value="syd">Syd</option>
+                          <option value="øst">Øst</option>
+                          <option value="vest">Vest</option>
+                          <option value="skiftende">Skiftende</option>
+                        </select>
+                      </div>
+                      <div>
+                        <label className="block text-[10px] font-medium text-foreground/50 uppercase tracking-wide">🔍 Kilde</label>
+                        <input className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm shadow-sm" value={props.conditionSource ?? ""} onChange={(e) => updateSelectedProperty({ conditionSource: e.target.value })} placeholder="Fx nabobygning, stort egetræ" />
+                      </div>
+                    </>
+                  ) : null}
+                </div>
+                  </div>
+                ) : null}
+              </div>
+              );
+            })() : null}
+
+            {selectedGroupId ? (
+              <div className="rounded-lg border border-foreground/10 bg-foreground/[0.02] overflow-hidden">
+                <button
+                  type="button"
+                  className="flex w-full items-center gap-2 px-2.5 py-1.5 text-left hover:bg-foreground/[0.03] transition-colors"
                   onClick={() => setGroupSectionOpen((o) => !o)}
                 >
-                  <span>Gruppe: {groupRegistry[selectedGroupId]?.name ?? `(${selectedGroupId.slice(0, 6)})`}</span>
-                  <span className="text-foreground/40">{groupSectionOpen ? "▲" : "▼"}</span>
+                  <span className="text-[10px] font-semibold text-foreground/50 uppercase tracking-wide">👥 Gruppe</span>
+                  <span className="text-[9px] text-foreground/30">·</span>
+                  <span className="text-[11px] text-foreground/70 truncate flex-1">{groupRegistry[selectedGroupId]?.name ?? `(${selectedGroupId.slice(0, 6)})`} · {groupMemberCount} elem.</span>
+                  <span className="text-[9px] text-foreground/30 shrink-0">{groupSectionOpen ? "▲" : "▼"}</span>
                 </button>
                 {groupSectionOpen ? (
-                  <div className="border-t border-foreground/10 p-2">
+                  <div className="px-2.5 pb-2.5 pt-1 space-y-2">
                     <input
                       className="w-full rounded-md border border-foreground/20 bg-background px-3 py-2 text-sm font-medium"
                       value={groupRegistry[selectedGroupId]?.name ?? `Gruppe (${selectedGroupId.slice(0, 6)})`}
@@ -11091,20 +12066,573 @@ export function GardenMapClient({ userId }: { userId: string }) {
               </div>
             ) : null}
 
+            {/* ══════════════════════════════════════════════════════════ */}
+            {/* ── JORDPROFIL ── soil profile section                   ── */}
+            {/* ══════════════════════════════════════════════════════════ */}
+            {(selectedCategory === "seedbed" || selectedCategory === "container" || (selectedCategory === "area" && selectedSubGroup !== "structure")) ? (() => {
+              const profileId = selected.feature.properties?.soilProfileId;
+              const profile = profileId ? getSoilProfileById(profileId) : undefined;
+              // Force re-read on version bump
+              void soilDataVersion;
+              const recs = profile ? computeSoilRecommendations(profile) : [];
+              const logEntries = profile ? getLogForProfile(profile.id) : [];
+
+              /** Helper: update a field on the soil profile */
+              const updateSoilField = (patch: Partial<SoilProfile>) => {
+                if (!profile) return;
+                addOrUpdateSoilProfile({ ...profile, ...patch });
+                setSoilDataVersion((v) => v + 1);
+              };
+
+              /** Render a select dropdown for a soil field */
+              const soilSelect = <T extends string>(
+                label: string,
+                value: T | undefined,
+                options: Record<string, string>,
+                onChange: (v: T) => void,
+              ) => (
+                <div>
+                  <label className="block text-[10px] font-semibold text-foreground/50 uppercase tracking-wide">{label}</label>
+                  <select
+                    className="mt-0.5 w-full rounded-md border border-border bg-background px-2 py-1.5 text-xs shadow-sm"
+                    value={value ?? ""}
+                    onChange={(e) => onChange(e.target.value as T)}
+                  >
+                    <option value="">—</option>
+                    {Object.entries(options).map(([k, v]) => (
+                      <option key={k} value={k}>{v}</option>
+                    ))}
+                  </select>
+                </div>
+              );
+
+              /** Render a yes/no toggle */
+              const soilToggle = (label: string, value: boolean | undefined, onChange: (v: boolean | undefined) => void) => (
+                <div>
+                  <label className="block text-[10px] font-semibold text-foreground/50 uppercase tracking-wide">{label}</label>
+                  <div className="mt-0.5 flex gap-1">
+                    {(["yes", "no", "unknown"] as const).map((opt) => {
+                      const isActive = opt === "yes" ? value === true : opt === "no" ? value === false : value === undefined;
+                      return (
+                        <button
+                          key={opt}
+                          type="button"
+                          className={`flex-1 rounded-md border px-2 py-1 text-[10px] font-medium transition-all ${
+                            isActive
+                              ? "border-accent/30 bg-accent-light text-accent-dark"
+                              : "border-border bg-background text-foreground/50 hover:bg-foreground/5"
+                          }`}
+                          onClick={() => onChange(opt === "yes" ? true : opt === "no" ? false : undefined)}
+                        >
+                          {opt === "yes" ? "Ja" : opt === "no" ? "Nej" : "—"}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              );
+
+              const filteredSections = SOIL_SECTIONS.filter((s) =>
+                soilLevelFilter === "all" || s.level <= soilLevelFilter
+              );
+
+              return (
+                <div className="rounded-lg border border-foreground/10 bg-foreground/[0.02] overflow-hidden">
+                  <button
+                    type="button"
+                    className="flex w-full items-center gap-2 px-2.5 py-1.5 text-left hover:bg-foreground/[0.03] transition-colors"
+                    onClick={() => setSoilPanelOpen(!soilPanelOpen)}
+                  >
+                    <span className="text-[10px] font-semibold text-foreground/50 uppercase tracking-wide">🪨 Jordprofil</span>
+                    {profile?.baseType ? (
+                      <>
+                        <span className="text-[9px] text-foreground/30">·</span>
+                        <span className="text-[11px] text-foreground/70 truncate flex-1">{SOIL_BASE_TYPE_LABELS[profile.baseType]}</span>
+                      </>
+                    ) : (
+                      <span className="text-[11px] text-foreground/40 italic truncate flex-1">(ingen profil)</span>
+                    )}
+                    <span className="text-[9px] text-foreground/30 shrink-0">{soilPanelOpen ? "▲" : "▼"}</span>
+                  </button>
+
+                  {soilPanelOpen ? (
+                    <div className="px-3 pb-3 pt-1 space-y-3">
+
+                      {/* ── Create / link profile ── */}
+                      {!profile ? (
+                        <div className="space-y-2">
+                          <p className="text-xs text-foreground/50 italic">Ingen jordprofil tilknyttet.</p>
+                          <button
+                            type="button"
+                            className="w-full rounded-md border border-dashed border-foreground/20 px-2 py-2 text-xs text-foreground/60 hover:border-accent/40 hover:bg-accent-light/30 transition-colors"
+                            onClick={() => {
+                              const bp = createBlankSoilProfile(selected.feature.properties?.name ?? "Ukendt jord");
+                              addOrUpdateSoilProfile(bp);
+                              updateSelectedProperty({ soilProfileId: bp.id });
+                              setSoilDataVersion((v) => v + 1);
+                            }}
+                          >
+                            + Opret jordprofil
+                          </button>
+                          {/* Link to existing profile */}
+                          {(() => {
+                            const allProfiles = loadSoilProfiles();
+                            return allProfiles.length > 0 ? (
+                              <div>
+                                <label className="block text-[10px] font-semibold text-foreground/50 uppercase tracking-wide">Eller brug eksisterende</label>
+                                <select
+                                  className="mt-0.5 w-full rounded-md border border-border bg-background px-2 py-1.5 text-xs shadow-sm"
+                                  value=""
+                                  onChange={(e) => {
+                                    if (e.target.value) {
+                                      updateSelectedProperty({ soilProfileId: e.target.value });
+                                      setSoilDataVersion((v) => v + 1);
+                                    }
+                                  }}
+                                >
+                                  <option value="">Vælg profil…</option>
+                                  {allProfiles.map((p) => (
+                                    <option key={p.id} value={p.id}>
+                                      {p.name}{p.baseType ? ` (${SOIL_BASE_TYPE_LABELS[p.baseType]})` : ""}
+                                    </option>
+                                  ))}
+                                </select>
+                              </div>
+                            ) : null;
+                          })()}
+                        </div>
+                      ) : (
+                        <>
+                          {/* ── Profile name ── */}
+                          <div className="flex items-center gap-2">
+                            <input
+                              className="flex-1 rounded-md border border-border bg-background px-2 py-1.5 text-xs font-medium shadow-sm"
+                              value={profile.name}
+                              onChange={(e) => updateSoilField({ name: e.target.value })}
+                              placeholder="Profilnavn"
+                            />
+                            <button
+                              type="button"
+                              className="shrink-0 rounded px-1.5 py-1 text-[10px] text-foreground/40 hover:text-red-500 hover:bg-red-50"
+                              onClick={() => {
+                                updateSelectedProperty({ soilProfileId: undefined });
+                                setSoilDataVersion((v) => v + 1);
+                              }}
+                              title="Fjern tilknytning (profilen bevares)"
+                            >
+                              ✕
+                            </button>
+                          </div>
+
+                          {/* ── Level filter pills ── */}
+                          <div className="flex gap-1">
+                            {([
+                              { v: "all" as const, label: "Alle" },
+                              { v: 1 as const, label: "👀 Basis" },
+                              { v: 2 as const, label: "🧪 Nørdet" },
+                              { v: 3 as const, label: "🔬 Lab" },
+                            ]).map((opt) => (
+                              <button
+                                key={String(opt.v)}
+                                type="button"
+                                className={`rounded-full px-2 py-0.5 text-[10px] font-medium transition-all ${
+                                  soilLevelFilter === opt.v
+                                    ? "bg-accent text-white shadow-sm"
+                                    : "bg-foreground/5 text-foreground/50 hover:bg-foreground/10"
+                                }`}
+                                onClick={() => setSoilLevelFilter(opt.v)}
+                              >
+                                {opt.label}
+                              </button>
+                            ))}
+                          </div>
+
+                          {/* ── Recommendations ── */}
+                          {recs.length > 0 ? (
+                            <div className="space-y-1">
+                              {recs.map((r, i) => (
+                                <div
+                                  key={i}
+                                  className={`rounded-md border px-2 py-1.5 text-[11px] ${
+                                    r.priority === "warning"
+                                      ? "border-amber-200 bg-amber-50 text-amber-800 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-200"
+                                      : r.priority === "suggestion"
+                                      ? "border-blue-200 bg-blue-50 text-blue-800 dark:border-blue-800 dark:bg-blue-950 dark:text-blue-200"
+                                      : "border-foreground/10 bg-foreground/[0.02] text-foreground/60"
+                                  }`}
+                                >
+                                  <span className="font-medium">{r.icon} {r.label}</span>
+                                  <p className="text-[10px] opacity-80 mt-0.5">{r.description}</p>
+                                </div>
+                              ))}
+                            </div>
+                          ) : null}
+
+                          {/* ── Accordion sections ── */}
+                          {filteredSections.map((section) => {
+                            const isOpen = soilOpenSections.has(section.key);
+                            return (
+                              <div key={section.key} className="rounded-md border border-foreground/10 overflow-hidden">
+                                <button
+                                  type="button"
+                                  className="flex w-full items-center gap-1.5 px-2.5 py-1.5 text-left hover:bg-foreground/[0.03] transition-colors"
+                                  onClick={() => {
+                                    setSoilOpenSections((prev) => {
+                                      const next = new Set(prev);
+                                      if (next.has(section.key)) next.delete(section.key);
+                                      else next.add(section.key);
+                                      return next;
+                                    });
+                                  }}
+                                >
+                                  <span className="text-xs leading-none">{section.icon}</span>
+                                  <span className="flex-1 text-[10px] font-semibold text-foreground/60 uppercase tracking-wide">{section.label}</span>
+                                  <span className="rounded-full bg-foreground/5 px-1.5 py-0.5 text-[8px] text-foreground/40">Niv. {section.level}</span>
+                                  <span className="text-[9px] text-foreground/30">{isOpen ? "▲" : "▼"}</span>
+                                </button>
+
+                                {isOpen ? (
+                                  <div className="px-2.5 pb-2 pt-1 space-y-2">
+                                    {/* ── 1. Jordtype ── */}
+                                    {section.key === "type" ? (
+                                      <div className="grid grid-cols-1 gap-2">
+                                        {soilSelect("Jordtype", profile.baseType, SOIL_BASE_TYPE_LABELS, (v) => updateSoilField({ baseType: v || undefined }))}
+                                        {profile.baseType && SOIL_BASE_TYPE_DESC[profile.baseType] ? (
+                                          <p className="text-[10px] text-foreground/40 italic leading-snug">{SOIL_BASE_TYPE_DESC[profile.baseType]}</p>
+                                        ) : null}
+                                        <div className="grid grid-cols-2 gap-2">
+                                          {soilSelect("Farve", profile.color, SOIL_COLOR_LABELS, (v) => updateSoilField({ color: v || undefined }))}
+                                          {soilSelect("Struktur ved berøring", profile.texture, SOIL_TEXTURE_LABELS, (v) => updateSoilField({ texture: v || undefined }))}
+                                        </div>
+                                      </div>
+                                    ) : null}
+
+                                    {/* ── 2. Fugt & dræning ── */}
+                                    {section.key === "moisture" ? (
+                                      <div className="grid grid-cols-2 gap-2">
+                                        {soilSelect("Dræning", profile.drainage, DRAINAGE_LABELS, (v) => updateSoilField({ drainage: v || undefined }))}
+                                        {soilSelect("Aktuel fugtighed", profile.moisture, MOISTURE_LABELS, (v) => updateSoilField({ moisture: v || undefined }))}
+                                        <div className="col-span-2">
+                                          {soilToggle("Tendens til udtørring", profile.droughtProne, (v) => updateSoilField({ droughtProne: v }))}
+                                        </div>
+                                      </div>
+                                    ) : null}
+
+                                    {/* ── 3. Liv i jorden ── */}
+                                    {section.key === "life" ? (
+                                      <div className="grid grid-cols-2 gap-2">
+                                        {soilSelect("Regnorme ved gravning", profile.earthworms, EARTHWORM_LABELS, (v) => updateSoilField({ earthworms: v || undefined }))}
+                                        {soilSelect("Generel vurdering", profile.soilHealth, SOIL_HEALTH_LABELS, (v) => updateSoilField({ soilHealth: v || undefined }))}
+                                        <div className="col-span-2">
+                                          {soilToggle("Synligt svampeflor", profile.fungalNetwork, (v) => updateSoilField({ fungalNetwork: v }))}
+                                        </div>
+                                      </div>
+                                    ) : null}
+
+                                    {/* ── 4. Organisk indhold ── */}
+                                    {section.key === "organic" ? (
+                                      <div className="space-y-2">
+                                        {soilSelect("Organisk indhold (visuelt)", profile.organicVisual, ORGANIC_LABELS, (v) => updateSoilField({ organicVisual: v || undefined }))}
+                                        <div className="grid grid-cols-2 gap-2">
+                                          <div>
+                                            <label className="block text-[10px] font-semibold text-foreground/50 uppercase tracking-wide">Organisk % (valgfrit)</label>
+                                            <input
+                                              type="number"
+                                              min={0}
+                                              max={20}
+                                              step={0.5}
+                                              className="mt-0.5 w-full rounded-md border border-border bg-background px-2 py-1.5 text-xs shadow-sm"
+                                              value={profile.organicPercent ?? ""}
+                                              onChange={(e) => updateSoilField({ organicPercent: e.target.value ? Number(e.target.value) : undefined })}
+                                              placeholder="0–20"
+                                            />
+                                          </div>
+                                          <div>
+                                            <label className="block text-[10px] font-semibold text-foreground/50 uppercase tracking-wide">Seneste tilsætning</label>
+                                            <input
+                                              className="mt-0.5 w-full rounded-md border border-border bg-background px-2 py-1.5 text-xs shadow-sm"
+                                              value={profile.lastAmendment ?? ""}
+                                              onChange={(e) => updateSoilField({ lastAmendment: e.target.value || undefined })}
+                                              placeholder="Fx Kompost forår 2024"
+                                            />
+                                          </div>
+                                        </div>
+                                      </div>
+                                    ) : null}
+
+                                    {/* ── 5. Kompost ── */}
+                                    {section.key === "compost" ? (
+                                      <div className="space-y-2">
+                                        <div>
+                                          <label className="block text-[10px] font-semibold text-foreground/50 uppercase tracking-wide">Komposttype (vælg alle relevante)</label>
+                                          <div className="mt-0.5 flex flex-wrap gap-1">
+                                            {(Object.entries(COMPOST_TYPE_LABELS) as [string, string][]).map(([k, v]) => {
+                                              const active = profile.compostTypes?.includes(k as never) ?? false;
+                                              return (
+                                                <button
+                                                  key={k}
+                                                  type="button"
+                                                  className={`rounded-full px-2 py-0.5 text-[10px] font-medium transition-all ${
+                                                    active
+                                                      ? "bg-accent text-white shadow-sm"
+                                                      : "bg-foreground/5 text-foreground/50 hover:bg-foreground/10"
+                                                  }`}
+                                                  onClick={() => {
+                                                    const current = profile.compostTypes ?? [];
+                                                    const next = active ? current.filter((c) => c !== k) : [...current, k];
+                                                    updateSoilField({ compostTypes: next.length ? next as never[] : undefined });
+                                                  }}
+                                                >
+                                                  {v}
+                                                </button>
+                                              );
+                                            })}
+                                          </div>
+                                        </div>
+                                        <div className="grid grid-cols-2 gap-2">
+                                          {soilSelect("Modenhed", profile.compostMaturity, COMPOST_MATURITY_LABELS, (v) => updateSoilField({ compostMaturity: v || undefined }))}
+                                          {soilSelect("Mængde tilsat", profile.compostAmount, COMPOST_AMOUNT_LABELS, (v) => updateSoilField({ compostAmount: v || undefined }))}
+                                        </div>
+                                        <div className="grid grid-cols-2 gap-2">
+                                          <div>
+                                            <label className="block text-[10px] font-semibold text-foreground/50 uppercase tracking-wide">Senest tilsat</label>
+                                            <input
+                                              className="mt-0.5 w-full rounded-md border border-border bg-background px-2 py-1.5 text-xs shadow-sm"
+                                              value={profile.compostLastApplied ?? ""}
+                                              onChange={(e) => updateSoilField({ compostLastApplied: e.target.value || undefined })}
+                                              placeholder="Fx Efterår 2024"
+                                            />
+                                          </div>
+                                          <div>
+                                            <label className="block text-[10px] font-semibold text-foreground/50 uppercase tracking-wide">Noter</label>
+                                            <input
+                                              className="mt-0.5 w-full rounded-md border border-border bg-background px-2 py-1.5 text-xs shadow-sm"
+                                              value={profile.compostNotes ?? ""}
+                                              onChange={(e) => updateSoilField({ compostNotes: e.target.value || undefined })}
+                                              placeholder="Fx kilde, kvalitet"
+                                            />
+                                          </div>
+                                        </div>
+                                      </div>
+                                    ) : null}
+
+                                    {/* ── 6. pH ── */}
+                                    {section.key === "ph" ? (
+                                      <div className="space-y-2">
+                                        <div className="grid grid-cols-2 gap-2">
+                                          <div>
+                                            <label className="block text-[10px] font-semibold text-foreground/50 uppercase tracking-wide">pH (målt)</label>
+                                            <input
+                                              type="number"
+                                              min={4}
+                                              max={8.5}
+                                              step={0.1}
+                                              className="mt-0.5 w-full rounded-md border border-border bg-background px-2 py-1.5 text-xs shadow-sm"
+                                              value={profile.phMeasured ?? ""}
+                                              onChange={(e) => updateSoilField({ phMeasured: e.target.value ? Number(e.target.value) : undefined })}
+                                              placeholder="4.0–8.5"
+                                            />
+                                          </div>
+                                          {soilSelect("pH (kategori)", profile.phCategory, PH_CATEGORY_LABELS, (v) => updateSoilField({ phCategory: v || undefined }))}
+                                        </div>
+                                        <div className="grid grid-cols-2 gap-2">
+                                          {soilSelect("Målemetode", profile.phMethod, PH_METHOD_LABELS, (v) => updateSoilField({ phMethod: v || undefined }))}
+                                          <div>
+                                            <label className="block text-[10px] font-semibold text-foreground/50 uppercase tracking-wide">Senest målt</label>
+                                            <input
+                                              type="date"
+                                              className="mt-0.5 w-full rounded-md border border-border bg-background px-2 py-1.5 text-xs shadow-sm"
+                                              value={profile.phLastMeasured ?? ""}
+                                              onChange={(e) => updateSoilField({ phLastMeasured: e.target.value || undefined })}
+                                            />
+                                          </div>
+                                        </div>
+                                      </div>
+                                    ) : null}
+
+                                    {/* ── 7. Kalkindhold ── */}
+                                    {section.key === "lime" ? (
+                                      <div className="grid grid-cols-2 gap-2">
+                                        {soilSelect("Kalkindhold", profile.limeContent, LIME_CONTENT_LABELS, (v) => updateSoilField({ limeContent: v || undefined }))}
+                                        {soilSelect("Kalk tilsat (type)", profile.limeType, LIME_TYPE_LABELS, (v) => updateSoilField({ limeType: v || undefined }))}
+                                        <div className="col-span-2">
+                                          {soilToggle("Kalket inden for 3 år", profile.limedRecently, (v) => updateSoilField({ limedRecently: v }))}
+                                        </div>
+                                      </div>
+                                    ) : null}
+
+                                    {/* ── 8. NPK ── */}
+                                    {section.key === "npk" ? (
+                                      <div className="space-y-2">
+                                        <div className="grid grid-cols-2 gap-2">
+                                          {soilSelect("Kvælstof (N)", profile.nitrogen, NUTRIENT_LABELS, (v) => updateSoilField({ nitrogen: v || undefined }))}
+                                          {soilSelect("Fosfor (P)", profile.phosphorus, NUTRIENT_LABELS, (v) => updateSoilField({ phosphorus: v || undefined }))}
+                                          {soilSelect("Kalium (K)", profile.potassium, NUTRIENT_LABELS, (v) => updateSoilField({ potassium: v || undefined }))}
+                                          {soilSelect("Magnesium (Mg)", profile.magnesium, NUTRIENT_LABELS, (v) => updateSoilField({ magnesium: v || undefined }))}
+                                        </div>
+                                        <div className="grid grid-cols-2 gap-2">
+                                          {soilSelect("Kilde", profile.npkSource, NPK_SOURCE_LABELS, (v) => updateSoilField({ npkSource: v || undefined }))}
+                                          <div>
+                                            <label className="block text-[10px] font-semibold text-foreground/50 uppercase tracking-wide">Analysedato</label>
+                                            <input
+                                              type="date"
+                                              className="mt-0.5 w-full rounded-md border border-border bg-background px-2 py-1.5 text-xs shadow-sm"
+                                              value={profile.npkDate ?? ""}
+                                              onChange={(e) => updateSoilField({ npkDate: e.target.value || undefined })}
+                                            />
+                                          </div>
+                                        </div>
+                                      </div>
+                                    ) : null}
+
+                                    {/* ── 9. Kornstørrelse ── */}
+                                    {section.key === "grain" ? (
+                                      <div className="space-y-2">
+                                        <div className="grid grid-cols-3 gap-2">
+                                          {(["clay", "sand", "silt"] as const).map((grain) => {
+                                            const key = `${grain}Percent` as "clayPercent" | "sandPercent" | "siltPercent";
+                                            const labels = { clay: "Ler %", sand: "Sand %", silt: "Silt %" };
+                                            return (
+                                              <div key={grain}>
+                                                <label className="block text-[10px] font-semibold text-foreground/50 uppercase tracking-wide">{labels[grain]}</label>
+                                                <input
+                                                  type="number"
+                                                  min={0}
+                                                  max={100}
+                                                  step={1}
+                                                  className="mt-0.5 w-full rounded-md border border-border bg-background px-2 py-1.5 text-xs shadow-sm"
+                                                  value={profile[key] ?? ""}
+                                                  onChange={(e) => updateSoilField({ [key]: e.target.value ? Number(e.target.value) : undefined })}
+                                                  placeholder="0–100"
+                                                />
+                                              </div>
+                                            );
+                                          })}
+                                        </div>
+                                        {soilSelect("Kompression", profile.compression, COMPRESSION_LABELS, (v) => updateSoilField({ compression: v || undefined }))}
+                                      </div>
+                                    ) : null}
+                                  </div>
+                                ) : null}
+                              </div>
+                            );
+                          })}
+
+                          {/* ── Soil log / change history ── */}
+                          <div className="rounded-md border border-foreground/10 overflow-hidden">
+                            <button
+                              type="button"
+                              className="flex w-full items-center gap-1.5 px-2.5 py-1.5 text-left hover:bg-foreground/[0.03] transition-colors"
+                              onClick={() => setSoilLogOpen(!soilLogOpen)}
+                            >
+                              <span className="text-xs leading-none">📋</span>
+                              <span className="flex-1 text-[10px] font-semibold text-foreground/60 uppercase tracking-wide">
+                                Ændringslog ({logEntries.length})
+                              </span>
+                              <span className="text-[9px] text-foreground/30">{soilLogOpen ? "▲" : "▼"}</span>
+                            </button>
+                            {soilLogOpen ? (
+                              <div className="px-2.5 pb-2 pt-1 space-y-2">
+                                {/* Add entry */}
+                                <div className="grid grid-cols-[1fr_auto] gap-1.5">
+                                  <select
+                                    className="rounded-md border border-border bg-background px-2 py-1 text-[11px] shadow-sm"
+                                    value={soilLogAction}
+                                    onChange={(e) => setSoilLogAction(e.target.value as SoilLogAction)}
+                                  >
+                                    {Object.entries(SOIL_LOG_ACTION_LABELS).map(([k, v]) => (
+                                      <option key={k} value={k}>{v}</option>
+                                    ))}
+                                  </select>
+                                  <button
+                                    type="button"
+                                    className="rounded-md border border-border bg-background px-2 py-1 text-[11px] font-medium text-foreground/70 hover:bg-foreground/5 transition-colors shadow-sm"
+                                    onClick={() => {
+                                      addSoilLogEntry({
+                                        id: crypto.randomUUID(),
+                                        profileId: profile.id,
+                                        date: new Date().toISOString().slice(0, 10),
+                                        action: soilLogAction,
+                                        notes: soilLogNotes || undefined,
+                                      });
+                                      setSoilLogNotes("");
+                                      setSoilDataVersion((v) => v + 1);
+                                    }}
+                                  >
+                                    + Tilføj
+                                  </button>
+                                </div>
+                                <input
+                                  className="w-full rounded-md border border-border bg-background px-2 py-1 text-[11px] shadow-sm"
+                                  value={soilLogNotes}
+                                  onChange={(e) => setSoilLogNotes(e.target.value)}
+                                  placeholder="Note (valgfrit)"
+                                />
+
+                                {/* Existing entries */}
+                                {logEntries.length > 0 ? (
+                                  <div className="max-h-32 overflow-y-auto space-y-0.5">
+                                    {logEntries.map((entry) => (
+                                      <div
+                                        key={entry.id}
+                                        className="flex items-center gap-1.5 rounded px-1.5 py-1 text-[10px] text-foreground/60 hover:bg-foreground/[0.03]"
+                                      >
+                                        <span className="shrink-0 text-foreground/40">{entry.date}</span>
+                                        <span className="flex-1 truncate">{SOIL_LOG_ACTION_LABELS[entry.action]}{entry.notes ? ` — ${entry.notes}` : ""}</span>
+                                        <button
+                                          type="button"
+                                          className="shrink-0 rounded px-1 text-foreground/30 hover:text-red-500"
+                                          onClick={() => { deleteSoilLogEntry(entry.id); setSoilDataVersion((v) => v + 1); }}
+                                        >
+                                          ✕
+                                        </button>
+                                      </div>
+                                    ))}
+                                  </div>
+                                ) : (
+                                  <p className="text-[10px] text-foreground/40 italic">Ingen registreringer endnu.</p>
+                                )}
+                              </div>
+                            ) : null}
+                          </div>
+
+                          {/* ── Profile notes ── */}
+                          <div>
+                            <label className="block text-[10px] font-semibold text-foreground/50 uppercase tracking-wide">Jordnoter</label>
+                            <textarea
+                              className="mt-0.5 w-full rounded-md border border-border bg-background px-2 py-1.5 text-xs shadow-sm resize-none"
+                              rows={2}
+                              value={profile.notes ?? ""}
+                              onChange={(e) => updateSoilField({ notes: e.target.value || undefined })}
+                              placeholder="Generelle noter om denne jord…"
+                            />
+                          </div>
+                        </>
+                      )}
+                    </div>
+                  ) : null}
+                </div>
+              );
+            })() : null}
+
             {/* ── Egne noter (collapsible: Tekst-noter + Foto) ── */}
-            <div className="rounded-lg border border-foreground/10 overflow-hidden">
+            <div className="rounded-lg border border-foreground/10 bg-foreground/[0.02] overflow-hidden">
               <button
                 type="button"
-                className="flex w-full items-center gap-1.5 px-3 py-2 text-left hover:bg-foreground/5 transition-colors"
+                className="flex w-full items-center gap-2 px-2.5 py-1.5 text-left hover:bg-foreground/[0.03] transition-colors"
                 onClick={() => setContentNotesOpen(!contentNotesOpen)}
               >
-                <span className="text-sm">📝</span>
-                <span className="flex-1 text-[11px] font-semibold text-foreground/60 uppercase tracking-wide">Egne noter</span>
+                <span className="text-[10px] font-semibold text-foreground/50 uppercase tracking-wide">📝 Egne noter</span>
                 {/* Badge: show indicator if notes or photo exist */}
                 {(draftNotes.trim() || selected.feature.properties?.photoUrl) ? (
-                  <span className="w-1.5 h-1.5 rounded-full bg-accent shrink-0" />
-                ) : null}
-                <span className="text-[10px] text-foreground/30">{contentNotesOpen ? "▲" : "▼"}</span>
+                  <>
+                    <span className="text-[9px] text-foreground/30">·</span>
+                    <span className="text-[11px] text-foreground/70 truncate flex-1">Har indhold</span>
+                  </>
+                ) : (
+                  <span className="text-[11px] text-foreground/40 italic truncate flex-1">(ingen noter)</span>
+                )}
+                <span className="text-[9px] text-foreground/30 shrink-0">{contentNotesOpen ? "▲" : "▼"}</span>
               </button>
               {contentNotesOpen ? (
                 <div className="border-t border-foreground/10 px-3 py-2.5 space-y-3">
