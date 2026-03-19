@@ -229,6 +229,43 @@ const M_PER_DEG_LAT = 111_320;
 const MAX_PHOTO_SIZE_BYTES = 2 * 1024 * 1024;
 
 /**
+ * Read an SSE (Server-Sent Events) stream and accumulate text chunks.
+ * Returns the full accumulated text.  Calls `onChunk` with the running
+ * total after each chunk so the caller can update UI state.
+ */
+async function readSSEStream(
+  response: Response,
+  onChunk: (accumulated: string) => void,
+): Promise<string> {
+  const reader = response.body?.getReader();
+  if (!reader) throw new Error("Ingen stream modtaget");
+  const decoder = new TextDecoder();
+  let text = "";
+  let buffer = "";
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const lines = buffer.split("\n");
+    buffer = lines.pop() ?? "";
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (!trimmed || !trimmed.startsWith("data: ")) continue;
+      const data = trimmed.slice(6);
+      if (data === "[DONE]") continue;
+      try {
+        const parsed = JSON.parse(data);
+        if (parsed.content) {
+          text += parsed.content;
+          onChunk(text);
+        }
+      } catch { /* skip non-JSON lines */ }
+    }
+  }
+  return text;
+}
+
+/**
  * Convert a GeoJSON coordinate ring ([lng, lat]) to local metric coordinates
  * (meters from centroid).  Returns the centroid, scale factors, and the
  * converted ring so callers don't need to repeat this boilerplate.
@@ -3528,38 +3565,14 @@ export function GardenMapClient({ userId }: { userId: string }) {
         }),
       });
       if (!res.ok) throw new Error("API error");
-      const reader = res.body?.getReader();
-      if (!reader) throw new Error("No reader");
-      const decoder = new TextDecoder();
-      let assistantText = "";
       setGuideAiMessages((prev) => [...prev, { role: "assistant", content: "" }]);
-
-      let buffer = "";
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split("\n");
-        buffer = lines.pop() ?? "";
-        for (const line of lines) {
-          const trimmed = line.trim();
-          if (!trimmed || !trimmed.startsWith("data: ")) continue;
-          const data = trimmed.slice(6);
-          if (data === "[DONE]") continue;
-          try {
-            const parsed = JSON.parse(data);
-            if (parsed.content) {
-              assistantText += parsed.content;
-              const finalText = assistantText;
-              setGuideAiMessages((prev) => {
-                const copy = [...prev];
-                copy[copy.length - 1] = { role: "assistant", content: finalText };
-                return copy;
-              });
-            }
-          } catch { /* skip */ }
-        }
-      }
+      await readSSEStream(res, (text) => {
+        setGuideAiMessages((prev) => {
+          const copy = [...prev];
+          copy[copy.length - 1] = { role: "assistant", content: text };
+          return copy;
+        });
+      });
     } catch {
       setGuideAiMessages((prev) => [...prev, { role: "assistant", content: "⚠️ Kunne ikke få svar. Prøv igen." }]);
     } finally {
@@ -4002,44 +4015,15 @@ export function GardenMapClient({ userId }: { userId: string }) {
         throw new Error(errData.error || `HTTP ${response.status}`);
       }
 
-      // Read streaming response
-      const reader = response.body?.getReader();
-      if (!reader) throw new Error("Ingen stream modtaget");
-
-      const decoder = new TextDecoder();
-      let assistantText = "";
-      let buffer = "";
-
-      // Add empty assistant message that we'll update
+      // Read streaming response — add empty assistant message, then update it
       setChatMessages((prev) => [...prev, { role: "assistant", content: "", ts: Date.now() }]);
-
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-
-        buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split("\n");
-        buffer = lines.pop() ?? "";
-
-        for (const line of lines) {
-          const trimmed = line.trim();
-          if (!trimmed || !trimmed.startsWith("data: ")) continue;
-          const data = trimmed.slice(6);
-          if (data === "[DONE]") continue;
-
-          try {
-            const parsed = JSON.parse(data);
-            if (parsed.content) {
-              assistantText += parsed.content;
-              setChatMessages((prev) => {
-                const updated = [...prev];
-                updated[updated.length - 1] = { role: "assistant", content: assistantText, ts: Date.now() };
-                return updated;
-              });
-            }
-          } catch { /* skip */ }
-        }
-      }
+      const assistantText = await readSSEStream(response, (text) => {
+        setChatMessages((prev) => {
+          const updated = [...prev];
+          updated[updated.length - 1] = { role: "assistant", content: text, ts: Date.now() };
+          return updated;
+        });
+      });
 
       if (!assistantText) {
         // Remove empty assistant message if no content was received
