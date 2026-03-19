@@ -122,18 +122,11 @@ const STEPS: TourStep[] = [
     body: "Får du et godt råd? Tryk '📋 Gem som opgave' på svaret, og det havner direkte i din opgaveliste med dato og beskrivelse.",
     position: "left",
   },
-  // ── 17 · Opgaver ──────────────────────────────────────────
+  // ── 17 · Planlæg ───────────────────────────────────────────
   {
     target: "tab-tasks",
-    title: "📋 Opgavelisten",
-    body: "Alle haveopgaver samlet ét sted — vanding, beskæring, såning, gødskning. Opret manuelt eller gem fra AI-rådgiveren. Kryds af når du er færdig!",
-    position: "top",
-  },
-  // ── 18 · Årshjul ──────────────────────────────────────────
-  {
-    target: "tab-calendar",
-    title: "📅 Årshjulet",
-    body: "Et visuelt årshjul viser hvornår du skal forspire, så, plante ud og høste — måned for måned — baseret på planterne i din have.",
+    title: "📋 Planlæg",
+    body: "Opgaver og Årshjul samlet i én fane! 📋 Opgavelisten holder styr på alle haveopgaver. 📅 Årshjulet viser hvornår du skal forspire, så, plante ud og høste.",
     position: "top",
   },
   // ── 19 · Konflikter ───────────────────────────────────────
@@ -164,19 +157,19 @@ const STEPS: TourStep[] = [
     body: "Aktuel temperatur, luftfugtighed, vind og frostvarsel — direkte i rådgiver-fanen. Plus 7-dages prognose og statistik over 30/90/365 dage.",
     position: "left",
   },
-  // ── 23 · Alle faner & menu ────────────────────────────────
+  // ── 23 · Icon bar ──────────────────────────────────────────
   {
-    target: "sidebar-dropdown",
-    title: "▾ Alle faner",
-    body: "Kan du ikke finde en fane? Åbn menuen her for at se alle 10 faner, genstart rundvisningen eller logge ud.",
-    position: "top",
+    target: "tab-create",
+    title: "🎯 Icon-baren",
+    body: "Alle faner er samlet i icon-baren til højre. Klik på et ikon for at åbne/lukke panelet. Brug tastatur-genveje 1-0 for hurtig adgang.",
+    position: "left",
   },
-  // ── 24 · Tilpas genveje ───────────────────────────────────
+  // ── 24 · Guide til App ────────────────────────────────────
   {
-    target: "sidebar-settings",
-    title: "⚙️ Tilpas din genvejslinje",
-    body: "Vælg hvilke faner der vises som genveje — og træk-og-slip for at ændre rækkefølgen. Din opsætning gemmes automatisk.",
-    position: "top",
+    target: "guide-btn",
+    title: "❓ Guide til App",
+    body: "Tryk på ❓-knappen nederst til venstre på kortet for at starte denne rundvisning igen eller åbne AI-assistenten 'Spørg om appen' — den kender hele GardenOS!",
+    position: "right",
   },
   // ── 25 · Feedback ─────────────────────────────────────────
   {

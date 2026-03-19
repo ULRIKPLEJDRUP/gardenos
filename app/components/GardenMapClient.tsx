@@ -3447,6 +3447,78 @@ export function GardenMapClient({ userId }: { userId: string }) {
   const [sidebarTabPickerOpen, setSidebarTabPickerOpen] = useState(false);
   const [sidebarDropdownOpen, setSidebarDropdownOpen] = useState(false);
   const [forceStartTour, setForceStartTour] = useState(false);
+
+  // ── Guide overlay state (floating ❓ on map) ──
+  const [guidePopoverOpen, setGuidePopoverOpen] = useState(false);
+  const [guideAiOpen, setGuideAiOpen] = useState(false);
+  const [guideAiMessages, setGuideAiMessages] = useState<{ role: "user" | "assistant"; content: string }[]>([]);
+  const [guideAiInput, setGuideAiInput] = useState("");
+  const [guideAiLoading, setGuideAiLoading] = useState(false);
+  const guideAiScrollRef = useRef<HTMLDivElement>(null);
+  const guideAiInputRef = useRef<HTMLInputElement>(null);
+
+  const sendGuideAiMessage = useCallback(async () => {
+    const text = guideAiInput.trim();
+    if (!text || guideAiLoading) return;
+    const userMsg = { role: "user" as const, content: text };
+    setGuideAiMessages((prev) => [...prev, userMsg]);
+    setGuideAiInput("");
+    setGuideAiLoading(true);
+
+    try {
+      const res = await fetch("/api/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          messages: [...guideAiMessages, userMsg],
+          persona: "app-guide",
+        }),
+      });
+      if (!res.ok) throw new Error("API error");
+      const reader = res.body?.getReader();
+      if (!reader) throw new Error("No reader");
+      const decoder = new TextDecoder();
+      let assistantText = "";
+      setGuideAiMessages((prev) => [...prev, { role: "assistant", content: "" }]);
+
+      let buffer = "";
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split("\n");
+        buffer = lines.pop() ?? "";
+        for (const line of lines) {
+          const trimmed = line.trim();
+          if (!trimmed || !trimmed.startsWith("data: ")) continue;
+          const data = trimmed.slice(6);
+          if (data === "[DONE]") continue;
+          try {
+            const parsed = JSON.parse(data);
+            if (parsed.content) {
+              assistantText += parsed.content;
+              const finalText = assistantText;
+              setGuideAiMessages((prev) => {
+                const copy = [...prev];
+                copy[copy.length - 1] = { role: "assistant", content: finalText };
+                return copy;
+              });
+            }
+          } catch { /* skip */ }
+        }
+      }
+    } catch {
+      setGuideAiMessages((prev) => [...prev, { role: "assistant", content: "⚠️ Kunne ikke få svar. Prøv igen." }]);
+    } finally {
+      setGuideAiLoading(false);
+    }
+  }, [guideAiInput, guideAiLoading, guideAiMessages]);
+
+  // Auto-scroll guide chat
+  useEffect(() => {
+    guideAiScrollRef.current?.scrollTo({ top: guideAiScrollRef.current.scrollHeight, behavior: "smooth" });
+  }, [guideAiMessages]);
+
   // Drag-and-drop reorder state for the picker
   const [dragIdx, setDragIdx] = useState<number | null>(null);
   const [dragOverIdx, setDragOverIdx] = useState<number | null>(null);
@@ -8161,6 +8233,132 @@ export function GardenMapClient({ userId }: { userId: string }) {
             <div className="text-sm text-foreground/80">Indlæser kort…</div>
           </div>
         ) : null}
+
+        {/* ── Floating Guide Button (bottom-left on map) ── */}
+        <div className="absolute bottom-3 left-3 z-[1000] flex flex-col items-start gap-2">
+          {/* Popover menu */}
+          {guidePopoverOpen && !guideAiOpen && (
+            <div className="mb-1 rounded-xl border border-border bg-white shadow-lg overflow-hidden animate-in fade-in slide-in-from-bottom-2 duration-200" style={{ width: 220 }}>
+              <div className="px-3 pt-3 pb-1.5">
+                <h3 className="text-[11px] font-bold text-foreground/80 uppercase tracking-wide">❓ Guide til App</h3>
+              </div>
+              <div className="px-1.5 pb-2 space-y-0.5">
+                <button
+                  type="button"
+                  className="w-full flex items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-xs font-medium text-foreground/70 hover:bg-accent/10 hover:text-accent transition-colors"
+                  onClick={() => { setGuidePopoverOpen(false); setForceStartTour(true); }}
+                >
+                  <span className="text-base">🎓</span>
+                  <div>
+                    <div className="font-semibold text-foreground/80">Guidet rundvisning</div>
+                    <div className="text-[10px] text-foreground/40 mt-0.5">25 trin — lær alle funktioner</div>
+                  </div>
+                </button>
+                <button
+                  type="button"
+                  className="w-full flex items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-xs font-medium text-foreground/70 hover:bg-accent/10 hover:text-accent transition-colors"
+                  onClick={() => { setGuidePopoverOpen(false); setGuideAiOpen(true); setTimeout(() => guideAiInputRef.current?.focus(), 150); }}
+                >
+                  <span className="text-base">💡</span>
+                  <div>
+                    <div className="font-semibold text-foreground/80">Spørg om appen</div>
+                    <div className="text-[10px] text-foreground/40 mt-0.5">AI-assistent der kender GardenOS</div>
+                  </div>
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* AI Guide Chat Bubble */}
+          {guideAiOpen && (
+            <div className="mb-1 rounded-2xl border border-border bg-white shadow-2xl flex flex-col overflow-hidden animate-in fade-in slide-in-from-bottom-2 duration-200" style={{ width: 320, height: 420 }}>
+              {/* Header */}
+              <div className="flex items-center justify-between px-3 py-2.5 border-b border-border/50 bg-gradient-to-r from-accent/5 to-transparent">
+                <div className="flex items-center gap-2">
+                  <span className="text-sm">💡</span>
+                  <span className="text-xs font-bold text-foreground/80">Spørg om appen</span>
+                </div>
+                <button
+                  type="button"
+                  className="rounded-md p-1 text-foreground/40 hover:bg-foreground/5 hover:text-foreground/70 transition-colors"
+                  onClick={() => setGuideAiOpen(false)}
+                >✕</button>
+              </div>
+              {/* Messages */}
+              <div ref={guideAiScrollRef} className="flex-1 overflow-y-auto px-3 py-2 space-y-2">
+                {guideAiMessages.length === 0 && (
+                  <div className="text-center py-6">
+                    <div className="text-2xl mb-2">💡</div>
+                    <p className="text-[11px] text-foreground/50 leading-relaxed">Spørg mig om hvad som helst i GardenOS!<br/>F.eks. &quot;Hvordan tegner jeg et bed?&quot;</p>
+                    <div className="mt-3 flex flex-wrap justify-center gap-1">
+                      {["Hvordan opretter jeg et bed?", "Hvad gør Scan?", "Hvordan bruger jeg Årshjulet?"].map((q) => (
+                        <button
+                          key={q}
+                          type="button"
+                          className="rounded-full border border-border px-2.5 py-1 text-[10px] text-foreground/50 hover:bg-accent/10 hover:text-accent hover:border-accent/30 transition-colors"
+                          onClick={() => { setGuideAiInput(q); setTimeout(() => guideAiInputRef.current?.focus(), 50); }}
+                        >{q}</button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                {guideAiMessages.map((msg, i) => (
+                  <div key={i} className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}>
+                    <div className={`rounded-xl px-3 py-2 text-xs leading-relaxed max-w-[85%] whitespace-pre-wrap ${
+                      msg.role === "user"
+                        ? "bg-accent text-white rounded-br-sm"
+                        : "bg-foreground/[0.04] text-foreground/80 border border-border/40 rounded-bl-sm"
+                    }`}>
+                      {msg.content || (guideAiLoading ? <span className="inline-flex gap-1 text-foreground/30"><span className="animate-bounce" style={{animationDelay:"0ms"}}>·</span><span className="animate-bounce" style={{animationDelay:"150ms"}}>·</span><span className="animate-bounce" style={{animationDelay:"300ms"}}>·</span></span> : null)}
+                    </div>
+                  </div>
+                ))}
+              </div>
+              {/* Input */}
+              <div className="border-t border-border/50 p-2">
+                <form onSubmit={(e) => { e.preventDefault(); sendGuideAiMessage(); }} className="flex gap-1.5">
+                  <input
+                    ref={guideAiInputRef}
+                    type="text"
+                    value={guideAiInput}
+                    onChange={(e) => setGuideAiInput(e.target.value)}
+                    placeholder="Stil et spørgsmål om appen…"
+                    className="flex-1 rounded-lg border border-border bg-background px-3 py-1.5 text-xs text-foreground placeholder:text-foreground/30 focus:outline-none focus:border-accent/40 focus:ring-1 focus:ring-accent/20"
+                    disabled={guideAiLoading}
+                  />
+                  <button
+                    type="submit"
+                    disabled={guideAiLoading || !guideAiInput.trim()}
+                    className="rounded-lg bg-accent px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-40 hover:bg-accent/90 transition-colors"
+                  >→</button>
+                </form>
+              </div>
+            </div>
+          )}
+
+          {/* The floating ❓ button */}
+          <button
+            type="button"
+            data-tour="guide-btn"
+            className={`w-8 h-8 rounded-full flex items-center justify-center transition-all shadow-md border ${
+              guidePopoverOpen || guideAiOpen
+                ? "bg-accent text-white border-accent shadow-accent/20"
+                : "bg-white/80 text-foreground/35 border-border/50 hover:bg-white hover:text-foreground/60 hover:shadow-lg backdrop-blur-sm"
+            }`}
+            onClick={() => {
+              if (guideAiOpen) { setGuideAiOpen(false); return; }
+              setGuidePopoverOpen((v) => !v);
+            }}
+            title="Guide til App"
+          >
+            <span className="text-sm font-bold leading-none">?</span>
+          </button>
+        </div>
+
+        {/* Click-away for guide popover */}
+        {guidePopoverOpen && (
+          <div className="absolute inset-0 z-[999]" onClick={() => setGuidePopoverOpen(false)} />
+        )}
       </div>
 
       {/* ── Mobile Bottom Navigation (customisable) ── */}
@@ -8287,15 +8485,6 @@ export function GardenMapClient({ userId }: { userId: string }) {
           );
         })}
         <div className="w-6 h-px bg-border my-1.5" />
-        <button
-          type="button"
-          className="flex flex-col items-center justify-center w-10 h-10 rounded-xl text-foreground/35 hover:bg-foreground/[0.06] hover:text-foreground/60 transition-all"
-          onClick={() => setForceStartTour(true)}
-          title="Rundvisning"
-        >
-          <span className="text-[17px] leading-none">🎓</span>
-          <span className="text-[7px] font-semibold mt-0.5 text-foreground/30">Guide</span>
-        </button>
         {isAdmin && (
           <a
             href="/admin"
