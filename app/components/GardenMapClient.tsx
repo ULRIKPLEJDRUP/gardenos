@@ -8234,8 +8234,8 @@ export function GardenMapClient({ userId }: { userId: string }) {
           </div>
         ) : null}
 
-        {/* ── Floating Guide Button (bottom-left on map) ── */}
-        <div className="absolute bottom-3 left-3 z-[1000] flex flex-col items-start gap-2">
+        {/* ── Floating Guide Button (bottom-center on map) ── */}
+        <div className="absolute bottom-3 left-1/2 -translate-x-1/2 z-[1000] flex flex-col items-center gap-2">
           {/* Popover menu */}
           {guidePopoverOpen && !guideAiOpen && (
             <div className="mb-1 rounded-xl border border-border bg-white shadow-lg overflow-hidden animate-in fade-in slide-in-from-bottom-2 duration-200" style={{ width: 220 }}>
