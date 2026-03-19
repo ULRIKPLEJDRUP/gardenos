@@ -1,6 +1,6 @@
 "use client";
 // ---------------------------------------------------------------------------
-// GardenOS – Admin Panel: Invite Codes + User Management
+// GardenOS – Admin Panel (accordion layout)
 // ---------------------------------------------------------------------------
 import { useSession } from "next-auth/react";
 import { useCallback, useEffect, useState } from "react";
@@ -113,6 +113,18 @@ export default function AdminPage() {
   const [activityDetailId, setActivityDetailId] = useState<string | null>(null);
   const [activityLogs, setActivityLogs] = useState<ActivityLogEntry[]>([]);
   const [activityLogsLoading, setActivityLogsLoading] = useState(false);
+
+  // Accordion state – which sections are open
+  type SectionId = "invite" | "codes" | "users" | "activity" | "feedback" | "icons";
+  const [openSections, setOpenSections] = useState<Set<SectionId>>(new Set(["invite"]));
+  const toggleSection = (id: SectionId) => {
+    setOpenSections((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
 
   const fetchCodes = useCallback(async () => {
     try {
@@ -442,7 +454,7 @@ export default function AdminPage() {
 
   return (
     <div className="min-h-screen bg-[#f8faf6] px-4 py-8">
-      <div className="mx-auto max-w-2xl space-y-8">
+      <div className="mx-auto max-w-2xl space-y-3">
         {/* Header */}
         <div className="flex items-center justify-between">
           <div>
@@ -450,7 +462,7 @@ export default function AdminPage() {
               🛡️ Admin Panel
             </h1>
             <p className="mt-1 text-sm text-gray-500">
-              Administrér invitationskoder og brugere
+              Administrér brugere, invitationer og indhold
             </p>
           </div>
           <Link
@@ -461,12 +473,35 @@ export default function AdminPage() {
           </Link>
         </div>
 
+        {/* Summary dashboard */}
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+          <div className="rounded-xl bg-white border border-gray-200 p-4 text-center shadow-sm">
+            <p className="text-2xl font-bold text-gray-900">{users.length}</p>
+            <p className="text-xs text-gray-500 mt-1">👥 Brugere</p>
+          </div>
+          <div className="rounded-xl bg-white border border-gray-200 p-4 text-center shadow-sm">
+            <p className="text-2xl font-bold text-green-600">{unused.length}</p>
+            <p className="text-xs text-gray-500 mt-1">🔑 Ledige koder</p>
+          </div>
+          <div className="rounded-xl bg-white border border-gray-200 p-4 text-center shadow-sm">
+            <p className="text-2xl font-bold text-amber-600">{feedbackItems.filter(f => f.status === "new").length}</p>
+            <p className="text-xs text-gray-500 mt-1">💬 Ny feedback</p>
+          </div>
+          <div className="rounded-xl bg-white border border-gray-200 p-4 text-center shadow-sm">
+            <p className="text-2xl font-bold text-purple-600">{bankIcons.filter(i => i.status === "pending").length}</p>
+            <p className="text-xs text-gray-500 mt-1">🎨 Afventer ikoner</p>
+          </div>
+        </div>
+
         {/* ── Invite user section ── */}
-        <div className="rounded-xl border-2 border-green-200 bg-gradient-to-br from-green-50 to-white p-6 shadow-sm">
-          <h2 className="text-lg font-semibold text-gray-900">
-            📧 Invitér ny bruger
-          </h2>
-          <p className="mt-1 text-sm text-gray-500">
+        <div className="rounded-xl border border-gray-200 bg-white shadow-sm overflow-hidden">
+          <button type="button" onClick={() => toggleSection("invite")} className="w-full flex items-center justify-between px-6 py-4 text-left hover:bg-gray-50 transition-colors">
+            <h2 className="text-base font-semibold text-gray-900">📧 Invitér ny bruger</h2>
+            <span className={`text-gray-400 text-lg transition-transform ${openSections.has("invite") ? "rotate-90" : ""}`}>›</span>
+          </button>
+          {openSections.has("invite") && (
+          <div className="px-6 pb-6 border-t border-gray-100">
+          <p className="pt-4 text-sm text-gray-500">
             Opret en bruger og send login-detaljer direkte via email.
           </p>
           <div className="mt-4 flex flex-wrap items-end gap-3">
@@ -573,14 +608,23 @@ export default function AdminPage() {
               </div>
             </div>
           )}
+          </div>
+          )}
         </div>
 
-        {/* Generate section */}
-        <div className="rounded-xl border border-gray-200 bg-white p-6 shadow-sm">
-          <h2 className="text-lg font-semibold text-gray-900">
-            Generér invitationskoder
-          </h2>
-          <p className="mt-1 text-sm text-gray-500">
+        {/* ── Codes section ── */}
+        <div className="rounded-xl border border-gray-200 bg-white shadow-sm overflow-hidden">
+          <button type="button" onClick={() => toggleSection("codes")} className="w-full flex items-center justify-between px-6 py-4 text-left hover:bg-gray-50 transition-colors">
+            <div className="flex items-center gap-3">
+              <h2 className="text-base font-semibold text-gray-900">🔑 Invitationskoder</h2>
+              {unused.length > 0 && <span className="text-xs font-medium bg-green-100 text-green-700 px-2 py-0.5 rounded-full">{unused.length} ledige</span>}
+            </div>
+            <span className={`text-gray-400 text-lg transition-transform ${openSections.has("codes") ? "rotate-90" : ""}`}>›</span>
+          </button>
+          {openSections.has("codes") && (
+          <div className="px-6 pb-6 border-t border-gray-100">
+          <h3 className="text-sm font-semibold text-gray-700 pt-4 mb-2">Generér nye koder</h3>
+          <p className="text-sm text-gray-500">
             Del koden med folk du vil invitere. Hver kode kan kun bruges én gang.
           </p>
           <div className="mt-4 flex flex-wrap items-end gap-3">
@@ -621,13 +665,8 @@ export default function AdminPage() {
               {generating ? "Genererer…" : "✨ Generér"}
             </button>
           </div>
-        </div>
 
-        {/* Unused codes */}
-        <div className="rounded-xl border border-gray-200 bg-white p-6 shadow-sm">
-          <h2 className="text-lg font-semibold text-gray-900">
-            🔑 Ledige koder ({unused.length})
-          </h2>
+          <h3 className="text-sm font-semibold text-gray-700 pt-6 mb-2">Ledige koder ({unused.length})</h3>
           {loading ? (
             <p className="mt-3 text-sm text-gray-400">Indlæser…</p>
           ) : unused.length === 0 ? (
@@ -671,13 +710,21 @@ export default function AdminPage() {
               ))}
             </div>
           )}
+          </div>
+          )}
         </div>
 
-        {/* Users management */}
-        <div className="rounded-xl border border-gray-200 bg-white p-6 shadow-sm">
-          <h2 className="text-lg font-semibold text-gray-900">
-            👥 Brugere ({users.length})
-          </h2>
+        {/* ── Users section ── */}
+        <div className="rounded-xl border border-gray-200 bg-white shadow-sm overflow-hidden">
+          <button type="button" onClick={() => toggleSection("users")} className="w-full flex items-center justify-between px-6 py-4 text-left hover:bg-gray-50 transition-colors">
+            <div className="flex items-center gap-3">
+              <h2 className="text-base font-semibold text-gray-900">👥 Brugere</h2>
+              <span className="text-xs font-medium bg-gray-100 text-gray-600 px-2 py-0.5 rounded-full">{users.length}</span>
+            </div>
+            <span className={`text-gray-400 text-lg transition-transform ${openSections.has("users") ? "rotate-90" : ""}`}>›</span>
+          </button>
+          {openSections.has("users") && (
+          <div className="px-6 pb-6 border-t border-gray-100">
           {loading ? (
             <p className="mt-3 text-sm text-gray-400">Indlæser…</p>
           ) : users.length === 0 ? (
@@ -830,27 +877,30 @@ export default function AdminPage() {
               })}
             </div>
           )}
+          </div>
+          )}
         </div>
 
         {/* ── User Activity ── */}
-        <div className="rounded-xl border border-gray-200 bg-white p-6 shadow-sm">
-          <div className="flex items-center justify-between">
-            <div>
-              <h2 className="text-lg font-semibold text-gray-900">
-                📊 Brugeraktivitet
-              </h2>
-              <p className="mt-1 text-sm text-gray-500">
-                Logins og feature-brug (sidste 30 dage)
-              </p>
+        <div className="rounded-xl border border-gray-200 bg-white shadow-sm overflow-hidden">
+          <button type="button" onClick={() => toggleSection("activity")} className="w-full flex items-center justify-between px-6 py-4 text-left hover:bg-gray-50 transition-colors">
+            <div className="flex items-center gap-3">
+              <h2 className="text-base font-semibold text-gray-900">📊 Brugeraktivitet</h2>
+              <span className="text-xs text-gray-400">Sidste 30 dage</span>
             </div>
-            <button
-              type="button"
-              onClick={fetchActivity}
-              className="rounded-md border border-gray-300 bg-white px-3 py-1.5 text-xs text-gray-600 hover:bg-gray-50 transition-colors"
-            >
-              🔄 Opdatér
-            </button>
-          </div>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={(e) => { e.stopPropagation(); fetchActivity(); }}
+                className="rounded-md border border-gray-300 bg-white px-2 py-1 text-xs text-gray-600 hover:bg-gray-50 transition-colors"
+              >
+                🔄
+              </button>
+              <span className={`text-gray-400 text-lg transition-transform ${openSections.has("activity") ? "rotate-90" : ""}`}>›</span>
+            </div>
+          </button>
+          {openSections.has("activity") && (
+          <div className="px-6 pb-6 border-t border-gray-100">
           {loading ? (
             <p className="mt-3 text-sm text-gray-400">Indlæser…</p>
           ) : activityUsers.length === 0 ? (
@@ -1029,14 +1079,23 @@ export default function AdminPage() {
               })}
             </div>
           )}
+          </div>
+          )}
         </div>
 
         {/* ── Feedback overview ── */}
-        <div className="rounded-xl border border-gray-200 bg-white p-6 shadow-sm">
-          <h2 className="text-lg font-semibold text-gray-900">
-            💬 Feedback ({feedbackItems.length})
-          </h2>
-          <p className="mt-1 text-sm text-gray-500">
+        <div className="rounded-xl border border-gray-200 bg-white shadow-sm overflow-hidden">
+          <button type="button" onClick={() => toggleSection("feedback")} className="w-full flex items-center justify-between px-6 py-4 text-left hover:bg-gray-50 transition-colors">
+            <div className="flex items-center gap-3">
+              <h2 className="text-base font-semibold text-gray-900">💬 Feedback</h2>
+              {feedbackItems.length > 0 && <span className="text-xs font-medium bg-gray-100 text-gray-600 px-2 py-0.5 rounded-full">{feedbackItems.length}</span>}
+              {feedbackItems.filter(f => f.status === "new").length > 0 && <span className="text-xs font-medium bg-amber-100 text-amber-700 px-2 py-0.5 rounded-full">{feedbackItems.filter(f => f.status === "new").length} nye</span>}
+            </div>
+            <span className={`text-gray-400 text-lg transition-transform ${openSections.has("feedback") ? "rotate-90" : ""}`}>›</span>
+          </button>
+          {openSections.has("feedback") && (
+          <div className="px-6 pb-6 border-t border-gray-100">
+          <p className="pt-4 text-sm text-gray-500">
             Indmeldinger fra brugere – fejl, idéer, spørgsmål m.m.
           </p>
           {loading ? (
@@ -1159,14 +1218,22 @@ export default function AdminPage() {
               })}
             </div>
           )}
+          </div>
+          )}
         </div>
 
         {/* ── Icon Bank section ── */}
-        <div className="rounded-xl border border-gray-200 bg-white p-6 shadow-sm">
-          <h2 className="text-lg font-semibold text-gray-900">
-            🏛️ Ikon-bank
-          </h2>
-          <p className="mt-1 text-sm text-gray-500">
+        <div className="rounded-xl border border-gray-200 bg-white shadow-sm overflow-hidden">
+          <button type="button" onClick={() => toggleSection("icons")} className="w-full flex items-center justify-between px-6 py-4 text-left hover:bg-gray-50 transition-colors">
+            <div className="flex items-center gap-3">
+              <h2 className="text-base font-semibold text-gray-900">🏛️ Ikon-bank</h2>
+              {bankIcons.filter(i => i.status === "pending").length > 0 && <span className="text-xs font-medium bg-amber-100 text-amber-700 px-2 py-0.5 rounded-full">{bankIcons.filter(i => i.status === "pending").length} afventer</span>}
+            </div>
+            <span className={`text-gray-400 text-lg transition-transform ${openSections.has("icons") ? "rotate-90" : ""}`}>›</span>
+          </button>
+          {openSections.has("icons") && (
+          <div className="px-6 pb-6 border-t border-gray-100">
+          <p className="pt-4 text-sm text-gray-500">
             AI-genererede ikoner indsendt af brugere. Godkend dem for at gøre dem tilgængelige for alle.
           </p>
 
@@ -1318,6 +1385,8 @@ export default function AdminPage() {
               </div>
             );
           })()}
+          </div>
+          )}
         </div>
       </div>
     </div>
