@@ -9,8 +9,6 @@ import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/auth";
 import { prisma } from "@/app/lib/db";
 
-const db = prisma as any;
-
 // ── GET: List user's feedback or single item with replies ──
 export async function GET(request: NextRequest) {
   const session = await auth();
@@ -23,7 +21,7 @@ export async function GET(request: NextRequest) {
 
   // Single item with replies
   if (feedbackId) {
-    const item = await db.feedback.findUnique({
+    const item = await prisma.feedback.findUnique({
       where: { id: feedbackId },
       include: {
         replies: {
@@ -50,14 +48,14 @@ export async function GET(request: NextRequest) {
 
   // Check if feedback is enabled for this user (admin always allowed)
   const isAdmin = (session.user as { role?: string }).role === "admin";
-  const userRecord = await db.user.findUnique({
+  const userRecord = await prisma.user.findUnique({
     where: { id: session.user.id },
     select: { feedbackEnabled: true },
   });
   const feedbackEnabled = isAdmin || !!userRecord?.feedbackEnabled;
 
   // List all for current user
-  const items = await db.feedback.findMany({
+  const items = await prisma.feedback.findMany({
     where: { userId: session.user.id },
     orderBy: { createdAt: "desc" },
     select: {
@@ -82,7 +80,7 @@ export async function POST(request: NextRequest) {
   }
 
   // Check that feedback is enabled for this user
-  const user = await db.user.findUnique({
+  const user = await prisma.user.findUnique({
     where: { id: session.user.id },
     select: { feedbackEnabled: true },
   });
@@ -134,7 +132,7 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  const item = await db.feedback.create({
+  const item = await prisma.feedback.create({
     data: {
       userId: session.user.id,
       type,

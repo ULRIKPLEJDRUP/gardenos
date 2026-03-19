@@ -8,8 +8,6 @@ import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/auth";
 import { prisma } from "@/app/lib/db";
 
-const db = prisma as any;
-
 // ── GET: List version snapshots for a design ──
 export async function GET(request: NextRequest) {
   const session = await auth();
@@ -24,12 +22,12 @@ export async function GET(request: NextRequest) {
   }
 
   // Verify the design belongs to the user
-  const design = await db.savedDesign.findUnique({ where: { id: designId } });
+  const design = await prisma.savedDesign.findUnique({ where: { id: designId } });
   if (!design || design.userId !== session.user.id) {
     return NextResponse.json({ error: "Ikke fundet" }, { status: 404 });
   }
 
-  const versions = await db.designVersion.findMany({
+  const versions = await prisma.designVersion.findMany({
     where: { designId },
     orderBy: { savedAt: "desc" },
     select: {
@@ -55,7 +53,7 @@ export async function POST(request: NextRequest) {
   }
 
   // Fetch the version + its parent design
-  const version = await db.designVersion.findUnique({
+  const version = await prisma.designVersion.findUnique({
     where: { id: versionId },
     include: { design: true },
   });
@@ -64,7 +62,7 @@ export async function POST(request: NextRequest) {
   }
 
   // Snapshot the CURRENT state before restoring (so user can undo the restore)
-  await db.designVersion.create({
+  await prisma.designVersion.create({
     data: {
       designId: version.designId,
       layout: version.design.layout,
@@ -73,7 +71,7 @@ export async function POST(request: NextRequest) {
   });
 
   // Prune old versions – keep only the last 5
-  const allVersions = await db.designVersion.findMany({
+  const allVersions = await prisma.designVersion.findMany({
     where: { designId: version.designId },
     orderBy: { savedAt: "desc" },
     select: { id: true },
@@ -82,13 +80,13 @@ export async function POST(request: NextRequest) {
     const idsToDelete = allVersions
       .slice(5)
       .map((v: { id: string }) => v.id);
-    await db.designVersion.deleteMany({
+    await prisma.designVersion.deleteMany({
       where: { id: { in: idsToDelete } },
     });
   }
 
   // Restore the version's layout/plants into the design
-  const updated = await db.savedDesign.update({
+  const updated = await prisma.savedDesign.update({
     where: { id: version.designId },
     data: {
       layout: version.layout,

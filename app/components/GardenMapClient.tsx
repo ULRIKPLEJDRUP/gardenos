@@ -3466,9 +3466,18 @@ export function GardenMapClient({ userId }: { userId: string }) {
       return next;
     });
   }, []);
-  const [sidebarTabPickerOpen, setSidebarTabPickerOpen] = useState(false);
-  const [sidebarDropdownOpen, setSidebarDropdownOpen] = useState(false);
   const [forceStartTour, setForceStartTour] = useState(false);
+
+  // ── Toast notification state (replaces alert()) ──
+  const [toastMsg, setToastMsg] = useState<string | null>(null);
+  const [toastType, setToastType] = useState<"success" | "error" | "warning" | "info">("info");
+  const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const showToast = useCallback((msg: string, type: "success" | "error" | "warning" | "info" = "info") => {
+    if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
+    setToastMsg(msg);
+    setToastType(type);
+    toastTimerRef.current = setTimeout(() => setToastMsg(null), 6000);
+  }, []);
 
   // ── Guide overlay state (floating ❓ on map) ──
   const [guidePopoverOpen, setGuidePopoverOpen] = useState(false);
@@ -3605,14 +3614,12 @@ export function GardenMapClient({ userId }: { userId: string }) {
     if (typeof window === "undefined") return "organic";
     return localStorage.getItem(userKey(CHAT_PERSONA_KEY)) ?? "organic";
   });
-  const [chatFloatingOpen, setChatFloatingOpen] = useState(false);
   const chatEndRef = useRef<HTMLDivElement>(null);
   const chatInputRef = useRef<HTMLTextAreaElement>(null);
 
   // ── Weather module state ──
   const [weatherData, setWeatherData] = useState<WeatherData | null>(() => loadWeatherCache());
   const [weatherLoading, setWeatherLoading] = useState(false);
-  const [weatherExpanded, setWeatherExpanded] = useState(false);
   const [weatherError, setWeatherError] = useState<string | null>(null);
   const [weatherHistory, setWeatherHistory] = useState(() => loadWeatherHistory());
   const [weatherStatRange, setWeatherStatRange] = useState<number>(30);
@@ -6450,7 +6457,7 @@ export function GardenMapClient({ userId }: { userId: string }) {
       const fullMsg = existingRowCoords.length > 0
         ? `🚫 Bedet er fuldt!\n\nDer er allerede ${existingRowCoords.length} rækker i dette bed. Der er ikke plads til flere med ${rowSpacingCm} cm rækkeafstand.\n\nFjern eksisterende rækker først, eller udvid bedet.`
         : (result?.warning ?? "Kunne ikke beregne rækker – kontrollér bedets geometri.");
-      alert(fullMsg);
+      showToast(fullMsg, "error");
       return;
     }
 
@@ -6494,7 +6501,7 @@ export function GardenMapClient({ userId }: { userId: string }) {
     });
 
     if (safeRows.length === 0) {
-      alert(`🚫 Bedet er fuldt!\n\nAlle ${result.rows.length} beregnede positioner er for tæt på eksisterende rækker.\n\nFjern eksisterende rækker først, eller udvid bedet.`);
+      showToast(`🚫 Bedet er fuldt!\n\nAlle ${result.rows.length} beregnede positioner er for tæt på eksisterende rækker.\n\nFjern eksisterende rækker først, eller udvid bedet.`, "error");
       return;
     }
     // Replace result.rows with the safe subset
@@ -6600,7 +6607,7 @@ export function GardenMapClient({ userId }: { userId: string }) {
       `Ca. ${totalPlants} planter i alt`,
       result.warning ? `⚠️ ${result.warning}` : "",
     ].filter(Boolean).join("\n");
-    alert(msg);
+    showToast(msg, result.warning ? "warning" : "success");
   }, [selected, attachClickHandler, pushUndoSnapshot, rebuildFromGroupAndUpdateSelection]);
 
   // ── Auto-element placement execution ──
@@ -6683,7 +6690,7 @@ export function GardenMapClient({ userId }: { userId: string }) {
       const fullMsg = circleObstacles.length > 0 || rowObstacles.length > 0
         ? `🚫 Ingen plads!\n\nDer er ikke plads til ${species.name} i dette bed med ${interElementSpacingCm} cm afstand.\n\n${circleObstacles.length > 0 ? `${circleObstacles.length} eksisterende element(er)` : ""}${rowObstacles.length > 0 ? ` og ${rowObstacles.length} rækker` : ""} blokerer pladsen.`
         : (result?.warning ?? "Kunne ikke beregne positioner – kontrollér bedets geometri.");
-      alert(fullMsg);
+      showToast(fullMsg, "error");
       return;
     }
 
@@ -6783,7 +6790,7 @@ export function GardenMapClient({ userId }: { userId: string }) {
       result.obstacleWarnings.length > 0 ? `⚠️ Blokeret af: ${result.obstacleWarnings.join(", ")}` : "",
       result.warning ? `⚠️ ${result.warning}` : "",
     ].filter(Boolean).join("\n");
-    alert(msg);
+    showToast(msg, result.warning || result.obstacleWarnings.length > 0 ? "warning" : "success");
   }, [selected, attachClickHandler, pushUndoSnapshot, rebuildFromGroupAndUpdateSelection]);
 
   // ── Apply bed-resize proposal (accept changes) ──
@@ -12418,7 +12425,7 @@ export function GardenMapClient({ userId }: { userId: string }) {
                             onChange={(e) => {
                               const file = e.target.files?.[0];
                               if (!file) return;
-                              if (file.size > 2 * 1024 * 1024) { alert("Foto må max være 2 MB"); return; }
+                              if (file.size > 2 * 1024 * 1024) { showToast("Foto må max være 2 MB", "error"); return; }
                               const reader = new FileReader();
                               reader.onload = () => {
                                 if (typeof reader.result === "string") updateSelectedProperty({ photoUrl: reader.result });
@@ -12439,7 +12446,7 @@ export function GardenMapClient({ userId }: { userId: string }) {
                           onChange={(e) => {
                             const file = e.target.files?.[0];
                             if (!file) return;
-                            if (file.size > 2 * 1024 * 1024) { alert("Foto må max være 2 MB"); return; }
+                            if (file.size > 2 * 1024 * 1024) { showToast("Foto må max være 2 MB", "error"); return; }
                             const reader = new FileReader();
                             reader.onload = () => {
                               if (typeof reader.result === "string") updateSelectedProperty({ photoUrl: reader.result });
@@ -15755,7 +15762,7 @@ export function GardenMapClient({ userId }: { userId: string }) {
                                 setPlacingAnchor(false);
                               },
                               (err) => {
-                                alert(`GPS-fejl: ${err.message}. Prøv at gå udenfor og tjek at lokationstilladelser er slået til.`);
+                                showToast(`GPS-fejl: ${err.message}. Prøv at gå udenfor og tjek at lokationstilladelser er slået til.`, "error");
                               },
                               { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 },
                             );
@@ -16043,7 +16050,7 @@ export function GardenMapClient({ userId }: { userId: string }) {
                           const demoUser = process.env.NEXT_PUBLIC_DATAFORDELER_DEMO_USER || "";
                           const demoPass = process.env.NEXT_PUBLIC_DATAFORDELER_DEMO_PASS || "";
                           if (!demoUser || !demoPass) {
-                            alert("Demo-credentials er ikke konfigureret. Kontakt admin.");
+                            showToast("Demo-credentials er ikke konfigureret. Kontakt admin.", "error");
                             return;
                           }
                           setDfUser(demoUser);
@@ -16677,6 +16684,26 @@ export function GardenMapClient({ userId }: { userId: string }) {
           </div>
         </div>
       ) : null}
+
+      {/* ── Toast Notification ── */}
+      {toastMsg && (
+        <div
+          className={`fixed bottom-6 left-1/2 z-[10000] -translate-x-1/2 max-w-[90vw] md:max-w-lg rounded-xl border px-4 py-3 shadow-xl backdrop-blur-sm transition-all animate-in slide-in-from-bottom-4 duration-300 ${
+            toastType === "error"   ? "border-red-400/40 bg-red-50/95 text-red-800 dark:bg-red-950/90 dark:text-red-200 dark:border-red-500/30"
+          : toastType === "warning" ? "border-amber-400/40 bg-amber-50/95 text-amber-800 dark:bg-amber-950/90 dark:text-amber-200 dark:border-amber-500/30"
+          : toastType === "success" ? "border-green-400/40 bg-green-50/95 text-green-800 dark:bg-green-950/90 dark:text-green-200 dark:border-green-500/30"
+          :                          "border-blue-400/40 bg-blue-50/95 text-blue-800 dark:bg-blue-950/90 dark:text-blue-200 dark:border-blue-500/30"
+          }`}
+        >
+          <div className="flex items-start gap-2">
+            <span className="text-base leading-none mt-0.5">
+              {toastType === "error" ? "🚫" : toastType === "warning" ? "⚠️" : toastType === "success" ? "✅" : "ℹ️"}
+            </span>
+            <p className="text-xs leading-relaxed whitespace-pre-line flex-1">{toastMsg}</p>
+            <button type="button" onClick={() => setToastMsg(null)} className="text-current/50 hover:text-current ml-1 text-sm leading-none">✕</button>
+          </div>
+        </div>
+      )}
 
       {/* ── Guided Tour ── */}
       <GuidedTour

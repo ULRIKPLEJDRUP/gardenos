@@ -10,7 +10,6 @@ import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/auth";
 import { prisma } from "@/app/lib/db";
 
-const db = prisma as any;
 const DEFAULT_MAX_DESIGNS = 3;
 const MAX_VERSIONS_PER_DESIGN = 5;
 
@@ -22,7 +21,7 @@ export async function GET() {
   }
 
   const [designs, userRecord] = await Promise.all([
-    db.savedDesign.findMany({
+    prisma.savedDesign.findMany({
       where: { userId: session.user.id },
       orderBy: { updatedAt: "desc" },
       select: {
@@ -35,7 +34,7 @@ export async function GET() {
         updatedAt: true,
       },
     }),
-    db.user.findUnique({
+    prisma.user.findUnique({
       where: { id: session.user.id },
       select: { maxDesigns: true },
     }),
@@ -55,14 +54,14 @@ export async function POST(request: NextRequest) {
   }
 
   // Get per-user limit
-  const userRecord = await db.user.findUnique({
+  const userRecord = await prisma.user.findUnique({
     where: { id: session.user.id },
     select: { maxDesigns: true },
   });
   const maxDesigns = userRecord?.maxDesigns ?? DEFAULT_MAX_DESIGNS;
 
   // Check current count
-  const count = await db.savedDesign.count({
+  const count = await prisma.savedDesign.count({
     where: { userId: session.user.id },
   });
   if (count >= maxDesigns) {
@@ -82,7 +81,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Layout data mangler" }, { status: 400 });
   }
 
-  const design = await db.savedDesign.create({
+  const design = await prisma.savedDesign.create({
     data: {
       userId: session.user.id,
       name: name.trim(),
@@ -109,7 +108,7 @@ export async function PATCH(request: NextRequest) {
   }
 
   // Verify ownership
-  const existing = await db.savedDesign.findUnique({ where: { id } });
+  const existing = await prisma.savedDesign.findUnique({ where: { id } });
   if (!existing || existing.userId !== session.user.id) {
     return NextResponse.json({ error: "Ikke fundet" }, { status: 404 });
   }
@@ -125,7 +124,7 @@ export async function PATCH(request: NextRequest) {
   const isContentChange = body.layout !== undefined || body.plants !== undefined;
   if (isContentChange) {
     // Save a snapshot of the current data before overwriting
-    await db.designVersion.create({
+    await prisma.designVersion.create({
       data: {
         designId: id,
         layout: existing.layout,
@@ -134,7 +133,7 @@ export async function PATCH(request: NextRequest) {
     });
 
     // Prune old versions – keep only the last MAX_VERSIONS_PER_DESIGN
-    const allVersions = await db.designVersion.findMany({
+    const allVersions = await prisma.designVersion.findMany({
       where: { designId: id },
       orderBy: { savedAt: "desc" },
       select: { id: true },
@@ -143,13 +142,13 @@ export async function PATCH(request: NextRequest) {
       const idsToDelete = allVersions
         .slice(MAX_VERSIONS_PER_DESIGN)
         .map((v: { id: string }) => v.id);
-      await db.designVersion.deleteMany({
+      await prisma.designVersion.deleteMany({
         where: { id: { in: idsToDelete } },
       });
     }
   }
 
-  const updated = await db.savedDesign.update({
+  const updated = await prisma.savedDesign.update({
     where: { id },
     data: updateData,
   });
@@ -171,12 +170,12 @@ export async function DELETE(request: NextRequest) {
   }
 
   // Verify ownership
-  const existing = await db.savedDesign.findUnique({ where: { id } });
+  const existing = await prisma.savedDesign.findUnique({ where: { id } });
   if (!existing || existing.userId !== session.user.id) {
     return NextResponse.json({ error: "Ikke fundet" }, { status: 404 });
   }
 
-  await db.savedDesign.delete({ where: { id } });
+  await prisma.savedDesign.delete({ where: { id } });
 
   return NextResponse.json({ ok: true });
 }

@@ -8,9 +8,6 @@ import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/auth";
 import { prisma } from "@/app/lib/db";
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-const db = prisma as any;
-
 // Rate limit: max 60 events per minute per user (in-memory, resets on deploy)
 const rateLimits = new Map<string, { count: number; resetAt: number }>();
 
@@ -79,7 +76,7 @@ export async function POST(req: NextRequest) {
   const detail = typeof body.detail === "string" ? body.detail.slice(0, 200) : null;
 
   // Fire-and-forget insert (don't block the response)
-  db.activityLog.create({
+  prisma.activityLog.create({
     data: { userId, action, detail },
   }).catch(() => {/* ignore */});
 

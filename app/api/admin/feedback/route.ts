@@ -9,8 +9,6 @@ import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/auth";
 import { prisma } from "@/app/lib/db";
 
-const db = prisma as any;
-
 function isAdmin(session: { user?: { role?: string } } | null): boolean {
   return session?.user != null && (session.user as { role?: string }).role === "admin";
 }
@@ -22,7 +20,7 @@ export async function GET() {
     return NextResponse.json({ error: "Ingen adgang." }, { status: 403 });
   }
 
-  const items = await db.feedback.findMany({
+  const items = await prisma.feedback.findMany({
     orderBy: { createdAt: "desc" },
     include: {
       user: { select: { name: true, email: true } },
@@ -61,7 +59,7 @@ export async function PATCH(request: NextRequest) {
     );
   }
 
-  const updated = await db.feedback.update({
+  const updated = await prisma.feedback.update({
     where: { id: feedbackId },
     data: { status: body.status },
   });

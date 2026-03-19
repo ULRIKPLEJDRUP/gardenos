@@ -22,7 +22,7 @@ export async function GET() {
     return NextResponse.json({ error: "Ingen adgang." }, { status: 403 });
   }
 
-  const db = prisma as any;
+  const db = prisma;
   const users = await db.user.findMany({
     orderBy: { createdAt: "desc" },
     select: {
@@ -113,13 +113,12 @@ export async function PATCH(request: NextRequest) {
   }
 
   // Delete all synced data for this user (they keep their login)
-  const db = prisma as any;
-  const deleted = await db.userData.deleteMany({
+  const deleted = await prisma.userData.deleteMany({
     where: { userId },
   });
 
   // Insert a _reset marker so the client knows to wipe localStorage on next pull
-  await db.userData.create({
+  await prisma.userData.create({
     data: { userId, key: "_reset", value: new Date().toISOString() },
   });
 
@@ -157,8 +156,7 @@ export async function PUT(request: NextRequest) {
   // Update maxDesigns
   if (typeof body.maxDesigns === "number") {
     const clamped = Math.max(1, Math.min(20, Math.round(body.maxDesigns)));
-    const db = prisma as any;
-    await db.user.update({
+    await prisma.user.update({
       where: { id: userId },
       data: { maxDesigns: clamped },
     });
@@ -167,8 +165,7 @@ export async function PUT(request: NextRequest) {
 
   // Toggle feedbackEnabled
   if (typeof body.feedbackEnabled === "boolean") {
-    const db = prisma as any;
-    await db.user.update({
+    await prisma.user.update({
       where: { id: userId },
       data: { feedbackEnabled: body.feedbackEnabled },
     });

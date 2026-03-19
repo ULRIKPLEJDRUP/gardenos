@@ -8,9 +8,6 @@ import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/auth";
 import { prisma } from "@/app/lib/db";
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-const db = prisma as any;
-
 function isAdmin(session: { user?: { role?: string } } | null): boolean {
   return session?.user != null && (session.user as { role?: string }).role === "admin";
 }
@@ -26,7 +23,7 @@ export async function GET(req: NextRequest) {
 
   // ── Single user detail view ──
   if (userId) {
-    const logs = await db.activityLog.findMany({
+    const logs = await prisma.activityLog.findMany({
       where: { userId },
       orderBy: { createdAt: "desc" },
       take: 200,
@@ -45,7 +42,7 @@ export async function GET(req: NextRequest) {
   const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
 
   // Get all users with their lastLoginAt
-  const users = await db.user.findMany({
+  const users = await prisma.user.findMany({
     orderBy: { createdAt: "desc" },
     select: {
       id: true,
@@ -57,21 +54,21 @@ export async function GET(req: NextRequest) {
   });
 
   // Get activity counts grouped by userId + action for last 30 days
-  const activityCounts = await db.activityLog.groupBy({
+  const activityCounts = await prisma.activityLog.groupBy({
     by: ["userId", "action"],
     where: { createdAt: { gte: thirtyDaysAgo } },
     _count: { _all: true },
   });
 
   // Get total login count (all time) per user
-  const loginCounts = await db.activityLog.groupBy({
+  const loginCounts = await prisma.activityLog.groupBy({
     by: ["userId"],
     where: { action: "login" },
     _count: { _all: true },
   });
 
   // Get last activity timestamp per user
-  const lastActivities = await db.activityLog.groupBy({
+  const lastActivities = await prisma.activityLog.groupBy({
     by: ["userId"],
     _max: { createdAt: true },
   });

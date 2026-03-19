@@ -9,11 +9,6 @@ import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/auth";
 import { prisma } from "@/app/lib/db";
 
-// Prisma adapter-based client: TS server sometimes caches stale types after
-// schema changes.  `tsc --noEmit` passes; this cast silences the IDE.
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-const db = prisma as any;
-
 // Keys eligible for server sync (garden data, NOT ephemeral UI prefs)
 const SYNCABLE_KEYS = new Set([
   "layout:v1",
@@ -48,7 +43,7 @@ export async function GET() {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const rows = await db.userData.findMany({
+  const rows = await prisma.userData.findMany({
     where: { userId: session.user.id },
     select: { key: true, value: true, updatedAt: true },
   });
@@ -57,7 +52,7 @@ export async function GET() {
   const resetRow = rows.find((r: { key: string }) => r.key === "_reset");
   if (resetRow) {
     // Delete the marker so it only fires once
-    await db.userData.delete({
+    await prisma.userData.delete({
       where: { userId_key: { userId: session.user.id, key: "_reset" } },
     });
     // Return empty data with reset flag — client will wipe localStorage
@@ -111,15 +106,15 @@ export async function PUT(req: NextRequest) {
   const userId = session.user.id;
 
   // Verify user exists (session may reference a deleted user after DB reset)
-  const user = await db.user.findUnique({ where: { id: userId }, select: { id: true } });
+  const user = await prisma.user.findUnique({ where: { id: userId }, select: { id: true } });
   if (!user) {
     return NextResponse.json({ error: "User not found" }, { status: 404 });
   }
 
   try {
-    await db.$transaction(
+    await prisma.$transaction(
       valid.map((e) =>
-        db.userData.upsert({
+        prisma.userData.upsert({
           where: { userId_key: { userId, key: e.key } },
           create: { userId, key: e.key, value: e.value },
           update: { value: e.value },

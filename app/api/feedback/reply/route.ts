@@ -7,8 +7,6 @@ import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/auth";
 import { prisma } from "@/app/lib/db";
 
-const db = prisma as any;
-
 export async function POST(request: NextRequest) {
   const session = await auth();
   if (!session?.user?.id) {
@@ -31,7 +29,7 @@ export async function POST(request: NextRequest) {
   }
 
   // Check the feedback exists and user has access
-  const feedback = await db.feedback.findUnique({
+  const feedback = await prisma.feedback.findUnique({
     where: { id: feedbackId },
     select: { userId: true },
   });
@@ -45,7 +43,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Ingen adgang." }, { status: 403 });
   }
 
-  const reply = await db.feedbackReply.create({
+  const reply = await prisma.feedbackReply.create({
     data: {
       feedbackId,
       userId: session.user.id,
@@ -58,7 +56,7 @@ export async function POST(request: NextRequest) {
 
   // If admin replies, mark feedback as "read" if it was "new"
   if (isAdmin) {
-    await db.feedback.update({
+    await prisma.feedback.update({
       where: { id: feedbackId },
       data: {
         status: "read",

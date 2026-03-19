@@ -45,7 +45,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
         } catch { /* ignore */ }
 
         try {
-          (prisma as any).activityLog.create({
+          prisma.activityLog.create({
             data: { userId: user.id, action: "login" },
           }).catch(() => {/* ignore */});
         } catch { /* ignore */ }
