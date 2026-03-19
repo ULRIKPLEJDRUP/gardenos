@@ -3267,7 +3267,7 @@ export function GardenMapClient({ userId }: { userId: string }) {
   const [newKindText, setNewKindText] = useState("");
   const [newKindError, setNewKindError] = useState<string | null>(null);
   const [undoStack, setUndoStack] = useState<UndoSnapshot[]>([]);
-  const [sidebarTab, setSidebarTab] = useState<"create" | "content" | "groups" | "plants" | "view" | "scan" | "chat" | "calendar" | "tasks" | "conflicts" | "designs">("create");
+  const [sidebarTab, setSidebarTab] = useState<"create" | "content" | "groups" | "plants" | "view" | "scan" | "chat" | "tasks" | "conflicts" | "designs">("create");
   const [sidebarPanelOpen, setSidebarPanelOpen] = useState(true);
   const toggleSidebarPanel = useCallback((tabId?: typeof sidebarTab) => {
     if (tabId && tabId !== sidebarTab) {
@@ -3286,6 +3286,7 @@ export function GardenMapClient({ userId }: { userId: string }) {
   });
   const [conflictShowResolved, setConflictShowResolved] = useState(false);
   const [viewSubTab, setViewSubTab] = useState<"steder" | "baggrund" | "synlighed" | "ankre">("steder");
+  const [planSubTab, setPlanSubTab] = useState<"tasks" | "calendar">("tasks");
 
   // ── Draft state for name/notes (commit on blur/Enter, not per-keystroke) ──
   const [draftName, setDraftName] = useState("");
@@ -3391,8 +3392,7 @@ export function GardenMapClient({ userId }: { userId: string }) {
     { id: "plants", icon: "🌱", label: "Planter" },
     { id: "scan", icon: "📷", label: "Scan" },
     { id: "view", icon: "👁", label: "Visning" },
-    { id: "tasks", icon: "📋", label: "Opgaver" },
-    { id: "calendar", icon: "📅", label: "Årshjul" },
+    { id: "tasks", icon: "📋", label: "Planlæg" },
     { id: "chat", icon: "💬", label: "Rådgiver" },
     { id: "designs", icon: "💾", label: "Designs" },
   ];
@@ -14194,19 +14194,40 @@ export function GardenMapClient({ userId }: { userId: string }) {
           );
         })() : null}
 
-        {sidebarTab === "calendar" ? (
-          <YearWheel plantDataVersion={plantDataVersion} plantInstancesVersion={plantInstancesVersion} flashFeatureIds={flashFeatureIds} />
-        ) : null}
-
-        {/* ── Task List / Opgaveliste Tab ── */}
+        {/* ── Planlæg Tab (Opgaver + Årshjul) ── */}
         {sidebarTab === "tasks" ? (
-          <TaskList
-            taskVersion={taskVersion}
-            goToYearWheel={(_month: number) => {
-              setSidebarTab("calendar");
-              setSidebarPanelOpen(true);
-            }}
-          />
+          <div className="mt-3 space-y-3">
+            {/* Sub-tab picker */}
+            <div className="flex gap-1 rounded-lg bg-background p-1 border border-border-light shadow-sm">
+              {(["tasks", "calendar"] as const).map((st) => (
+                <button
+                  key={st}
+                  type="button"
+                  className={`flex-1 rounded-md px-2 py-1.5 text-[11px] font-medium transition-all ${
+                    planSubTab === st
+                      ? "bg-accent text-white shadow-sm"
+                      : "text-foreground/60 hover:bg-foreground/5 hover:text-foreground/80"
+                  }`}
+                  onClick={() => setPlanSubTab(st)}
+                >
+                  {st === "tasks" ? "📋 Opgaver" : "📅 Årshjul"}
+                </button>
+              ))}
+            </div>
+
+            {planSubTab === "tasks" ? (
+              <TaskList
+                taskVersion={taskVersion}
+                goToYearWheel={(_month: number) => {
+                  setPlanSubTab("calendar");
+                }}
+              />
+            ) : null}
+
+            {planSubTab === "calendar" ? (
+              <YearWheel plantDataVersion={plantDataVersion} plantInstancesVersion={plantInstancesVersion} flashFeatureIds={flashFeatureIds} />
+            ) : null}
+          </div>
         ) : null}
 
         {/* ── AI Chat / Rådgiver Tab ── */}
