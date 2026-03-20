@@ -69,6 +69,7 @@ import {
   createProfileFromType,
   applyPresetDefaults,
   ensureDefaultProfiles,
+  isStandardProfile,
   getLogForProfile,
   addSoilLogEntry,
   deleteSoilLogEntry,
@@ -11974,7 +11975,7 @@ export function GardenMapClient({ userId }: { userId: string }) {
                     {profile?.baseType ? (
                       <>
                         <span className="text-[9px] text-foreground/30">·</span>
-                        <span className="text-[11px] text-foreground/70 truncate flex-1">{profile.name} ({SOIL_BASE_TYPE_LABELS[profile.baseType]})</span>
+                        <span className="text-[11px] text-foreground/70 truncate flex-1">{isStandardProfile(profile) ? profile.name : `${profile.name} (${SOIL_BASE_TYPE_LABELS[profile.baseType]})`}</span>
                       </>
                     ) : profile ? (
                       <span className="text-[11px] text-foreground/50 truncate flex-1">{profile.name}</span>
@@ -11986,52 +11987,64 @@ export function GardenMapClient({ userId }: { userId: string }) {
 
                   {soilPanelOpen ? (
                     <div className="px-3 pb-3 pt-1 space-y-2">
-                      {/* Dropdown: assign existing profile */}
-                      <div>
-                        <label className="block text-[10px] font-semibold text-foreground/50 uppercase tracking-wide">Tilknyt jordprofil</label>
-                        <select
-                          className="mt-0.5 w-full rounded-md border border-border bg-background px-2 py-1.5 text-xs shadow-sm"
-                          value={profileId ?? ""}
-                          onChange={(e) => {
-                            updateSelectedProperty({ soilProfileId: e.target.value || undefined });
-                            setSoilDataVersion((v) => v + 1);
-                          }}
-                        >
-                          <option value="">Ingen profil</option>
-                          {allProfiles.map((p) => (
-                            <option key={p.id} value={p.id}>
-                              {p.name}{p.baseType ? ` (${SOIL_BASE_TYPE_LABELS[p.baseType]})` : ""}
-                            </option>
-                          ))}
-                        </select>
-                      </div>
-
-                      {/* Quick-create from type picker */}
-                      <div>
-                        <label className="block text-[10px] font-semibold text-foreground/50 uppercase tracking-wide mb-1">Eller opret ny fra jordtype</label>
-                        <div className="grid grid-cols-3 gap-1">
-                          {(Object.keys(SOIL_BASE_TYPE_LABELS) as SoilBaseType[]).map((bt) => (
-                            <button
-                              key={bt}
-                              type="button"
-                              className="flex flex-col items-center gap-0.5 rounded-md border border-foreground/10 bg-foreground/[0.02] px-1.5 py-1.5 text-center hover:bg-accent-light/30 hover:border-accent/40 transition-all"
-                              onClick={() => {
-                                const featureName = selected.feature.properties?.name;
-                                const bp = createProfileFromType(bt, featureName ? `${SOIL_BASE_TYPE_LABELS[bt]} — ${featureName}` : undefined);
-                                addOrUpdateSoilProfile(bp);
-                                updateSelectedProperty({ soilProfileId: bp.id });
+                      {/* Dropdown: assign soil type or custom profile */}
+                      {(() => {
+                        const stdProfiles = allProfiles.filter((p) => isStandardProfile(p));
+                        const customProfiles = allProfiles.filter((p) => !isStandardProfile(p));
+                        return (
+                          <div>
+                            <label className="block text-[10px] font-semibold text-foreground/50 uppercase tracking-wide">Jordtype</label>
+                            <select
+                              className="mt-0.5 w-full rounded-md border border-border bg-background px-2 py-1.5 text-xs shadow-sm"
+                              value={profileId ?? ""}
+                              onChange={(e) => {
+                                updateSelectedProperty({ soilProfileId: e.target.value || undefined });
                                 setSoilDataVersion((v) => v + 1);
-                                setSidebarTab("plants");
-                                setLibSubTab("soil");
-                                setLibSoilEditId(bp.id);
                               }}
                             >
-                              <span className="text-sm leading-none">{SOIL_TYPE_ICONS[bt]}</span>
-                              <span className="text-[9px] font-medium text-foreground/60">{SOIL_BASE_TYPE_LABELS[bt]}</span>
-                            </button>
-                          ))}
-                        </div>
-                      </div>
+                              <option value="">— Vælg jordtype —</option>
+                              <optgroup label="Standard jordtyper">
+                                {stdProfiles.map((p) => (
+                                  <option key={p.id} value={p.id}>{p.name}</option>
+                                ))}
+                              </optgroup>
+                              {customProfiles.length > 0 ? (
+                                <optgroup label="Tilpassede profiler">
+                                  {customProfiles.map((p) => (
+                                    <option key={p.id} value={p.id}>
+                                      {p.name}{p.baseType ? ` (${SOIL_BASE_TYPE_LABELS[p.baseType]})` : ""}
+                                    </option>
+                                  ))}
+                                </optgroup>
+                              ) : null}
+                            </select>
+                          </div>
+                        );
+                      })()}
+
+                      {/* Explanation */}
+                      <p className="text-[10px] text-foreground/40 leading-snug">
+                        💡 Jordtypen bestemmer startværdier for pH, dræning, tekstur m.m. Du kan oprette en <strong>tilpasset profil</strong> med egne målinger og eget navn herunder.
+                      </p>
+
+                      {/* Create custom profile */}
+                      <button
+                        type="button"
+                        className="w-full rounded-md border border-dashed border-foreground/20 px-2 py-2 text-xs text-foreground/60 hover:border-accent/40 hover:bg-accent-light/30 transition-colors"
+                        onClick={() => {
+                          const featureName = selected.feature.properties?.name;
+                          const baseT = profile?.baseType ?? "loam";
+                          const bp = createProfileFromType(baseT, `${SOIL_BASE_TYPE_LABELS[baseT]} — ${featureName ?? "tilpasset"}`);
+                          addOrUpdateSoilProfile(bp);
+                          updateSelectedProperty({ soilProfileId: bp.id });
+                          setSoilDataVersion((v) => v + 1);
+                          setSidebarTab("plants");
+                          setLibSubTab("soil");
+                          setLibSoilEditId(bp.id);
+                        }}
+                      >
+                        ✏️ Opret tilpasset jordprofil
+                      </button>
 
                       {/* Link to edit in Bibliotek → Jord */}
                       {profile ? (
@@ -12855,8 +12868,10 @@ export function GardenMapClient({ userId }: { userId: string }) {
                               <span className="text-base">🪨</span>
                               <div className="flex-1 min-w-0">
                                 <div className="text-xs font-medium truncate">{p.name}</div>
-                                {p.baseType ? (
-                                  <div className="text-[10px] text-foreground/50">{SOIL_BASE_TYPE_LABELS[p.baseType]}</div>
+                                {isStandardProfile(p) ? (
+                                  <div className="text-[10px] text-foreground/30 italic">Standardprofil</div>
+                                ) : p.baseType ? (
+                                  <div className="text-[10px] text-foreground/50">{SOIL_BASE_TYPE_LABELS[p.baseType]} — tilpasset</div>
                                 ) : (
                                   <div className="text-[10px] text-foreground/30 italic">Ingen type valgt</div>
                                 )}

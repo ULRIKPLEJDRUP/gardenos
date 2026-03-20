@@ -106,18 +106,32 @@ export function applyPresetDefaults(profile: SoilProfile, baseType: SoilBaseType
 }
 
 /**
- * Ensure default soil profiles exist.  Called once on first load.
- * If the user already has profiles, nothing happens.
- * Creates one pre-filled profile per soil type (6 total).
+ * Returns true if the profile is a "standard" profile — i.e. its name
+ * matches the base type label exactly (e.g. "Muldjord" for loam).
+ * Used to separate standard vs. custom profiles in the dropdown.
+ */
+export function isStandardProfile(profile: SoilProfile): boolean {
+  if (!profile.baseType) return false;
+  return profile.name === SOIL_BASE_TYPE_LABELS[profile.baseType];
+}
+
+/**
+ * Ensure standard soil profiles exist for all 6 types.
+ * Creates any missing standard types without removing or altering
+ * existing profiles.  Called on first load.
  */
 export function ensureDefaultProfiles(): boolean {
   if (typeof window === "undefined") return false;
   const existing = loadSoilProfiles();
-  if (existing.length > 0) return false; // user already has profiles
-  const types: SoilBaseType[] = ["loam", "sand", "clay", "peat", "chalk", "mixed"];
-  const seeded = types.map((t) => createProfileFromType(t));
-  saveSoilProfiles(seeded);
-  return true; // profiles were created
+  const existingTypes = new Set(
+    existing.filter((p) => isStandardProfile(p)).map((p) => p.baseType!)
+  );
+  const allTypes: SoilBaseType[] = ["sand", "clay", "loam", "peat", "chalk", "mixed"];
+  const missing = allTypes.filter((t) => !existingTypes.has(t));
+  if (missing.length === 0) return false;
+  const newProfiles = missing.map((t) => createProfileFromType(t));
+  saveSoilProfiles([...existing, ...newProfiles]);
+  return true;
 }
 
 // ---------------------------------------------------------------------------
