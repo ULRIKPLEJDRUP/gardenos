@@ -5,7 +5,8 @@
 // Follows same pattern as plantStore.ts
 // ---------------------------------------------------------------------------
 
-import type { SoilProfile, SoilLogEntry } from "./soilTypes";
+import type { SoilProfile, SoilLogEntry, SoilBaseType } from "./soilTypes";
+import { SOIL_TYPE_PRESETS, SOIL_BASE_TYPE_LABELS } from "./soilTypes";
 import { userKey, markDirty } from "./userStorage";
 
 const STORAGE_PROFILES_KEY = "gardenos:soil:profiles:v1";
@@ -66,6 +67,57 @@ export function createBlankSoilProfile(name: string): SoilProfile {
     createdAt: now,
     updatedAt: now,
   };
+}
+
+/**
+ * Create a new profile pre-filled with typical values for the given soil type.
+ * The user can then adjust any field to match their specific plot.
+ */
+export function createProfileFromType(baseType: SoilBaseType, name?: string): SoilProfile {
+  const now = new Date().toISOString();
+  const preset = SOIL_TYPE_PRESETS[baseType];
+  const label = name ?? SOIL_BASE_TYPE_LABELS[baseType];
+  return {
+    id: crypto.randomUUID(),
+    name: label,
+    createdAt: now,
+    updatedAt: now,
+    ...preset,
+  };
+}
+
+/**
+ * Apply preset defaults for a soil type onto an existing profile.
+ * Only fills in fields that are currently undefined/empty — never
+ * overwrites values the user has already set.  Always sets baseType.
+ */
+export function applyPresetDefaults(profile: SoilProfile, baseType: SoilBaseType): SoilProfile {
+  const preset = SOIL_TYPE_PRESETS[baseType];
+  const merged = { ...profile, baseType };
+  for (const [key, value] of Object.entries(preset)) {
+    if (key === "baseType") continue; // already set above
+    const current = (merged as Record<string, unknown>)[key];
+    // Only fill if the current value is undefined, null, or empty string
+    if (current === undefined || current === null || current === "") {
+      (merged as Record<string, unknown>)[key] = value;
+    }
+  }
+  return merged;
+}
+
+/**
+ * Ensure default soil profiles exist.  Called once on first load.
+ * If the user already has profiles, nothing happens.
+ * Creates one pre-filled profile per soil type (6 total).
+ */
+export function ensureDefaultProfiles(): boolean {
+  if (typeof window === "undefined") return false;
+  const existing = loadSoilProfiles();
+  if (existing.length > 0) return false; // user already has profiles
+  const types: SoilBaseType[] = ["loam", "sand", "clay", "peat", "chalk", "mixed"];
+  const seeded = types.map((t) => createProfileFromType(t));
+  saveSoilProfiles(seeded);
+  return true; // profiles were created
 }
 
 // ---------------------------------------------------------------------------

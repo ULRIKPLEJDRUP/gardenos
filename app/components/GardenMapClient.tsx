@@ -66,14 +66,19 @@ import {
   addOrUpdateSoilProfile,
   deleteSoilProfile,
   createBlankSoilProfile,
+  createProfileFromType,
+  applyPresetDefaults,
+  ensureDefaultProfiles,
   getLogForProfile,
   addSoilLogEntry,
   deleteSoilLogEntry,
 } from "../lib/soilStore";
-import type { SoilProfile, SoilLogEntry, SoilLogAction, SoilKnowledgeLevel } from "../lib/soilTypes";
+import type { SoilProfile, SoilLogEntry, SoilLogAction, SoilKnowledgeLevel, SoilBaseType } from "../lib/soilTypes";
 import {
   SOIL_BASE_TYPE_LABELS,
   SOIL_BASE_TYPE_DESC,
+  SOIL_TYPE_ICONS,
+  SOIL_TYPE_PH_RANGE,
   SOIL_COLOR_LABELS,
   SOIL_TEXTURE_LABELS,
   DRAINAGE_LABELS,
@@ -3094,6 +3099,11 @@ export function GardenMapClient({ userId }: { userId: string }) {
   const [versionList, setVersionList] = useState<DesignVersion[]>([]);
   const [versionLoading, setVersionLoading] = useState(false);
   const [versionRestoring, setVersionRestoring] = useState<string | null>(null); // version id being restored
+
+  // Seed default soil profiles on first load (if user has none yet)
+  useEffect(() => {
+    if (ensureDefaultProfiles()) setSoilDataVersion((v) => v + 1);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Auto-load designs on mount (so toolbar quick-save works immediately)
   useEffect(() => {
@@ -11996,22 +12006,32 @@ export function GardenMapClient({ userId }: { userId: string }) {
                         </select>
                       </div>
 
-                      {/* Quick-create + assign */}
-                      <button
-                        type="button"
-                        className="w-full rounded-md border border-dashed border-foreground/20 px-2 py-2 text-xs text-foreground/60 hover:border-accent/40 hover:bg-accent-light/30 transition-colors"
-                        onClick={() => {
-                          const bp = createBlankSoilProfile(selected.feature.properties?.name ?? "Ukendt jord");
-                          addOrUpdateSoilProfile(bp);
-                          updateSelectedProperty({ soilProfileId: bp.id });
-                          setSoilDataVersion((v) => v + 1);
-                          setSidebarTab("plants");
-                          setLibSubTab("soil");
-                          setLibSoilEditId(bp.id);
-                        }}
-                      >
-                        + Opret ny profil & redigér
-                      </button>
+                      {/* Quick-create from type picker */}
+                      <div>
+                        <label className="block text-[10px] font-semibold text-foreground/50 uppercase tracking-wide mb-1">Eller opret ny fra jordtype</label>
+                        <div className="grid grid-cols-3 gap-1">
+                          {(Object.keys(SOIL_BASE_TYPE_LABELS) as SoilBaseType[]).map((bt) => (
+                            <button
+                              key={bt}
+                              type="button"
+                              className="flex flex-col items-center gap-0.5 rounded-md border border-foreground/10 bg-foreground/[0.02] px-1.5 py-1.5 text-center hover:bg-accent-light/30 hover:border-accent/40 transition-all"
+                              onClick={() => {
+                                const featureName = selected.feature.properties?.name;
+                                const bp = createProfileFromType(bt, featureName ? `${SOIL_BASE_TYPE_LABELS[bt]} — ${featureName}` : undefined);
+                                addOrUpdateSoilProfile(bp);
+                                updateSelectedProperty({ soilProfileId: bp.id });
+                                setSoilDataVersion((v) => v + 1);
+                                setSidebarTab("plants");
+                                setLibSubTab("soil");
+                                setLibSoilEditId(bp.id);
+                              }}
+                            >
+                              <span className="text-sm leading-none">{SOIL_TYPE_ICONS[bt]}</span>
+                              <span className="text-[9px] font-medium text-foreground/60">{SOIL_BASE_TYPE_LABELS[bt]}</span>
+                            </button>
+                          ))}
+                        </div>
+                      </div>
 
                       {/* Link to edit in Bibliotek → Jord */}
                       {profile ? (
@@ -12797,21 +12817,31 @@ export function GardenMapClient({ userId }: { userId: string }) {
                   {/* ── Profile list (when NOT editing) ── */}
                   {!libSoilEditId ? (
                     <>
-                      <button
-                        type="button"
-                        className="w-full rounded-lg border border-dashed border-green-500/30 bg-green-50/50 px-3 py-2.5 text-xs font-medium text-green-800 hover:bg-green-100 hover:border-green-500/50 transition-all dark:border-green-500/20 dark:bg-green-900/10 dark:text-green-300 dark:hover:bg-green-900/20"
-                        onClick={() => {
-                          const bp = createBlankSoilProfile("Ny jordprofil");
-                          addOrUpdateSoilProfile(bp);
-                          setSoilDataVersion((v) => v + 1);
-                          setLibSoilEditId(bp.id);
-                        }}
-                      >
-                        ➕ Ny jordprofil
-                      </button>
+                      {/* Type-picker: create new profile from a soil type */}
+                      <div>
+                        <label className="block text-[10px] font-semibold text-foreground/50 uppercase tracking-wide mb-1">➕ Opret ny jordprofil</label>
+                        <div className="grid grid-cols-3 gap-1.5">
+                          {(Object.keys(SOIL_BASE_TYPE_LABELS) as SoilBaseType[]).map((bt) => (
+                            <button
+                              key={bt}
+                              type="button"
+                              className="flex flex-col items-center gap-0.5 rounded-lg border border-foreground/10 bg-foreground/[0.02] px-2 py-2 text-center hover:bg-accent-light/30 hover:border-accent/40 transition-all"
+                              onClick={() => {
+                                const bp = createProfileFromType(bt);
+                                addOrUpdateSoilProfile(bp);
+                                setSoilDataVersion((v) => v + 1);
+                                setLibSoilEditId(bp.id);
+                              }}
+                            >
+                              <span className="text-lg leading-none">{SOIL_TYPE_ICONS[bt]}</span>
+                              <span className="text-[10px] font-medium text-foreground/70">{SOIL_BASE_TYPE_LABELS[bt]}</span>
+                            </button>
+                          ))}
+                        </div>
+                      </div>
                       {allProfiles.length === 0 ? (
                         <p className="text-xs text-foreground/40 italic text-center py-4">
-                          🪨 Ingen jordprofiler endnu. Opret din første ovenfor.
+                          🪨 Ingen jordprofiler endnu. Vælg en jordtype ovenfor.
                         </p>
                       ) : (
                         <div className="space-y-1.5">
@@ -12947,7 +12977,13 @@ export function GardenMapClient({ userId }: { userId: string }) {
                                 {/* ── 1. Jordtype ── */}
                                 {section.key === "type" ? (
                                   <div className="grid grid-cols-1 gap-2">
-                                    {soilSelect("Jordtype", editingProfile.baseType, SOIL_BASE_TYPE_LABELS, (v) => updateSoilField({ baseType: v || undefined }))}
+                                    {soilSelect("Jordtype", editingProfile.baseType, SOIL_BASE_TYPE_LABELS, (v) => {
+                                      if (!v) { updateSoilField({ baseType: undefined }); return; }
+                                      // Apply preset defaults: fills empty fields, keeps user-set values
+                                      const merged = applyPresetDefaults(editingProfile, v as SoilBaseType);
+                                      addOrUpdateSoilProfile(merged);
+                                      setSoilDataVersion((p) => p + 1);
+                                    })}
                                     {editingProfile.baseType && SOIL_BASE_TYPE_DESC[editingProfile.baseType] ? (
                                       <p className="text-[10px] text-foreground/40 italic leading-snug">{SOIL_BASE_TYPE_DESC[editingProfile.baseType]}</p>
                                     ) : null}
@@ -13067,6 +13103,11 @@ export function GardenMapClient({ userId }: { userId: string }) {
                                 {/* ── 6. pH ── */}
                                 {section.key === "ph" ? (
                                   <div className="space-y-2">
+                                    {editingProfile.baseType ? (
+                                      <p className="text-[10px] text-foreground/40 italic leading-snug">
+                                        💡 Typisk pH-spænd for {SOIL_BASE_TYPE_LABELS[editingProfile.baseType]}: <strong>{SOIL_TYPE_PH_RANGE[editingProfile.baseType]}</strong>
+                                      </p>
+                                    ) : null}
                                     <div className="grid grid-cols-2 gap-2">
                                       <div>
                                         <label className="block text-[10px] font-semibold text-foreground/50 uppercase tracking-wide">pH (målt)</label>
