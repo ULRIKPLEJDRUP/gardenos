@@ -3069,6 +3069,7 @@ export function GardenMapClient({ userId }: { userId: string }) {
   const [climateSubTab, setClimateSubTab] = useState<"now" | "history" | "forecast">("now");
   const [libSubTab, setLibSubTab] = useState<"plants" | "soil">("plants");
   const [libSoilEditId, setLibSoilEditId] = useState<string | null>(null);
+  const [soilEditReturnToContent, setSoilEditReturnToContent] = useState(false);
 
   // ── Draft state for name/notes (commit on blur/Enter, not per-keystroke) ──
   const [draftName, setDraftName] = useState("");
@@ -12022,6 +12023,31 @@ export function GardenMapClient({ userId }: { userId: string }) {
                         );
                       })()}
 
+                      {/* Soil recommendations */}
+                      {profile ? (() => {
+                        const recs = computeSoilRecommendations(profile);
+                        return recs.length > 0 ? (
+                          <div className="space-y-1">
+                            <label className="block text-[10px] font-semibold text-foreground/50 uppercase tracking-wide">Anbefalinger</label>
+                            {recs.map((r, i) => (
+                              <div
+                                key={i}
+                                className={`rounded-md px-2.5 py-2 text-xs leading-snug border ${
+                                  r.priority === "warning"
+                                    ? "border-red-300/40 bg-red-50/60 dark:border-red-500/20 dark:bg-red-900/10"
+                                    : r.priority === "suggestion"
+                                      ? "border-amber-300/40 bg-amber-50/60 dark:border-amber-500/20 dark:bg-amber-900/10"
+                                      : "border-green-300/40 bg-green-50/60 dark:border-green-500/20 dark:bg-green-900/10"
+                                }`}
+                              >
+                                <span className="font-medium">{r.icon} {r.label}</span>
+                                <p className="text-foreground/50 mt-0.5">{r.description}</p>
+                              </div>
+                            ))}
+                          </div>
+                        ) : null;
+                      })() : null}
+
                       {/* Explanation */}
                       <p className="text-[10px] text-foreground/40 leading-snug">
                         💡 Jordtypen bestemmer startværdier for pH, dræning, tekstur m.m. Du kan oprette en <strong>tilpasset profil</strong> med egne målinger og eget navn herunder.
@@ -12038,6 +12064,7 @@ export function GardenMapClient({ userId }: { userId: string }) {
                           addOrUpdateSoilProfile(bp);
                           updateSelectedProperty({ soilProfileId: bp.id });
                           setSoilDataVersion((v) => v + 1);
+                          setSoilEditReturnToContent(true);
                           setSidebarTab("plants");
                           setLibSubTab("soil");
                           setLibSoilEditId(bp.id);
@@ -12052,6 +12079,7 @@ export function GardenMapClient({ userId }: { userId: string }) {
                           type="button"
                           className="w-full flex items-center justify-center gap-1.5 rounded-md border border-accent/30 bg-accent-light/20 px-2 py-2 text-xs font-medium text-accent-dark hover:bg-accent-light/40 transition-colors"
                           onClick={() => {
+                            setSoilEditReturnToContent(true);
                             setSidebarTab("plants");
                             setLibSubTab("soil");
                             setLibSoilEditId(profile.id);
@@ -12891,9 +12919,15 @@ export function GardenMapClient({ userId }: { userId: string }) {
                       <button
                         type="button"
                         className="flex items-center gap-1.5 rounded-lg border border-border px-2.5 py-1.5 text-xs text-foreground/60 hover:bg-foreground/5 hover:text-foreground transition-all"
-                        onClick={() => setLibSoilEditId(null)}
+                        onClick={() => {
+                          setLibSoilEditId(null);
+                          if (soilEditReturnToContent) {
+                            setSoilEditReturnToContent(false);
+                            setSidebarTab("content");
+                          }
+                        }}
                       >
-                        ← Tilbage til liste
+                        {soilEditReturnToContent ? "← Tilbage til indhold" : "← Tilbage til liste"}
                       </button>
 
                       {/* ── Profile name ── */}

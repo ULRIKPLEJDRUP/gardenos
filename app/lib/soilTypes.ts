@@ -510,7 +510,7 @@ export interface SoilRecommendation {
 export function computeSoilRecommendations(profile: SoilProfile): SoilRecommendation[] {
   const recs: SoilRecommendation[] = [];
 
-  // pH-based recommendations
+  // ── pH-based recommendations ──
   if (profile.phCategory === "acidic" || (profile.phMeasured !== undefined && profile.phMeasured < 6.0)) {
     recs.push({
       icon: "⚪",
@@ -519,8 +519,24 @@ export function computeSoilRecommendations(profile: SoilProfile): SoilRecommenda
       priority: "suggestion",
     });
   }
+  if (profile.phCategory === "alkaline" || (profile.phMeasured !== undefined && profile.phMeasured > 7.5)) {
+    recs.push({
+      icon: "🧪",
+      label: "Høj pH — basisk jord",
+      description: "pH over 7.5 kan låse jern, mangan og fosfor. Sænk pH med svovl, tørvejord eller sur kompost.",
+      priority: "suggestion",
+    });
+  }
+  if (profile.phMeasured !== undefined && profile.phMeasured >= 6.0 && profile.phMeasured <= 7.0) {
+    recs.push({
+      icon: "✅",
+      label: "Optimal pH",
+      description: `pH ${profile.phMeasured} er i det optimale interval (6.0–7.0) for de fleste afgrøder.`,
+      priority: "info",
+    });
+  }
 
-  // Organic content
+  // ── Organic content ──
   if (profile.organicVisual === "poor") {
     recs.push({
       icon: "♻️",
@@ -529,8 +545,16 @@ export function computeSoilRecommendations(profile: SoilProfile): SoilRecommenda
       priority: "suggestion",
     });
   }
+  if (profile.organicVisual === "rich") {
+    recs.push({
+      icon: "🌱",
+      label: "Godt organisk indhold",
+      description: "Rigt organisk indhold giver god struktur og næringstilgængelighed.",
+      priority: "info",
+    });
+  }
 
-  // Drainage
+  // ── Drainage ──
   if (profile.drainage === "standing") {
     recs.push({
       icon: "💧",
@@ -539,8 +563,26 @@ export function computeSoilRecommendations(profile: SoilProfile): SoilRecommenda
       priority: "warning",
     });
   }
+  if (profile.drainage === "dries-fast") {
+    recs.push({
+      icon: "💨",
+      label: "Tørrer hurtigt ud",
+      description: "Jorden tørrer hurtigt. Brug mulch, og vand dybt frem for ofte.",
+      priority: "suggestion",
+    });
+  }
 
-  // Soil health
+  // ── Moisture ──
+  if (profile.moisture === "wet") {
+    recs.push({
+      icon: "🌊",
+      label: "Vedvarende fugtig jord",
+      description: "Fugtig jord kan give rodråd. Vælg planter der tåler fugt, eller forbedre dræning.",
+      priority: "suggestion",
+    });
+  }
+
+  // ── Soil health ──
   if (profile.soilHealth === "poor") {
     recs.push({
       icon: "🐛",
@@ -549,8 +591,78 @@ export function computeSoilRecommendations(profile: SoilProfile): SoilRecommenda
       priority: "warning",
     });
   }
+  if (profile.soilHealth === "healthy") {
+    recs.push({
+      icon: "💚",
+      label: "Sund og aktiv jord",
+      description: "Jorden har godt mikroliv. Bevar med årlig kompost og minimal bearbejdning.",
+      priority: "info",
+    });
+  }
 
-  // Compost age
+  // ── Earthworms ──
+  if (profile.earthworms === "none") {
+    recs.push({
+      icon: "🪱",
+      label: "Ingen regnorme",
+      description: "Regnorme forbedrer struktur og næringscirkulation. Tilsæt kompost for at tiltrække dem.",
+      priority: "suggestion",
+    });
+  }
+  if (profile.earthworms === "many") {
+    recs.push({
+      icon: "🪱",
+      label: "Mange regnorme — godt tegn",
+      description: "Regnorme indikerer sund jord med god struktur og biologisk aktivitet.",
+      priority: "info",
+    });
+  }
+
+  // ── NPK nutrients ──
+  if (profile.nitrogen === "low") {
+    recs.push({
+      icon: "🟢",
+      label: "Lavt kvælstof (N)",
+      description: "Tilsæt grøngødning, kompost eller blodmel for at øge kvælstof.",
+      priority: "suggestion",
+    });
+  }
+  if (profile.phosphorus === "low") {
+    recs.push({
+      icon: "🟠",
+      label: "Lavt fosfor (P)",
+      description: "Benmel eller kompost kan øge fosforindholdet. Tjek pH — fosfor låses ved lav pH.",
+      priority: "suggestion",
+    });
+  }
+  if (profile.potassium === "low") {
+    recs.push({
+      icon: "🔵",
+      label: "Lavt kalium (K)",
+      description: "Træaske, kompost eller tang tilsættes for at øge kalium.",
+      priority: "suggestion",
+    });
+  }
+  if (profile.nitrogen === "high" && profile.phosphorus === "high" && profile.potassium === "high") {
+    recs.push({
+      icon: "✅",
+      label: "God næringsstofbalance",
+      description: "NPK-niveauerne er alle høje. Undgå overgødskning — det kan forurene grundvand.",
+      priority: "info",
+    });
+  }
+
+  // ── Lime ──
+  if (profile.limeContent === "high" && profile.phCategory !== "alkaline") {
+    recs.push({
+      icon: "⚪",
+      label: "Kalkrig jord",
+      description: "Kalkrig jord kan begrænse surhedstolerante planter som rhododendron og blåbær.",
+      priority: "info",
+    });
+  }
+
+  // ── Compost ──
   if (profile.compostTypes?.includes("municipal")) {
     recs.push({
       icon: "⚠️",
@@ -560,32 +672,62 @@ export function computeSoilRecommendations(profile: SoilProfile): SoilRecommenda
     });
   }
 
-  // Sandy soil
+  // ── Sandy soil ──
   if (profile.baseType === "sand" && profile.organicVisual !== "rich") {
     recs.push({
-      icon: "🪨",
+      icon: "🟡",
       label: "Sandjord — forbedring mulig",
       description: "Sandjord tørrer hurtigt og holder dårligt næring. Tilsæt kompost eller ler.",
       priority: "suggestion",
     });
   }
 
-  // Clay soil
+  // ── Clay soil ──
   if (profile.baseType === "clay" && profile.compression === "compact") {
     recs.push({
-      icon: "🪨",
+      icon: "🟤",
       label: "Kompakt lerjord",
       description: "Tung lerjord bør løsnes med sand, kompost eller gips. Undgå bearbejdning når våd.",
       priority: "suggestion",
     });
   }
 
-  // Drought-prone
+  // ── Peat soil ──
+  if (profile.baseType === "peat") {
+    recs.push({
+      icon: "🟠",
+      label: "Tørvejord — bemærk pH",
+      description: "Tørvejord er naturligt sur (pH 4–5.5). De fleste grøntsager trives bedst ved pH 6+. Overvej kalkning.",
+      priority: "suggestion",
+    });
+  }
+
+  // ── Chalk soil ──
+  if (profile.baseType === "chalk" && (profile.phMeasured === undefined || profile.phMeasured > 7.0)) {
+    recs.push({
+      icon: "⬜",
+      label: "Kalkjord — basisk",
+      description: "Kalkjord er typisk basisk. Vælg kalktolerante planter eller sænk pH med svovl.",
+      priority: "suggestion",
+    });
+  }
+
+  // ── Drought-prone ──
   if (profile.droughtProne && profile.organicVisual !== "rich") {
     recs.push({
       icon: "☀️",
       label: "Udtørringstruet",
       description: "Mulch og kompost hjælper jorden med at holde på fugt.",
+      priority: "suggestion",
+    });
+  }
+
+  // ── Compression ──
+  if (profile.compression === "compact" && profile.baseType !== "clay") {
+    recs.push({
+      icon: "🔨",
+      label: "Kompakt jord",
+      description: "Kompakt jord hæmmer rodvækst. Løsn med greb og tilsæt kompost.",
       priority: "suggestion",
     });
   }
