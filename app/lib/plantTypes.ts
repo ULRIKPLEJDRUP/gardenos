@@ -228,6 +228,13 @@ export type PlantFamily =
   | "elaeagnaceae"
   | "adoxaceae"
   | "moraceae"
+  | "caryophyllaceae"
+  | "urticaceae"
+  | "malvaceae"
+  | "crassulaceae"
+  | "campanulaceae"
+  | "amaranthaceae"
+  | "montiaceae"
   | "other";
 
 export const PLANT_FAMILY_LABELS: Record<PlantFamily, string> = {
@@ -271,6 +278,13 @@ export const PLANT_FAMILY_LABELS: Record<PlantFamily, string> = {
   elaeagnaceae: "Sølvbladfamilien",
   adoxaceae: "Desmerfamilien",
   moraceae: "Morbærfamilien",
+  caryophyllaceae: "Nellikefamilien",
+  urticaceae: "Nældefamilien",
+  malvaceae: "Katostfamilien",
+  crassulaceae: "Stenurtfamilien",
+  campanulaceae: "Klokkefamilien",
+  amaranthaceae: "Amarantfamilien",
+  montiaceae: "Portulakfamilien",
   other: "Anden",
 };
 
@@ -482,7 +496,28 @@ export type PlantSpecies = {
   source?: "manual" | "import" | "ai" | "builtin";
   /** Last update ISO date */
   updatedAt?: string;
+
+  // ── Traits ──
+  /**
+   * Is the plant edible (any part: leaves, roots, flowers, fruit, seeds)?
+   * For categories 'vegetable', 'fruit', and 'herb' this is assumed true.
+   * Set explicitly for perennials, trees, bushes, flowers, cover-crops etc.
+   * that happen to be edible.
+   */
+  edible?: boolean;
 };
+
+/**
+ * Returns true if a plant species is edible.
+ * Vegetables, fruits, and herbs are always considered edible.
+ * Other categories require an explicit `edible: true` flag.
+ */
+export function isEdiblePlant(species: PlantSpecies): boolean {
+  if (species.edible !== undefined) return species.edible;
+  return species.category === "vegetable"
+    || species.category === "fruit"
+    || species.category === "herb";
+}
 
 // ---------------------------------------------------------------------------
 // Plant Instance – what's actually planted in a bed/row on the map
