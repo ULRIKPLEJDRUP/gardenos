@@ -50,6 +50,7 @@ import {
   maxAcceptableShadeHours,
   couldCastSignificantShade,
   GROWING_SEASON_SUN_HOURS,
+  isEdiblePlant,
 } from "../lib/plantTypes";
 import VarietyManager from "./VarietyManager";
 import PlantEditor from "./PlantEditor";
@@ -3561,6 +3562,7 @@ export function GardenMapClient({ userId }: { userId: string }) {
             if (sp.light) line += `, lys: ${sp.light}`;
             if (sp.water) line += `, vand: ${sp.water}`;
             if (sp.frostHardy) line += `, frostfast: ja`;
+            if (isEdiblePlant(sp)) line += `, spiselig: ja`;
             if (sp.harvestTips) line += `, h\u00f8sttips: ${sp.harvestTips}`;
             if (sp.pests?.length) line += `, skadedyr: ${sp.pests.join(", ")}`;
             if (sp.diseases?.length) line += `, sygdomme: ${sp.diseases.join(", ")}`;
@@ -3590,15 +3592,21 @@ export function GardenMapClient({ userId }: { userId: string }) {
       const unplanted = allPlants.filter(p => !plantedIds.has(p.id));
       if (unplanted.length > 0) {
         const byCategory: Record<string, string[]> = {};
+        const edibleUnplanted: string[] = [];
         unplanted.forEach((p) => {
           const cat = PLANT_CATEGORY_LABELS[p.category] || p.category;
           if (!byCategory[cat]) byCategory[cat] = [];
           byCategory[cat].push(p.name);
+          if (isEdiblePlant(p)) edibleUnplanted.push(p.name);
         });
         const catSummary = Object.entries(byCategory).map(([cat, names]) =>
           `- ${cat}: ${names.join(", ")}`
         );
-        parts.push(`Plantebibliotek (IKKE plantet endnu, ${unplanted.length} arter tilg\u00e6ngelige til forslag):\n${catSummary.join("\n")}`);
+        let bibText = `Plantebibliotek (IKKE plantet endnu, ${unplanted.length} arter tilg\u00e6ngelige til forslag):\n${catSummary.join("\n")}`;
+        if (edibleUnplanted.length > 0) {
+          bibText += `\n\nSpiselige arter i biblioteket (${edibleUnplanted.length} stk): ${edibleUnplanted.join(", ")}`;
+        }
+        parts.push(bibText);
       }
     } catch { /* ignore */ }
 
@@ -3784,6 +3792,7 @@ export function GardenMapClient({ userId }: { userId: string }) {
   // ── Plant knowledge system state ──
   const [plantSearch, setPlantSearch] = useState("");
   const [plantCategoryFilter, setPlantCategoryFilter] = useState<PlantCategory | "all">("all");
+  const [plantEdibleFilter, setPlantEdibleFilter] = useState(false);
   const [expandedPlantId, setExpandedPlantId] = useState<string | null>(null);
   const [plantInstancesVersion, setPlantInstancesVersion] = useState(0);
   const [bedPlantSearch, setBedPlantSearch] = useState("");
@@ -7016,6 +7025,9 @@ export function GardenMapClient({ userId }: { userId: string }) {
 
   const filteredPlants = useMemo(() => {
     let list = allPlants;
+    if (plantEdibleFilter) {
+      list = list.filter((p) => isEdiblePlant(p));
+    }
     if (plantCategoryFilter !== "all") {
       list = list.filter((p) => p.category === plantCategoryFilter);
     }
@@ -7029,7 +7041,7 @@ export function GardenMapClient({ userId }: { userId: string }) {
       );
     }
     return list;
-  }, [allPlants, plantCategoryFilter, plantSearch]);
+  }, [allPlants, plantCategoryFilter, plantSearch, plantEdibleFilter]);
 
   const selectedFeatureId = selected?.feature.properties?.gardenosId ?? "";
 
@@ -7087,9 +7099,12 @@ export function GardenMapClient({ userId }: { userId: string }) {
   /** Count plants per category for the filter pills */
   const plantCountByCategory = useMemo(() => {
     const counts: Record<string, number> = { all: allPlants.length };
+    let edibleCount = 0;
     for (const p of allPlants) {
       counts[p.category] = (counts[p.category] ?? 0) + 1;
+      if (isEdiblePlant(p)) edibleCount++;
     }
+    counts.edible = edibleCount;
     return counts;
   }, [allPlants]);
 
@@ -12411,13 +12426,25 @@ export function GardenMapClient({ userId }: { userId: string }) {
               <button
                 type="button"
                 className={`rounded-full border px-2.5 py-1 text-[10px] font-medium transition-all ${
-                  plantCategoryFilter === "all"
+                  plantCategoryFilter === "all" && !plantEdibleFilter
                     ? "border-accent/40 bg-accent-light text-accent-dark shadow-sm"
                     : "border-border bg-background hover:bg-foreground/5 text-foreground/60"
                 }`}
-                onClick={() => setPlantCategoryFilter("all")}
+                onClick={() => { setPlantCategoryFilter("all"); setPlantEdibleFilter(false); }}
               >
                 Alle ({allPlants.length})
+              </button>
+              <button
+                type="button"
+                className={`rounded-full border px-2.5 py-1 text-[10px] font-medium transition-all ${
+                  plantEdibleFilter
+                    ? "border-green-500/40 bg-green-50 text-green-800 shadow-sm dark:border-green-400/30 dark:bg-green-900/20 dark:text-green-300"
+                    : "border-border bg-background hover:bg-foreground/5 text-foreground/60"
+                }`}
+                onClick={() => setPlantEdibleFilter(!plantEdibleFilter)}
+                title="Vis kun spiselige planter"
+              >
+                🍽️ Spiselig ({plantCountByCategory.edible ?? 0})
               </button>
               {(Object.entries(PLANT_CATEGORY_LABELS) as [PlantCategory, string][]).map(([cat, label]) => {
                 const count = allPlants.filter((p) => p.category === cat).length;
@@ -12472,6 +12499,9 @@ export function GardenMapClient({ userId }: { userId: string }) {
                         ) : null}
                       </div>
                       <div className="shrink-0 flex items-center gap-1">
+                        {isEdiblePlant(plant) ? (
+                          <span className="text-[10px]" title="Spiselig">🍽️</span>
+                        ) : null}
                         {getDefaultPlacements(plant).map((pt) => (
                           <span key={pt} className="text-[10px]" title={PLACEMENT_LABELS[pt]}>{PLACEMENT_ICONS[pt]}</span>
                         ))}
@@ -12524,6 +12554,12 @@ export function GardenMapClient({ userId }: { userId: string }) {
                             <>
                               <span className="text-foreground/50">Frosttålig</span>
                               <span>{plant.frostHardy ? "Ja" : "Nej"}</span>
+                            </>
+                          ) : null}
+                          {isEdiblePlant(plant) ? (
+                            <>
+                              <span className="text-foreground/50">Spiselig</span>
+                              <span className="text-green-700 dark:text-green-400">🍽️ Ja</span>
                             </>
                           ) : null}
                         </div>
