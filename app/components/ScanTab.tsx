@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useCallback } from "react";
+import { useState, useRef, useCallback, memo } from "react";
 import {
   getPlantById,
   addVarietyToSpecies,
@@ -82,7 +82,7 @@ export interface ScanTabProps {
 // ---------------------------------------------------------------------------
 // Component
 // ---------------------------------------------------------------------------
-export default function ScanTab({
+function ScanTabInner({
   setPlantDataVersion,
   onNavigateToPlants,
   trackActivity,
@@ -983,3 +983,6 @@ export default function ScanTab({
     </div>
   );
 }
+
+const ScanTab = memo(ScanTabInner);
+export default ScanTab;

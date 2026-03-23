@@ -6,7 +6,7 @@
 // Uses the same design tokens as the rest of the app (--accent, --border, etc.)
 // ---------------------------------------------------------------------------
 
-import React, { useState, useCallback, useRef, useEffect, useMemo } from "react";
+import React, { useState, useCallback, useRef, useEffect, useMemo, memo } from "react";
 import type { BedLayout, BedElement, BedLocalCoord, LabTool, PlantShapeType, GrowthPhase } from "../lib/bedLayoutTypes";
 import { geoPolygonToBedLayout, pointInBedOutline, snapToGrid } from "../lib/bedGeometry";
 import { getBedLayout, createBedLayout, saveBedLayout, removeElement, addElement, updateElement } from "../lib/bedLayoutStore";
@@ -296,7 +296,7 @@ function PlantShape({
 // Main DesignLab Component
 // ---------------------------------------------------------------------------
 
-export default function DesignLab({
+function DesignLabInner({
   featureId,
   featureName,
   ring,
@@ -1925,3 +1925,6 @@ export default function DesignLab({
     </div>
   );
 }
+
+const DesignLab = memo(DesignLabInner);
+export default DesignLab;

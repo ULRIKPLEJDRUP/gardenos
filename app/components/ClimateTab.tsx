@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, memo } from "react";
 import {
   getWeatherEmoji,
   getWeatherLabel,
@@ -22,7 +22,7 @@ export interface ClimateTabProps {
 }
 
 /* ── Component ── */
-export default function ClimateTab({
+function ClimateTabInner({
   weatherData,
   weatherLoading,
   weatherError,
@@ -429,3 +429,6 @@ export default function ClimateTab({
     </div>
   );
 }
+
+const ClimateTab = memo(ClimateTabInner);
+export default ClimateTab;

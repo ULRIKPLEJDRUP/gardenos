@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, memo } from "react";
 import type { FeatureCollection, Feature, Geometry } from "geojson";
 import TaskList from "./TaskList";
 import YearWheel from "./YearWheel";
@@ -107,7 +107,7 @@ export interface PlanTabProps {
 type PlanSubTab = "tasks" | "calendar" | "notes" | "watering" | "rotation" | "recommend";
 type NoteFilter = "all" | "elements" | "soil" | "tasks";
 
-export default function PlanTab({
+function PlanTabInner({
   taskVersion,
   setTaskVersion,
   plantDataVersion,
@@ -919,3 +919,6 @@ export default function PlanTab({
     </div>
   );
 }
+
+const PlanTab = memo(PlanTabInner);
+export default PlanTab;

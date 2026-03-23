@@ -65,6 +65,9 @@ import ClimateTab from "./ClimateTab";
 import PlanTab from "./PlanTab";
 import ScanTab from "./ScanTab";
 import DesignLab from "./DesignLab";
+import JournalTab from "./JournalTab";
+import ConflictsTab from "./ConflictsTab";
+import GroupsTab from "./GroupsTab";
 import type { BedLayout } from "../lib/bedLayoutTypes";
 import { getBedLayout } from "../lib/bedLayoutStore";
 import { bedLocalToGeo } from "../lib/bedGeometry";
@@ -172,18 +175,6 @@ import {
   URGENCY_CONFIG,
   type BedWateringAdvice,
 } from "../lib/wateringAdvisor";
-import {
-  getJournalEntries,
-  addJournalEntry,
-  updateJournalEntry,
-  deleteJournalEntry,
-  groupByDate,
-  getJournalStats,
-  JOURNAL_CATEGORY_CONFIG,
-  JOURNAL_CATEGORIES,
-  type JournalEntry as JournalEntryType,
-  type JournalCategory,
-} from "../lib/journalStore";
 import {
   buildRotationPlan,
   getCurrentSeason,
@@ -3063,12 +3054,6 @@ export function GardenMapClient({ userId }: { userId: string }) {
     return () => { clearTimeout(t1); clearTimeout(t2); };
   }, [sidebarPanelOpen]);
 
-  const [conflictFilter, setConflictFilter] = useState<"all" | "spacing" | "bad-companion" | "layer-competition" | "shade">("all");
-  const [conflictSortBy, setConflictSortBy] = useState<"severity" | "type" | "distance">("severity");
-  const [conflictResolvedIds, setConflictResolvedIds] = useState<Set<string>>(() => {
-    try { const s = localStorage.getItem(userKey("gardenos:conflicts:resolved:v1")); return s ? new Set(JSON.parse(s)) : new Set(); } catch { return new Set(); }
-  });
-  const [conflictShowResolved, setConflictShowResolved] = useState(false);
   const [viewSubTab, setViewSubTab] = useState<"steder" | "baggrund" | "synlighed" | "ankre" | "eksport">("steder");
   const [libSubTab, setLibSubTab] = useState<"plants" | "soil">("plants");
   const [libSoilEditId, setLibSoilEditId] = useState<string | null>(null);
@@ -3092,14 +3077,6 @@ export function GardenMapClient({ userId }: { userId: string }) {
 
   // ── Journal / Dagbog state ──
   const [journalVersion, setJournalVersion] = useState(0);
-  const [journalAdding, setJournalAdding] = useState(false);
-  const [journalEditId, setJournalEditId] = useState<string | null>(null);
-  const [journalFilter, setJournalFilter] = useState<JournalCategory | "all">("all");
-  const [journalDraftTitle, setJournalDraftTitle] = useState("");
-  const [journalDraftBody, setJournalDraftBody] = useState("");
-  const [journalDraftCategory, setJournalDraftCategory] = useState<JournalCategory>("observation");
-  const [journalDraftDate, setJournalDraftDate] = useState(() => new Date().toISOString().slice(0, 10));
-  const [journalConfirmDelete, setJournalConfirmDelete] = useState<string | null>(null);
 
   // ── User settings modal state ──
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -3665,7 +3642,6 @@ export function GardenMapClient({ userId }: { userId: string }) {
   };
   const [groupRegistry, setGroupRegistry] = useState<GroupRegistry>(() => loadGroupRegistry());
   const [highlightedGroupId, setHighlightedGroupId] = useState<string | null>(null);
-  const [collapsedGroupIds, setCollapsedGroupIds] = useState<Set<string>>(new Set());
   const [groupSectionOpen, setGroupSectionOpen] = useState(false);
   const edgeLabelLayerGroupRef = useRef<L.LayerGroup | null>(null);
   const rowEmojiLayerGroupRef = useRef<L.LayerGroup | null>(null);
@@ -7190,6 +7166,25 @@ export function GardenMapClient({ userId }: { userId: string }) {
     });
     rebuildFromGroupAndUpdateSelection();
   }, [groupRegistry, rebuildFromGroupAndUpdateSelection]);
+
+  const fitGroupBounds = useCallback((groupId: string) => {
+    const fgRef = featureGroupRef.current;
+    if (!fgRef) return;
+    const bounds = L.latLngBounds([]);
+    fgRef.eachLayer((layer) => {
+      const f = (layer as L.Layer & { feature?: GardenFeature }).feature;
+      if (f?.properties?.groupId === groupId) {
+        if (layer instanceof L.Marker) {
+          bounds.extend(layer.getLatLng());
+        } else if (typeof (layer as unknown as { getBounds?: () => L.LatLngBounds }).getBounds === "function") {
+          bounds.extend((layer as unknown as { getBounds: () => L.LatLngBounds }).getBounds());
+        }
+      }
+    });
+    if (bounds.isValid()) {
+      mapRef.current?.fitBounds(bounds.pad(0.3), { animate: true, duration: 0.4 });
+    }
+  }, []);
 
   const effectiveSelectedKind = useMemo(() => {
     if (!selected) return undefined;
@@ -12328,125 +12323,16 @@ export function GardenMapClient({ userId }: { userId: string }) {
         ) : null}
 
         {sidebarTab === "groups" ? (
-          <div className="mt-3 space-y-3">
-            {allGroups.length === 0 ? (
-              <p className="text-sm text-foreground/70">
-                Ingen grupper endnu. Vælg flere elementer med Shift+klik og tryk &quot;Gruppér&quot;.
-              </p>
-            ) : (
-              allGroups.map((g) => {
-                const isHighlighted = highlightedGroupId === g.id;
-                const isCollapsed = collapsedGroupIds.has(g.id);
-                const toggleHighlight = () => {
-                  setHighlightedGroupId(isHighlighted ? null : g.id);
-                  // Fit map to group bounds when highlighting
-                  if (!isHighlighted) {
-                    const fgRef = featureGroupRef.current;
-                    if (fgRef) {
-                      const bounds = L.latLngBounds([]);
-                      fgRef.eachLayer((layer) => {
-                        const f = (layer as L.Layer & { feature?: GardenFeature }).feature;
-                        if (f?.properties?.groupId === g.id) {
-                          if (layer instanceof L.Marker) {
-                            bounds.extend(layer.getLatLng());
-                          } else if (typeof (layer as unknown as { getBounds?: () => L.LatLngBounds }).getBounds === "function") {
-                            bounds.extend((layer as unknown as { getBounds: () => L.LatLngBounds }).getBounds());
-                          }
-                        }
-                      });
-                      if (bounds.isValid()) {
-                        mapRef.current?.fitBounds(bounds.pad(0.3), { animate: true, duration: 0.4 });
-                      }
-                    }
-                  }
-                };
-                const toggleCollapse = (e: React.MouseEvent) => {
-                  e.stopPropagation();
-                  setCollapsedGroupIds((prev) => {
-                    const next = new Set(prev);
-                    if (next.has(g.id)) next.delete(g.id); else next.add(g.id);
-                    return next;
-                  });
-                };
-                return (
-                  <div
-                    key={g.id}
-                    className={`gardenos-group-card rounded-lg text-sm transition-all ${
-                      isHighlighted
-                        ? "gardenos-group-card--active shadow-md"
-                        : "border border-border bg-background hover:shadow-sm"
-                    }`}
-                    onClick={toggleHighlight}
-                    style={{ cursor: "pointer" }}
-                    title="Klik for at markere gruppen på kortet"
-                  >
-                    <div className="flex items-start gap-2 p-3 pb-1">
-                      {/* Collapse chevron */}
-                      <button
-                        type="button"
-                        className="mt-0.5 shrink-0 w-5 h-5 flex items-center justify-center rounded text-foreground/50 hover:text-foreground hover:bg-foreground/10 transition-all"
-                        onClick={toggleCollapse}
-                        title={isCollapsed ? "Vis medlemmer" : "Skjul medlemmer"}
-                      >
-                        <span className="text-xs" style={{ transition: "transform 0.2s", display: "inline-block", transform: isCollapsed ? "rotate(-90deg)" : "rotate(0deg)" }}>▼</span>
-                      </button>
-                      <div className="flex-1 min-w-0" onClick={(e) => e.stopPropagation()}>
-                        <input
-                          className="w-full rounded border border-transparent bg-transparent px-1 py-0.5 text-sm font-medium text-foreground hover:border-foreground/20 focus:border-foreground/30 focus:outline-none"
-                          value={g.name}
-                          onChange={(e) => renameGroup(g.id, e.target.value)}
-                          title="Klik for at omdøbe gruppen"
-                        />
-                        <p className="mt-0.5 px-1 text-xs text-foreground/60">
-                          {g.memberCount} {g.memberCount === 1 ? "element" : "elementer"}
-                          {isHighlighted ? " · markeret på kort" : ""}
-                        </p>
-                      </div>
-                      <button
-                        type="button"
-                        className="shrink-0 rounded-md border border-red-300 bg-background px-2 py-1 text-xs text-red-600 hover:bg-red-50"
-                        onClick={(e) => { e.stopPropagation(); dissolveGroupById(g.id); }}
-                        title="Slet gruppen (elementer beholdes)"
-                      >
-                        Slet
-                      </button>
-                    </div>
-                    {/* Collapsible member list */}
-                    {!isCollapsed && (
-                      <div className="px-3 pb-2.5 pt-1 space-y-0.5" onClick={(e) => e.stopPropagation()}>
-                        {g.members.map((m) => (
-                          <div key={m.id} className="flex items-center gap-1">
-                            <button
-                              type="button"
-                              className="flex-1 cursor-pointer text-left text-xs text-foreground/70 hover:text-foreground hover:underline"
-                              onClick={() => selectFeatureById(m.id)}
-                              title="Gå til element i Indholdsfanen"
-                            >
-                              • {m.label}
-                            </button>
-                            <button
-                              type="button"
-                              className="shrink-0 rounded px-1 text-xs text-foreground/40 hover:bg-red-50 hover:text-red-500"
-                              onClick={() => removeFromGroupById(m.id)}
-                              title="Fjern fra gruppen"
-                            >
-                              ✕
-                            </button>
-                          </div>
-                        ))}
-                        {g.memberCount > 8 ? (
-                          <div className="text-xs text-foreground/50">… +{g.memberCount - 8} flere</div>
-                        ) : null}
-                      </div>
-                    )}
-                  </div>
-                );
-              })
-            )}
-            <p className="text-xs text-foreground/60">
-              Tip: Shift+klik for at vælge flere elementer, derefter &quot;Gruppér&quot;.
-            </p>
-          </div>
+          <GroupsTab
+            allGroups={allGroups}
+            highlightedGroupId={highlightedGroupId}
+            setHighlightedGroupId={setHighlightedGroupId}
+            onFitGroupBounds={fitGroupBounds}
+            selectFeatureById={selectFeatureById}
+            dissolveGroupById={dissolveGroupById}
+            removeFromGroupById={removeFromGroupById}
+            renameGroup={renameGroup}
+          />
         ) : null}
 
         {/* ══════════════════════════════════════════════════════════════ */}
@@ -13481,205 +13367,15 @@ export function GardenMapClient({ userId }: { userId: string }) {
           />
         ) : null}
 
-        {/* ── Year Wheel / Årshjul Tab ── */}
-        {/* ── Konflikter / Conflict Resolution Tab ── */}
-        {sidebarTab === "conflicts" ? (() => {
-          const conflictKey = (c: PlantConflict) => `${c.featureIdA}:${c.featureIdB}:${c.type}`;
-          const unresolvedConflicts = allConflicts.filter((c) => !conflictResolvedIds.has(conflictKey(c)));
-          const resolvedConflicts = allConflicts.filter((c) => conflictResolvedIds.has(conflictKey(c)));
-          let displayConflicts = conflictShowResolved ? allConflicts : unresolvedConflicts;
-          if (conflictFilter !== "all") displayConflicts = displayConflicts.filter((c) => c.type === conflictFilter);
-          displayConflicts = [...displayConflicts].sort((a, b) => {
-            if (conflictSortBy === "severity") return b.severity - a.severity || a.type.localeCompare(b.type);
-            if (conflictSortBy === "type") return a.type.localeCompare(b.type) || b.severity - a.severity;
-            return a.distanceM - b.distanceM;
-          });
-          const countByType = { spacing: 0, "bad-companion": 0, "layer-competition": 0, shade: 0 };
-          for (const c of unresolvedConflicts) countByType[c.type]++;
-
-          const toggleResolved = (c: PlantConflict) => {
-            const key = conflictKey(c);
-            setConflictResolvedIds((prev) => {
-              const next = new Set(prev);
-              if (next.has(key)) next.delete(key); else next.add(key);
-              try { localStorage.setItem(userKey("gardenos:conflicts:resolved:v1"), JSON.stringify([...next])); markDirty("gardenos:conflicts:resolved:v1"); } catch {}
-              return next;
-            });
-          };
-
-          return (
-            <div className="mt-3 space-y-3">
-              {/* Summary header */}
-              <div className="flex items-center gap-2">
-                <span className="text-lg">⚡</span>
-                <div>
-                  <h3 className="text-sm font-bold text-foreground/80">Konfliktløsning</h3>
-                  <p className="text-[10px] text-foreground/50">
-                    {unresolvedConflicts.length === 0
-                      ? "✅ Ingen uløste konflikter — haven ser godt ud!"
-                      : `${unresolvedConflicts.length} uløst${unresolvedConflicts.length > 1 ? "e" : ""} konflikt${unresolvedConflicts.length > 1 ? "er" : ""}`
-                    }
-                    {resolvedConflicts.length > 0 ? ` · ${resolvedConflicts.length} markeret løst` : ""}
-                  </p>
-                </div>
-              </div>
-
-              {/* Type filter pills */}
-              <div className="flex flex-wrap gap-1">
-                {([
-                  { val: "all" as const, icon: "🔎", label: "Alle", count: unresolvedConflicts.length },
-                  { val: "shade" as const, icon: "☀️", label: "Skygge", count: countByType.shade },
-                  { val: "spacing" as const, icon: "📏", label: "Afstand", count: countByType.spacing },
-                  { val: "bad-companion" as const, icon: "⛔", label: "Nabo", count: countByType["bad-companion"] },
-                  { val: "layer-competition" as const, icon: "⚠️", label: "Lag", count: countByType["layer-competition"] },
-                ] as const).map((f) => (
-                  <button
-                    key={f.val}
-                    type="button"
-                    className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium transition-all ${
-                      conflictFilter === f.val
-                        ? "bg-accent text-white shadow-sm"
-                        : "bg-foreground/5 text-foreground/60 hover:bg-foreground/10"
-                    }`}
-                    onClick={() => setConflictFilter(f.val)}
-                  >
-                    <span>{f.icon}</span>
-                    <span>{f.label}</span>
-                    {f.count > 0 ? <span className="bg-white/20 rounded-full px-1 text-[8px]">{f.count}</span> : null}
-                  </button>
-                ))}
-              </div>
-
-              {/* Sort + show resolved */}
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-1">
-                  <span className="text-[9px] text-foreground/40">Sortér:</span>
-                  {([
-                    { val: "severity" as const, label: "Alvorlighed" },
-                    { val: "type" as const, label: "Type" },
-                    { val: "distance" as const, label: "Afstand" },
-                  ] as const).map((s) => (
-                    <button
-                      key={s.val}
-                      type="button"
-                      className={`text-[9px] px-1.5 py-0.5 rounded ${conflictSortBy === s.val ? "bg-foreground/10 font-semibold text-foreground/70" : "text-foreground/40 hover:text-foreground/60"}`}
-                      onClick={() => setConflictSortBy(s.val)}
-                    >{s.label}</button>
-                  ))}
-                </div>
-                <label className="flex items-center gap-1 text-[9px] text-foreground/40 cursor-pointer">
-                  <input type="checkbox" checked={conflictShowResolved} onChange={(e) => setConflictShowResolved(e.target.checked)} className="w-3 h-3 rounded" />
-                  Vis løste
-                </label>
-              </div>
-
-              {/* Conflict cards */}
-              {displayConflicts.length === 0 ? (
-                <div className="text-center py-8 text-foreground/30">
-                  <p className="text-2xl mb-1">🌿</p>
-                  <p className="text-xs">
-                    {conflictFilter !== "all" ? "Ingen konflikter af denne type" : "Ingen konflikter at vise"}
-                  </p>
-                </div>
-              ) : (
-                <div className="space-y-2">
-                  {displayConflicts.map((c, idx) => {
-                    const key = conflictKey(c);
-                    const isResolved = conflictResolvedIds.has(key);
-                    const borderColor = isResolved ? "border-green-300" : c.severity === 3 ? "border-red-400" : c.severity === 2 ? "border-orange-300" : "border-yellow-300";
-                    const bgColor = isResolved ? "bg-green-50/40" : c.severity === 3 ? "bg-red-50/50" : c.severity === 2 ? "bg-orange-50/50" : "bg-yellow-50/50";
-                    const icon = c.type === "spacing" ? "📏" : c.type === "bad-companion" ? "⛔" : c.type === "shade" ? "☀️" : "⚠️";
-                    const typeLabel = c.type === "spacing" ? "Afstand" : c.type === "bad-companion" ? "Dårlig nabo" : c.type === "shade" ? "Skygge" : "Lag-konkurrence";
-                    const sevLabel = c.severity === 3 ? "Alvorlig" : c.severity === 2 ? "Moderat" : "Mild";
-                    const sevColor = c.severity === 3 ? "text-red-600" : c.severity === 2 ? "text-orange-600" : "text-yellow-600";
-
-                    return (
-                      <div key={idx} className={`rounded-lg border ${borderColor} ${bgColor} p-2.5 space-y-1.5 ${isResolved ? "opacity-60" : ""} transition-all`}>
-                        {/* Header row */}
-                        <div className="flex items-center gap-1.5">
-                          <span className="text-sm">{icon}</span>
-                          <span className="text-[10px] font-bold text-foreground/70">{typeLabel}</span>
-                          <span className={`text-[9px] font-semibold ${sevColor} ml-1`}>{sevLabel}</span>
-                          <span className="text-[9px] text-foreground/30 ml-auto">{c.distanceM.toFixed(1)}m</span>
-                        </div>
-
-                        {/* Plants involved */}
-                        <div className="flex items-center gap-3 text-[10px]">
-                          <button
-                            type="button"
-                            className="flex items-center gap-1 hover:underline text-foreground/70"
-                            onClick={() => { selectFeatureById(c.featureIdA); setSidebarTab("content"); setSidebarPanelOpen(true); }}
-                          >
-                            <span>{c.speciesA.icon ?? "🌱"}</span>
-                            <span className="font-medium">{c.speciesA.name}</span>
-                          </button>
-                          <span className="text-foreground/30">↔</span>
-                          <button
-                            type="button"
-                            className="flex items-center gap-1 hover:underline text-foreground/70"
-                            onClick={() => { selectFeatureById(c.featureIdB); setSidebarTab("content"); setSidebarPanelOpen(true); }}
-                          >
-                            <span>{c.speciesB.icon ?? "🌱"}</span>
-                            <span className="font-medium">{c.speciesB.name}</span>
-                          </button>
-                        </div>
-
-                        {/* Message + suggestion */}
-                        <p className="text-[10px] text-foreground/60">{c.message}</p>
-                        <p className="text-[10px] text-foreground/40 italic">💡 {c.suggestion}</p>
-
-                        {/* Progress bars */}
-                        {c.type === "spacing" ? (
-                          <div className="flex items-center gap-2 mt-0.5">
-                            <div className="flex-1 h-1.5 rounded-full bg-foreground/10 overflow-hidden">
-                              <div
-                                className={`h-full rounded-full ${c.severity === 3 ? "bg-red-500" : c.severity === 2 ? "bg-orange-400" : "bg-yellow-400"}`}
-                                style={{ width: `${Math.min(100, (c.distanceM / c.requiredM) * 100)}%` }}
-                              />
-                            </div>
-                            <span className="text-[9px] text-foreground/40 shrink-0">{c.distanceM.toFixed(1)}m / {c.requiredM.toFixed(1)}m</span>
-                          </div>
-                        ) : null}
-                        {c.type === "shade" ? (() => {
-                          const shadeMatch = c.message.match(/~(\d+\.?\d*)\s*t(?:imer)?\/dag/);
-                          const shadeHrs = shadeMatch ? parseFloat(shadeMatch[1]) : 0;
-                          const shadePercent = Math.min(100, (shadeHrs / GROWING_SEASON_SUN_HOURS) * 100);
-                          return (
-                            <div className="flex items-center gap-2">
-                              <span className="text-[9px] text-foreground/40">☀️</span>
-                              <div className="flex-1 h-2 rounded-full bg-yellow-100 overflow-hidden border border-yellow-200">
-                                <div className="h-full rounded-full bg-gray-400" style={{ width: `${shadePercent}%`, marginLeft: `${100 - shadePercent}%` }} />
-                              </div>
-                              <span className="text-[9px] text-foreground/40">🌑 {shadeHrs.toFixed(1)}t</span>
-                            </div>
-                          );
-                        })() : null}
-
-                        {/* Action buttons */}
-                        <div className="flex items-center gap-2 mt-1">
-                          <button
-                            type="button"
-                            className="flex items-center gap-1 text-[9px] px-2 py-0.5 rounded bg-foreground/5 hover:bg-foreground/10 text-foreground/50 transition-colors"
-                            onClick={() => { flashFeatureIds([c.featureIdA, c.featureIdB]); }}
-                          >📍 Vis på kort</button>
-                          <button
-                            type="button"
-                            className={`flex items-center gap-1 text-[9px] px-2 py-0.5 rounded transition-colors ${
-                              isResolved
-                                ? "bg-green-100 text-green-700 hover:bg-green-200"
-                                : "bg-foreground/5 hover:bg-green-50 text-foreground/50 hover:text-green-600"
-                            }`}
-                            onClick={() => toggleResolved(c)}
-                          >{isResolved ? "↩️ Genåbn" : "✅ Markér løst"}</button>
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
-            </div>
-          );
-        })() : null}
+        {sidebarTab === "conflicts" ? (
+          <ConflictsTab
+            allConflicts={allConflicts}
+            selectFeatureById={selectFeatureById}
+            flashFeatureIds={flashFeatureIds}
+            setSidebarTab={setSidebarTab}
+            setSidebarPanelOpen={setSidebarPanelOpen}
+          />
+        ) : null}
 
         {/* ── Planlæg Tab (Opgaver + Årshjul + Noter) ── */}
         {sidebarTab === "tasks" ? (
@@ -14724,244 +14420,12 @@ export function GardenMapClient({ userId }: { userId: string }) {
           </div>
         ) : null}
 
-        {/* ══════════════════════════════════════════════════════════════ */}
-        {/* ── JOURNAL / DAGBOG TAB ──                                    */}
-        {/* ══════════════════════════════════════════════════════════════ */}
-        {sidebarTab === "journal" ? (() => {
-          // eslint-disable-next-line react-hooks/rules-of-hooks
-          void journalVersion; // reactivity trigger
-          const entries = getJournalEntries();
-          const filtered = journalFilter === "all"
-            ? entries
-            : entries.filter((e) => e.category === journalFilter);
-          const dayGroups = groupByDate(filtered);
-          const stats = getJournalStats();
-
-          const resetForm = () => {
-            setJournalAdding(false);
-            setJournalEditId(null);
-            setJournalDraftTitle("");
-            setJournalDraftBody("");
-            setJournalDraftCategory("observation");
-            setJournalDraftDate(new Date().toISOString().slice(0, 10));
-          };
-
-          const handleSave = () => {
-            if (!journalDraftTitle.trim()) return;
-            if (journalEditId) {
-              updateJournalEntry(journalEditId, {
-                title: journalDraftTitle.trim(),
-                body: journalDraftBody.trim(),
-                category: journalDraftCategory,
-                date: journalDraftDate,
-              });
-            } else {
-              addJournalEntry({
-                title: journalDraftTitle.trim(),
-                body: journalDraftBody.trim(),
-                category: journalDraftCategory,
-                date: journalDraftDate,
-                featureIds: [],
-                tags: [],
-              });
-            }
-            setJournalVersion((v) => v + 1);
-            resetForm();
-          };
-
-          const startEdit = (entry: JournalEntryType) => {
-            setJournalEditId(entry.id);
-            setJournalAdding(true);
-            setJournalDraftTitle(entry.title);
-            setJournalDraftBody(entry.body);
-            setJournalDraftCategory(entry.category);
-            setJournalDraftDate(entry.date);
-          };
-
-          return (
-            <div className="mt-3 space-y-3">
-              {/* Header */}
-              <div className="flex items-center justify-between">
-                <div>
-                  <h3 className="text-sm font-bold text-foreground/80">📓 Havedagbog</h3>
-                  <p className="text-[9px] text-foreground/40">{stats.total} indlæg · {stats.thisMonth} denne måned</p>
-                </div>
-                <button
-                  type="button"
-                  className="rounded-lg bg-accent text-white px-3 py-1.5 text-xs font-medium hover:bg-accent/90 transition-colors"
-                  onClick={() => { resetForm(); setJournalAdding(true); }}
-                >
-                  + Ny
-                </button>
-              </div>
-
-              {/* Add / Edit form */}
-              {journalAdding ? (
-                <div className="rounded-lg border border-accent/30 bg-accent/5 p-3 space-y-2">
-                  <div className="flex gap-2">
-                    <input
-                      type="date"
-                      className="rounded-md border border-border px-2 py-1 text-xs"
-                      value={journalDraftDate}
-                      onChange={(e) => setJournalDraftDate(e.target.value)}
-                    />
-                    <select
-                      className="flex-1 rounded-md border border-border px-2 py-1 text-xs"
-                      value={journalDraftCategory}
-                      onChange={(e) => setJournalDraftCategory(e.target.value as JournalCategory)}
-                    >
-                      {JOURNAL_CATEGORIES.map((cat) => (
-                        <option key={cat} value={cat}>
-                          {JOURNAL_CATEGORY_CONFIG[cat].icon} {JOURNAL_CATEGORY_CONFIG[cat].label}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                  <input
-                    type="text"
-                    className="w-full rounded-md border border-border px-2.5 py-1.5 text-xs placeholder:text-foreground/30"
-                    placeholder="Titel…"
-                    value={journalDraftTitle}
-                    onChange={(e) => setJournalDraftTitle(e.target.value)}
-                    autoFocus
-                  />
-                  <textarea
-                    className="w-full rounded-md border border-border px-2.5 py-1.5 text-xs placeholder:text-foreground/30 resize-none"
-                    placeholder="Hvad skete der i haven? Observationer, noter…"
-                    rows={3}
-                    value={journalDraftBody}
-                    onChange={(e) => setJournalDraftBody(e.target.value)}
-                  />
-                  <div className="flex gap-1.5">
-                    <button
-                      type="button"
-                      className="flex-1 rounded-md bg-accent text-white px-2 py-1.5 text-xs font-medium hover:bg-accent/90"
-                      onClick={handleSave}
-                      disabled={!journalDraftTitle.trim()}
-                    >
-                      {journalEditId ? "Opdatér" : "Gem"}
-                    </button>
-                    <button
-                      type="button"
-                      className="rounded-md border border-border px-2 py-1.5 text-xs text-foreground/60 hover:bg-foreground/5"
-                      onClick={resetForm}
-                    >
-                      Annullér
-                    </button>
-                  </div>
-                </div>
-              ) : null}
-
-              {/* Category filter pills */}
-              <div className="flex flex-wrap gap-1">
-                <button
-                  type="button"
-                  className={`rounded-full border px-2 py-0.5 text-[10px] font-medium transition-all ${
-                    journalFilter === "all"
-                      ? "border-accent/40 bg-accent-light text-accent-dark"
-                      : "border-border bg-background text-foreground/50 hover:bg-foreground/5"
-                  }`}
-                  onClick={() => setJournalFilter("all")}
-                >
-                  Alle ({entries.length})
-                </button>
-                {JOURNAL_CATEGORIES.map((cat) => {
-                  const cfg = JOURNAL_CATEGORY_CONFIG[cat];
-                  const count = stats.categories[cat];
-                  if (count === 0) return null;
-                  return (
-                    <button
-                      key={cat}
-                      type="button"
-                      className={`rounded-full border px-2 py-0.5 text-[10px] font-medium transition-all ${
-                        journalFilter === cat
-                          ? "border-accent/40 bg-accent-light text-accent-dark"
-                          : "border-border bg-background text-foreground/50 hover:bg-foreground/5"
-                      }`}
-                      onClick={() => setJournalFilter(cat)}
-                    >
-                      {cfg.icon} {count}
-                    </button>
-                  );
-                })}
-              </div>
-
-              {/* Timeline */}
-              {dayGroups.length === 0 ? (
-                <p className="text-[10px] text-foreground/40 italic text-center py-8">
-                  📓 Ingen dagbogsindlæg endnu. Tryk &quot;+ Ny&quot; for at starte.
-                </p>
-              ) : (
-                <div className="space-y-3">
-                  {dayGroups.map((group) => (
-                    <div key={group.date}>
-                      <div className="flex items-center gap-2 mb-1.5">
-                        <div className="h-px flex-1 bg-border" />
-                        <span className="text-[9px] font-semibold text-foreground/40 uppercase tracking-wide whitespace-nowrap">
-                          {group.label}
-                        </span>
-                        <div className="h-px flex-1 bg-border" />
-                      </div>
-                      <div className="space-y-1.5">
-                        {group.entries.map((entry) => {
-                          const cfg = JOURNAL_CATEGORY_CONFIG[entry.category];
-                          return (
-                            <div
-                              key={entry.id}
-                              className="rounded-lg border border-foreground/10 bg-foreground/[0.02] px-3 py-2.5 hover:bg-foreground/[0.04] transition-all group"
-                            >
-                              <div className="flex items-center gap-2 mb-1">
-                                <span className="text-sm">{cfg.icon}</span>
-                                <span className="text-xs font-semibold flex-1 truncate">{entry.title}</span>
-                                <span className={`text-[9px] ${cfg.color}`}>{cfg.label}</span>
-                              </div>
-                              {entry.body ? (
-                                <p className="text-[10px] text-foreground/55 leading-relaxed line-clamp-3 mb-1.5">{entry.body}</p>
-                              ) : null}
-                              {entry.time ? (
-                                <span className="text-[9px] text-foreground/30">🕐 {entry.time}</span>
-                              ) : null}
-                              <div className="flex gap-1 mt-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                                <button
-                                  type="button"
-                                  className="rounded border border-border px-1.5 py-0.5 text-[9px] text-foreground/40 hover:bg-foreground/5"
-                                  onClick={() => startEdit(entry)}
-                                >
-                                  ✏️ Redigér
-                                </button>
-                                {journalConfirmDelete === entry.id ? (
-                                  <button
-                                    type="button"
-                                    className="rounded border border-red-300 bg-red-50 px-1.5 py-0.5 text-[9px] text-red-600"
-                                    onClick={() => {
-                                      deleteJournalEntry(entry.id);
-                                      setJournalVersion((v) => v + 1);
-                                      setJournalConfirmDelete(null);
-                                    }}
-                                  >
-                                    Bekræft slet
-                                  </button>
-                                ) : (
-                                  <button
-                                    type="button"
-                                    className="rounded border border-border px-1.5 py-0.5 text-[9px] text-foreground/40 hover:text-red-500"
-                                    onClick={() => setJournalConfirmDelete(entry.id)}
-                                  >
-                                    🗑
-                                  </button>
-                                )}
-                              </div>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          );
-        })() : null}
+        {sidebarTab === "journal" ? (
+          <JournalTab
+            journalVersion={journalVersion}
+            setJournalVersion={setJournalVersion}
+          />
+        ) : null}
 
         {sidebarTab === "designs" ? (() => {
           const loadDesigns = async () => {

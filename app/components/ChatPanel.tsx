@@ -3,7 +3,7 @@
 // GardenOS – ChatPanel (AI Rådgiver)
 // Extracted from GardenMapClient to reduce monolith size.
 // ---------------------------------------------------------------------------
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, memo } from "react";
 import { userKey } from "../lib/userStorage";
 import {
   getAllPlants,
@@ -107,7 +107,7 @@ interface GardenFeatureProps {
 
 // ── Component ──────────────────────────────────────────────────────────────
 
-export default function ChatPanel({
+function ChatPanelInner({
   weatherData,
   weatherStats,
   weatherStatRange,
@@ -652,3 +652,6 @@ export default function ChatPanel({
     </div>
   );
 }
+
+const ChatPanel = memo(ChatPanelInner);
+export default ChatPanel;
