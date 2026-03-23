@@ -314,8 +314,12 @@ export default function DesignLab({
   const [isPanning, setIsPanning] = useState(false);
   const panStartRef = useRef<{ x: number; y: number; panX: number; panY: number } | null>(null);
 
+  // ── Rotation state (compass) ──
+  const [rotationDeg, setRotationDeg] = useState(0);
+
   // ── Placement state ──
   const [placingSpeciesId, setPlacingSpeciesId] = useState<string | null>(null);
+  const [placingInfraKind, setPlacingInfraKind] = useState<string | null>(null);
   const [ghostPos, setGhostPos] = useState<BedLocalCoord | null>(null);
   const [paletteSearch, setPaletteSearch] = useState("");
   const [sidebarTab, setSidebarTab] = useState<"palette" | "info" | "ai">("palette");
@@ -327,6 +331,13 @@ export default function DesignLab({
 
   // ── Row tool state ──
   const [rowStart, setRowStart] = useState<BedLocalCoord | null>(null);
+
+  // ── Undo/redo ──
+  const [undoStack, setUndoStack] = useState<BedLayout[]>([]);
+  const [redoStack, setRedoStack] = useState<BedLayout[]>([]);
+
+  // ── Snap guides ──
+  const [activeGuides, setActiveGuides] = useState<{ x1: number; y1: number; x2: number; y2: number }[]>([]);
 
   // ── SVG ref for coordinate conversion ──
   const svgRef = useRef<SVGSVGElement>(null);
@@ -361,12 +372,35 @@ export default function DesignLab({
   // ── Persist ──
   const persistLayout = useCallback(
     (updated: BedLayout) => {
+      setUndoStack((prev) => [...prev.slice(-30), layout]); // keep max 30 undo steps
+      setRedoStack([]);
       setLayout(updated);
       saveBedLayout(updated);
       onLayoutChange?.(updated);
     },
-    [onLayoutChange]
+    [layout, onLayoutChange]
   );
+
+  // ── Undo / Redo handlers ──
+  const handleUndo = useCallback(() => {
+    if (undoStack.length === 0) return;
+    const prev = undoStack[undoStack.length - 1];
+    setRedoStack((r) => [...r, layout]);
+    setUndoStack((s) => s.slice(0, -1));
+    setLayout(prev);
+    saveBedLayout(prev);
+    onLayoutChange?.(prev);
+  }, [undoStack, layout, onLayoutChange]);
+
+  const handleRedo = useCallback(() => {
+    if (redoStack.length === 0) return;
+    const next = redoStack[redoStack.length - 1];
+    setUndoStack((s) => [...s, layout]);
+    setRedoStack((r) => r.slice(0, -1));
+    setLayout(next);
+    saveBedLayout(next);
+    onLayoutChange?.(next);
+  }, [redoStack, layout, onLayoutChange]);
 
   // ── Auto-populate plants from main map ──
   useEffect(() => {
@@ -504,6 +538,16 @@ export default function DesignLab({
   // ── Start placing from palette ──
   const startPlacing = useCallback((speciesId: string) => {
     setPlacingSpeciesId(speciesId);
+    setPlacingInfraKind(null);
+    setTool("place");
+    setSelectedElementId(null);
+    setRowStart(null);
+  }, []);
+
+  // ── Start placing infrastructure ──
+  const startPlacingInfra = useCallback((kind: string) => {
+    setPlacingInfraKind(kind);
+    setPlacingSpeciesId(null);
     setTool("place");
     setSelectedElementId(null);
     setRowStart(null);
@@ -513,9 +557,12 @@ export default function DesignLab({
   useEffect(() => {
     function handleKey(e: KeyboardEvent) {
       if ((e.target as HTMLElement).tagName === "INPUT") return;
+      // Undo / Redo
+      if ((e.metaKey || e.ctrlKey) && e.key === "z" && !e.shiftKey) { e.preventDefault(); handleUndo(); return; }
+      if ((e.metaKey || e.ctrlKey) && (e.key === "Z" || (e.key === "z" && e.shiftKey))) { e.preventDefault(); handleRedo(); return; }
       switch (e.key) {
         case "Escape":
-          if (placingSpeciesId) { setPlacingSpeciesId(null); setTool("select"); setGhostPos(null); setRowStart(null); }
+          if (placingSpeciesId || placingInfraKind) { setPlacingSpeciesId(null); setPlacingInfraKind(null); setTool("select"); setGhostPos(null); setRowStart(null); }
           else if (selectedElementId) setSelectedElementId(null);
           else onClose();
           break;
@@ -539,7 +586,7 @@ export default function DesignLab({
     }
     window.addEventListener("keydown", handleKey);
     return () => window.removeEventListener("keydown", handleKey);
-  }, [selectedElementId, placingSpeciesId, featureId, onClose, persistLayout]);
+  }, [selectedElementId, placingSpeciesId, placingInfraKind, featureId, onClose, persistLayout, handleUndo, handleRedo]);
 
   // ── Zoom ──
   const handleWheel = useCallback((e: React.WheelEvent) => {
@@ -584,6 +631,7 @@ export default function DesignLab({
         const newX = dragStartRef.current.elemX + (pos.x - startSvg.x);
         const newY = dragStartRef.current.elemY + (pos.y - startSvg.y);
         const snapped = snapToGrid({ x: newX, y: newY }, 5, layout.outlineCm);
+        setActiveGuides(snapped.guides.map((g) => ({ x1: g.x1, y1: g.y1, x2: g.x2, y2: g.y2 })));
         setLayout((prev) => ({
           ...prev,
           elements: prev.elements.map((el) =>
@@ -593,12 +641,12 @@ export default function DesignLab({
         return;
       }
       // Ghost preview for placement
-      if ((tool === "place" || tool === "row") && placingSpeciesId) {
+      if ((tool === "place" || tool === "row") && (placingSpeciesId || placingInfraKind)) {
         const pos = svgPointFromEvent(e);
         if (pos) setGhostPos(pos);
       }
     },
-    [isPanning, draggingElementId, tool, placingSpeciesId, svgPointFromEvent, layout.outlineCm]
+    [isPanning, draggingElementId, tool, placingSpeciesId, placingInfraKind, svgPointFromEvent, layout.outlineCm]
   );
 
   const handlePointerUp = useCallback(
@@ -615,6 +663,7 @@ export default function DesignLab({
           if (updated) persistLayout(updated);
         }
         setDraggingElementId(null);
+        setActiveGuides([]);
         dragStartRef.current = null;
         return;
       }
@@ -631,6 +680,37 @@ export default function DesignLab({
       placeElementAt(snapped.snappedPosition, placingSpecies);
       return;
     }
+    if (tool === "place" && placingInfraKind) {
+      const snapped = snapToGrid(pos, 5, layout.outlineCm);
+      if (!pointInBedOutline(snapped.snappedPosition, layout.outlineCm)) return;
+      const INFRA_DEFS: Record<string, { type: BedElement["type"]; icon: string; label: string; w: number; l: number }> = {
+        "drip-line":   { type: "water",    icon: "💧", label: "Drypslange", w: 100, l: 5 },
+        "sprinkler":   { type: "water",    icon: "🚿", label: "Sprinkler",  w: 10,  l: 10 },
+        "tap":         { type: "water",    icon: "🚰", label: "Vandhane",   w: 8,   l: 8 },
+        "cable":       { type: "electric", icon: "⚡", label: "Kabel",      w: 100, l: 3 },
+        "socket":      { type: "electric", icon: "🔌", label: "Stikkontakt", w: 8,  l: 8 },
+        "stepping":    { type: "path",     icon: "🪨", label: "Trædesten",  w: 30,  l: 30 },
+        "walkway":     { type: "path",     icon: "🛤️", label: "Gangsti",    w: 50,  l: 100 },
+        "timber-edge": { type: "edge",     icon: "🪵", label: "Trækant",    w: 100, l: 8 },
+        "stone-edge":  { type: "edge",     icon: "🧱", label: "Stenkant",   w: 100, l: 8 },
+        "label":       { type: "label",    icon: "🏷️", label: "Mærkat",     w: 20,  l: 10 },
+      };
+      const def = INFRA_DEFS[placingInfraKind] ?? { type: "label" as const, icon: "📍", label: placingInfraKind, w: 20, l: 20 };
+      const newEl: BedElement = {
+        id: crypto.randomUUID(),
+        type: def.type,
+        position: snapped.snappedPosition,
+        rotation: 0,
+        width: def.w,
+        length: def.l,
+        icon: def.icon,
+        label: def.label,
+        infrastructureKind: placingInfraKind,
+      };
+      const updated = addElement(featureId, newEl);
+      if (updated) persistLayout(updated);
+      return;
+    }
     if (tool === "row" && placingSpecies) {
       const snapped = snapToGrid(pos, 5, layout.outlineCm);
       if (!rowStart) {
@@ -644,7 +724,7 @@ export default function DesignLab({
     if (tool === "select") {
       setSelectedElementId(null);
     }
-  }, [tool, placingSpecies, rowStart, svgPointFromEvent, placeElementAt, placeRow, layout.outlineCm]);
+  }, [tool, placingSpecies, placingInfraKind, rowStart, svgPointFromEvent, placeElementAt, placeRow, layout.outlineCm, featureId, persistLayout]);
 
   // ── Element pointer down (select or start drag) ──
   const handleElementPointerDown = useCallback((e: React.PointerEvent, el: BedElement) => {
@@ -876,6 +956,15 @@ export default function DesignLab({
     : tool === "delete" ? "not-allowed"
     : "default";
 
+  // ── Infrastructure elements for rendering ──
+  const infraElements = layout.elements.filter((e) => e.type !== "plant" && e.type !== "row");
+
+  // ── Sorted elements for zIndex ──
+  const sortedPlantElements = useMemo(() => {
+    const elems = layout.elements.filter((e) => e.type === "plant");
+    return elems.sort((a, b) => (a.zIndex ?? 0) - (b.zIndex ?? 0));
+  }, [layout.elements]);
+
   return (
     <div
       className="fixed inset-0 z-[10000] flex flex-col"
@@ -933,6 +1022,33 @@ export default function DesignLab({
             </button>
           ))}
         </div>
+
+        {/* Compass / Rotation */}
+        <div className="flex items-center gap-1.5">
+          <div
+            className="relative w-8 h-8 rounded-full border flex items-center justify-center cursor-pointer select-none"
+            style={{ borderColor: "var(--border)", background: "var(--toolbar-bg)" }}
+            title={`Rotation: ${rotationDeg}°`}
+            onClick={() => setRotationDeg((r) => (r + 45) % 360)}
+          >
+            <svg width="24" height="24" viewBox="0 0 24 24" style={{ transform: `rotate(${rotationDeg}deg)`, transition: "transform 0.3s" }}>
+              <polygon points="12,2 14,10 12,8 10,10" fill="#dc2626" opacity="0.9" />
+              <polygon points="12,22 14,14 12,16 10,14" fill="var(--foreground)" opacity="0.4" />
+              <line x1="12" y1="2" x2="12" y2="22" stroke="var(--foreground)" strokeWidth="0.5" opacity="0.2" />
+              <line x1="2" y1="12" x2="22" y2="12" stroke="var(--foreground)" strokeWidth="0.5" opacity="0.2" />
+              <text x="12" y="1.5" textAnchor="middle" fontSize="3.5" fill="#dc2626" fontWeight="bold"
+                    style={{ transform: `rotate(${-rotationDeg}deg)`, transformOrigin: "12px 1.5px" }}>N</text>
+            </svg>
+          </div>
+          <button
+            onClick={() => setRotationDeg(0)}
+            className="px-1.5 py-1 text-[9px] rounded border transition-colors hover:bg-[var(--accent-light)]"
+            style={{ borderColor: "var(--border)", color: "var(--muted)" }}
+            title="Nulstil rotation"
+          >
+            0°
+          </button>
+        </div>
       </div>
 
       {/* ── Toolbar ── */}
@@ -970,6 +1086,28 @@ export default function DesignLab({
             {t.label}
           </button>
         ))}
+
+        <div className="mx-2 h-5 w-px" style={{ background: "var(--border)" }} />
+
+        {/* Undo / Redo */}
+        <button
+          onClick={handleUndo}
+          disabled={undoStack.length === 0}
+          className="px-2 py-1 text-xs rounded-lg border disabled:opacity-30 transition-colors"
+          style={{ borderColor: "var(--border)", color: "var(--foreground)" }}
+          title="Fortryd (⌘Z)"
+        >
+          ↩
+        </button>
+        <button
+          onClick={handleRedo}
+          disabled={redoStack.length === 0}
+          className="px-2 py-1 text-xs rounded-lg border disabled:opacity-30 transition-colors"
+          style={{ borderColor: "var(--border)", color: "var(--foreground)" }}
+          title="Gentag (⌘⇧Z)"
+        >
+          ↪
+        </button>
 
         <div className="mx-2 h-5 w-px" style={{ background: "var(--border)" }} />
 
@@ -1014,6 +1152,15 @@ export default function DesignLab({
               className="ml-1 text-xs opacity-60 hover:opacity-100">✕</button>
           </div>
         )}
+        {placingInfraKind && (
+          <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[11px] font-medium"
+               style={{ background: "var(--accent-light)", color: "var(--accent)" }}>
+            <span>🔧</span>
+            <span>Placerer: {placingInfraKind}</span>
+            <button onClick={() => { setPlacingInfraKind(null); setTool("select"); setGhostPos(null); }}
+              className="ml-1 text-xs opacity-60 hover:opacity-100">✕</button>
+          </div>
+        )}
 
         {/* Season slider */}
         <label className="text-[10px]" style={{ color: "var(--muted)" }}>
@@ -1047,8 +1194,8 @@ export default function DesignLab({
             style={{
               maxWidth: "90%",
               maxHeight: "85%",
-              transform: `scale(${zoom}) translate(${pan.x / zoom}px, ${pan.y / zoom}px)`,
-              transition: isPanning || draggingElementId ? "none" : "transform 0.1s ease-out",
+              transform: `scale(${zoom}) translate(${pan.x / zoom}px, ${pan.y / zoom}px) rotate(${rotationDeg}deg)`,
+              transition: isPanning || draggingElementId ? "none" : "transform 0.2s ease-out",
             }}
           >
             <defs>
@@ -1124,10 +1271,9 @@ export default function DesignLab({
               })}
             </g>
 
-            {/* Plant elements */}
+            {/* Plant elements (zIndex sorted) */}
             <g filter="url(#shadow)">
-              {layout.elements
-                .filter((e) => e.type === "plant")
+              {sortedPlantElements
                 .map((el) => {
                   const cal = el.speciesId ? plantCalendars.get(el.speciesId) : null;
                   const phase = cal ? getPhase(cal.cal, month) : "growing";
@@ -1136,24 +1282,114 @@ export default function DesignLab({
                   const shape = cal?.shape ?? "leafy";
 
                   return (
-                    <PlantShape
-                      key={el.id}
-                      shape={shape}
-                      x={el.position.x}
-                      y={el.position.y}
-                      phase={phase}
-                      scale={scale}
-                      colors={colors}
-                      icon={el.icon ?? "🌱"}
-                      viewMode={viewMode}
-                      spreadCm={el.width || 10}
-                      isSelected={selectedElementId === el.id}
-                      onPointerDown={(e) => handleElementPointerDown(e, el)}
-                      minRadius={minPlantRadius}
-                    />
+                    <g key={el.id} transform={el.rotation ? `rotate(${el.rotation} ${el.position.x} ${el.position.y})` : undefined}>
+                      <PlantShape
+                        shape={shape}
+                        x={el.position.x}
+                        y={el.position.y}
+                        phase={phase}
+                        scale={scale}
+                        colors={colors}
+                        icon={el.icon ?? "🌱"}
+                        viewMode={viewMode}
+                        spreadCm={el.width || 10}
+                        isSelected={selectedElementId === el.id}
+                        onPointerDown={(e) => handleElementPointerDown(e, el)}
+                        minRadius={minPlantRadius}
+                      />
+                    </g>
                   );
                 })}
             </g>
+
+            {/* Infrastructure elements */}
+            <g>
+              {infraElements.map((el) => {
+                const isInfraSelected = selectedElementId === el.id;
+                const infraColor = el.type === "water" ? "#3b82f6"
+                  : el.type === "electric" ? "#f59e0b"
+                  : el.type === "path" ? "#a8a29e"
+                  : el.type === "edge" ? "#8B6914"
+                  : "var(--foreground)";
+                const infraIcon = el.icon ?? (
+                  el.type === "water" ? "💧" : el.type === "electric" ? "⚡"
+                  : el.type === "path" ? "🪨" : el.type === "edge" ? "🪵" : "🏷️"
+                );
+                const halfW = (el.width || 20) / 2;
+                const halfL = (el.length || 20) / 2;
+                return (
+                  <g key={el.id}
+                     transform={`translate(${el.position.x},${el.position.y})${el.rotation ? ` rotate(${el.rotation})` : ""}`}
+                     onClick={(e) => { e.stopPropagation(); setSelectedElementId(el.id); }}
+                     onPointerDown={(e) => handleElementPointerDown(e, el)}
+                     style={{ cursor: tool === "select" ? "pointer" : tool === "delete" ? "not-allowed" : undefined }}
+                  >
+                    {/* Background shape */}
+                    <rect
+                      x={-halfW} y={-halfL}
+                      width={el.width || 20} height={el.length || 20}
+                      rx={el.type === "path" ? 4 : 2}
+                      fill={infraColor}
+                      fillOpacity={0.15}
+                      stroke={infraColor}
+                      strokeWidth={isInfraSelected ? 1.5 : 0.8}
+                      strokeDasharray={el.type === "water" ? "4 2" : el.type === "electric" ? "2 3" : undefined}
+                      opacity={0.8}
+                    />
+                    {/* Icon */}
+                    <text
+                      x={0} y={0}
+                      textAnchor="middle"
+                      dominantBaseline="central"
+                      fontSize={Math.min(halfW, halfL, 8)}
+                    >
+                      {infraIcon}
+                    </text>
+                    {/* Label */}
+                    {el.label && (
+                      <text
+                        x={0} y={halfL + 4}
+                        textAnchor="middle"
+                        fontSize="3.5"
+                        fill="var(--muted, #8a8578)"
+                        opacity={0.7}
+                      >
+                        {el.label}
+                      </text>
+                    )}
+                    {/* Selection ring */}
+                    {isInfraSelected && (
+                      <rect
+                        x={-halfW - 2} y={-halfL - 2}
+                        width={(el.width || 20) + 4} height={(el.length || 20) + 4}
+                        rx={3}
+                        fill="none"
+                        stroke="var(--accent, #2d7a3a)"
+                        strokeWidth={0.8}
+                        strokeDasharray="2 1"
+                        opacity={0.9}
+                      />
+                    )}
+                  </g>
+                );
+              })}
+            </g>
+
+            {/* Snap guides */}
+            {activeGuides.length > 0 && (
+              <g>
+                {activeGuides.map((g, i) => (
+                  <line key={i}
+                    x1={g.x1} y1={g.y1}
+                    x2={Math.min(g.x2, layout.widthCm)} y2={Math.min(g.y2, layout.lengthCm)}
+                    stroke="var(--accent, #2d7a3a)"
+                    strokeWidth={0.5}
+                    strokeDasharray="3 2"
+                    opacity={0.6}
+                  />
+                ))}
+              </g>
+            )}
 
             {/* Row tool: start marker + preview line */}
             {tool === "row" && rowStart && (
@@ -1188,6 +1424,15 @@ export default function DesignLab({
                 icon={placingSpecies.icon ?? "🌱"} viewMode={viewMode}
                 spreadCm={placingSpecies.spreadDiameterCm ?? placingSpecies.spacingCm ?? 10}
                 opacity={0.4} minRadius={minPlantRadius} />
+            )}
+            {/* Ghost preview for infrastructure placement */}
+            {tool === "place" && ghostPos && placingInfraKind && pointInBedOutline(ghostPos, layout.outlineCm) && (
+              <g transform={`translate(${ghostPos.x},${ghostPos.y})`} opacity={0.4}>
+                <rect x={-10} y={-10} width={20} height={20} rx={3}
+                  fill="var(--accent)" fillOpacity={0.2}
+                  stroke="var(--accent)" strokeWidth={0.8} strokeDasharray="3 2" />
+                <text x={0} y={0} textAnchor="middle" dominantBaseline="central" fontSize="8">🔧</text>
+              </g>
             )}
 
             {/* Dimension labels */}
@@ -1348,6 +1593,41 @@ export default function DesignLab({
                   <kbd className="px-1 py-0.5 rounded text-[9px] bg-white/50 ml-1">Esc</kbd> for at annullere.
                 </div>
               )}
+
+              {/* Infrastructure palette */}
+              <div className="mt-4">
+                <p className="text-[9px] font-semibold uppercase tracking-wide mb-1" style={{ color: "var(--muted)" }}>
+                  🔧 Infrastruktur
+                </p>
+                <div className="grid grid-cols-2 gap-1">
+                  {[
+                    { kind: "drip-line",   icon: "💧", label: "Drypslange" },
+                    { kind: "sprinkler",   icon: "🚿", label: "Sprinkler" },
+                    { kind: "tap",         icon: "🚰", label: "Vandhane" },
+                    { kind: "cable",       icon: "⚡", label: "Kabel" },
+                    { kind: "socket",      icon: "🔌", label: "Stik" },
+                    { kind: "stepping",    icon: "🪨", label: "Trædesten" },
+                    { kind: "walkway",     icon: "🛤️", label: "Gangsti" },
+                    { kind: "timber-edge", icon: "🪵", label: "Trækant" },
+                    { kind: "stone-edge",  icon: "🧱", label: "Stenkant" },
+                    { kind: "label",       icon: "🏷️", label: "Mærkat" },
+                  ].map((item) => (
+                    <button key={item.kind}
+                      onClick={() => startPlacingInfra(item.kind)}
+                      className={`flex items-center gap-1.5 px-2 py-1.5 rounded-lg border text-left text-[10px] transition-colors ${
+                        placingInfraKind === item.kind ? "shadow-sm" : "hover:bg-[var(--accent-light)]"
+                      }`}
+                      style={{
+                        borderColor: placingInfraKind === item.kind ? "var(--accent)" : "var(--border)",
+                        background: placingInfraKind === item.kind ? "var(--accent-light)" : "transparent",
+                        color: "var(--foreground)",
+                      }}>
+                      <span className="text-sm">{item.icon}</span>
+                      <span className="truncate">{item.label}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
             </div>
           )}
 
@@ -1630,6 +1910,7 @@ export default function DesignLab({
               {[
                 ["Arter", `${uniqueSpecies.size}`],
                 ["Planter", `${plantElements.length}`],
+                ["Infrastruktur", `${infraElements.length}`],
                 ["Størrelse", `${bedWidthM}m × ${bedLengthM}m`],
               ].map(([label, val]) => (
                 <div key={label} className="flex justify-between">

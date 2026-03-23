@@ -61,6 +61,8 @@ import FeedbackPanel from "./FeedbackPanel";
 import GuidedTour from "./GuidedTour";
 import DesignLab from "./DesignLab";
 import type { BedLayout } from "../lib/bedLayoutTypes";
+import { getBedLayout } from "../lib/bedLayoutStore";
+import { bedLocalToGeo } from "../lib/bedGeometry";
 import { createTask, parseAiResponse, loadTasks, PRIORITY_ICONS } from "../lib/taskStore";
 import {
   loadSoilProfiles,
@@ -3846,6 +3848,13 @@ export function GardenMapClient({ userId }: { userId: string }) {
   // ── Design Lab overlay state ──
   const [showDesignLab, setShowDesignLab] = useState(false);
 
+  // ── Grid overlay state ──
+  const [showGrid, setShowGrid] = useState(true);
+  const gridLayerRef = useRef<L.Layer | null>(null);
+
+  // ── Design Lab plant overlay markers ──
+  const designLabMarkersRef = useRef<L.LayerGroup | null>(null);
+
   // ── Design Lab layout change handler ref (populated after rebuildFromGroupAndUpdateSelection is defined) ──
   const designLabLayoutChangeRef = useRef<((layout: BedLayout) => void) | null>(null);
 
@@ -5417,6 +5426,166 @@ export function GardenMapClient({ userId }: { userId: string }) {
       rebuildFromGroupAndUpdateSelection();
     };
   }, [rebuildFromGroupAndUpdateSelection]);
+
+  // ---------------------------------------------------------------------------
+  // Grid overlay — shows a 1m grid across the map (always visible, togglable)
+  // ---------------------------------------------------------------------------
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+
+    // Clean up existing
+    if (gridLayerRef.current) {
+      map.removeLayer(gridLayerRef.current);
+      gridLayerRef.current = null;
+    }
+    if (!showGrid) return;
+
+    const GridOverlay = L.GridLayer.extend({
+      createTile(coords: L.Coords) {
+        const tile = document.createElement("canvas");
+        const tileSize = (this as unknown as L.GridLayer).getTileSize();
+        tile.width = tileSize.x;
+        tile.height = tileSize.y;
+        const ctx = tile.getContext("2d");
+        if (!ctx) return tile;
+
+        // Compute meter-scale grid at this zoom
+        const zoom = coords.z;
+        // Determine grid spacing in meters based on zoom level
+        let gridM = 1;
+        if (zoom < 16) gridM = 10;
+        else if (zoom < 18) gridM = 5;
+        else if (zoom < 20) gridM = 2;
+        else gridM = 1;
+
+        const nwPoint = L.point(coords.x * tileSize.x, coords.y * tileSize.y);
+        const nwLatLng = map.unproject(nwPoint, zoom);
+        const sePoint = L.point((coords.x + 1) * tileSize.x, (coords.y + 1) * tileSize.y);
+        const seLatLng = map.unproject(sePoint, zoom);
+
+        const M_PER_DEG_LAT = 111_320;
+        const mpLng = M_PER_DEG_LAT * Math.cos((nwLatLng.lat * Math.PI) / 180);
+
+        // Compute first grid line positions
+        const startLat = Math.floor((seLatLng.lat * M_PER_DEG_LAT) / gridM) * gridM / M_PER_DEG_LAT;
+        const endLat = Math.ceil((nwLatLng.lat * M_PER_DEG_LAT) / gridM) * gridM / M_PER_DEG_LAT;
+        const startLng = Math.floor((nwLatLng.lng * mpLng) / gridM) * gridM / mpLng;
+        const endLng = Math.ceil((seLatLng.lng * mpLng) / gridM) * gridM / mpLng;
+
+        ctx.strokeStyle = "rgba(120, 120, 120, 0.12)";
+        ctx.lineWidth = 0.5;
+
+        // Horizontal lines (constant latitude)
+        for (let lat = startLat; lat <= endLat; lat += gridM / M_PER_DEG_LAT) {
+          const pixelY = ((nwLatLng.lat - lat) / (nwLatLng.lat - seLatLng.lat)) * tileSize.y;
+          ctx.beginPath();
+          ctx.moveTo(0, pixelY);
+          ctx.lineTo(tileSize.x, pixelY);
+          ctx.stroke();
+        }
+
+        // Vertical lines (constant longitude)
+        for (let lng = startLng; lng <= endLng; lng += gridM / mpLng) {
+          const pixelX = ((lng - nwLatLng.lng) / (seLatLng.lng - nwLatLng.lng)) * tileSize.x;
+          ctx.beginPath();
+          ctx.moveTo(pixelX, 0);
+          ctx.lineTo(pixelX, tileSize.y);
+          ctx.stroke();
+        }
+
+        return tile;
+      },
+    });
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const gridLayer = new (GridOverlay as any)({ opacity: 1, zIndex: 250 }) as L.GridLayer;
+    gridLayer.addTo(map);
+    gridLayerRef.current = gridLayer;
+
+    return () => {
+      if (gridLayerRef.current) {
+        map.removeLayer(gridLayerRef.current);
+        gridLayerRef.current = null;
+      }
+    };
+  }, [showGrid]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ---------------------------------------------------------------------------
+  // Design Lab Plant Overlay — shows plant markers from Design Lab on main map
+  // ---------------------------------------------------------------------------
+  const renderDesignLabPlantMarkers = useCallback(() => {
+    const map = mapRef.current;
+    if (!map) return;
+
+    // Clear existing
+    if (designLabMarkersRef.current) {
+      map.removeLayer(designLabMarkersRef.current);
+      designLabMarkersRef.current = null;
+    }
+
+    const group = featureGroupRef.current;
+    if (!group) return;
+
+    const markerGroup = L.layerGroup();
+
+    // Iterate over all polygon features and check for bed layouts
+    group.eachLayer((layer) => {
+      const f = (layer as L.Layer & { feature?: GardenFeature }).feature;
+      if (!f) return;
+      const cat = f.properties?.category;
+      if (cat !== "seedbed" && cat !== "container" && cat !== "area") return;
+      const featureId = f.properties?.gardenosId;
+      if (!featureId) return;
+
+      const bedLayout = getBedLayout(featureId);
+      if (!bedLayout || bedLayout.elements.length === 0) return;
+
+      const plantElems = bedLayout.elements.filter((e) => e.type === "plant" && e.speciesId);
+      if (plantElems.length === 0) return;
+
+      // Convert each plant position from bed-local to geo coords
+      for (const el of plantElems) {
+        const [lng, lat] = bedLocalToGeo(el.position, bedLayout);
+        const sp = getPlantById(el.speciesId!);
+        const icon = sp?.icon ?? el.icon ?? "🌱";
+        const name = sp?.name ?? el.label ?? "Plante";
+        const spreadCm = sp?.spreadDiameterCm ?? sp?.spacingCm ?? el.width ?? 10;
+        // Scale circle radius based on spread (min 0.3m display radius)
+        const radiusM = Math.max(0.3, (spreadCm / 100) / 2);
+
+        const marker = L.circleMarker(L.latLng(lat, lng), {
+          radius: 5,
+          fillColor: "#2d7a3a",
+          fillOpacity: 0.6,
+          color: "#1a5025",
+          weight: 1,
+          opacity: 0.8,
+        });
+        marker.bindTooltip(`${icon} ${name}`, {
+          permanent: false,
+          direction: "top",
+          offset: L.point(0, -6),
+          className: "leaflet-tooltip-design-lab",
+        });
+        markerGroup.addLayer(marker);
+      }
+    });
+
+    if (markerGroup.getLayers().length > 0) {
+      markerGroup.addTo(map);
+      designLabMarkersRef.current = markerGroup;
+    }
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Render plant markers when Design Lab closes or on mount
+  useEffect(() => {
+    if (!showDesignLab) {
+      // Small delay to let layout save complete
+      const timer = setTimeout(renderDesignLabPlantMarkers, 300);
+      return () => clearTimeout(timer);
+    }
+  }, [showDesignLab, renderDesignLabPlantMarkers]);
 
   // ---------------------------------------------------------------------------
   // Helper: build a gardenosId → L.Layer lookup for the current featureGroup.
@@ -9778,6 +9947,47 @@ export function GardenMapClient({ userId }: { userId: string }) {
               );
             })() : null}
 
+
+            {/* ── Design Lab plant summary ── */}
+            {selectedIsPolygon && (selectedCategory === "seedbed" || selectedCategory === "area" || selectedCategory === "container") ? (() => {
+              const dlLayout = selected ? getBedLayout(selected.gardenosId) : null;
+              if (!dlLayout || dlLayout.elements.length === 0) return null;
+              const dlPlants = dlLayout.elements.filter((e) => e.type === "plant" && e.speciesId);
+              const dlInfra = dlLayout.elements.filter((e) => e.type !== "plant" && e.type !== "row");
+              if (dlPlants.length === 0 && dlInfra.length === 0) return null;
+              // Group by species
+              const speciesMap = new Map<string, { icon: string; name: string; count: number }>();
+              for (const el of dlPlants) {
+                const key = el.speciesId!;
+                if (!speciesMap.has(key)) {
+                  const sp = getPlantById(key);
+                  speciesMap.set(key, { icon: sp?.icon ?? el.icon ?? "🌱", name: sp?.name ?? el.label ?? key, count: 0 });
+                }
+                speciesMap.get(key)!.count++;
+              }
+              return (
+                <div className="rounded-lg border border-foreground/10 bg-foreground/[0.02] overflow-hidden">
+                  <div className="px-2.5 py-1.5">
+                    <span className="text-[10px] font-semibold text-foreground/50 uppercase tracking-wide">🎨 Design Lab planter</span>
+                  </div>
+                  <div className="px-2.5 pb-2 space-y-0.5">
+                    {Array.from(speciesMap.entries()).map(([id, { icon, name, count }]) => (
+                      <div key={id} className="flex items-center gap-1.5 text-xs text-foreground/70">
+                        <span className="text-sm">{icon}</span>
+                        <span className="truncate flex-1">{name}</span>
+                        <span className="text-[10px] text-foreground/40">{count} stk</span>
+                      </div>
+                    ))}
+                    {dlInfra.length > 0 && (
+                      <div className="flex items-center gap-1.5 text-xs text-foreground/50 mt-1">
+                        <span className="text-sm">🔧</span>
+                        <span>{dlInfra.length} infrastruktur-element{dlInfra.length !== 1 ? "er" : ""}</span>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              );
+            })() : null}
 
             {/* ── Design Lab button ── */}
             {selectedIsPolygon && (selectedCategory === "seedbed" || selectedCategory === "area" || selectedCategory === "container") ? (
@@ -15861,6 +16071,17 @@ export function GardenMapClient({ userId }: { userId: string }) {
                 onClick={() => setShowMatrikel((v) => !v)}
               >
                 📐 Matrikel{showMatrikel && dfReady ? " (aktiv)" : showMatrikel ? " (mangler login)" : ""}
+              </button>
+              <button
+                type="button"
+                className={`w-full rounded-lg border px-3 py-2 text-left text-xs font-medium transition-all ${
+                  showGrid
+                    ? "border-accent/40 bg-accent-light text-accent-dark shadow-sm"
+                    : "border-border bg-background text-foreground/60 hover:bg-foreground/5 hover:shadow-sm"
+                }`}
+                onClick={() => setShowGrid((v) => !v)}
+              >
+                📏 Gitter{showGrid ? " (aktiv)" : ""}
               </button>
               {showMatrikel ? (
                 <div className="mt-1.5 space-y-1">
