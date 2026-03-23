@@ -185,9 +185,9 @@ describe("sunAnalysis", () => {
 
     it("extracts casters from tall plants", () => {
       const mockPlant = { name: "Æbletræ", heightMaxCm: 500, spacingCm: 300 };
-      vi.mocked(getPlantById).mockReturnValue(mockPlant as ReturnType<typeof getPlantById>);
+      vi.mocked(getPlantById).mockReturnValue(mockPlant as unknown as ReturnType<typeof getPlantById>);
       vi.mocked(getInstancesForFeature).mockReturnValue([
-        { speciesId: "apple", featureId: "tree-1", instanceId: "inst-1" } as ReturnType<typeof getInstancesForFeature>[number],
+        { speciesId: "apple", featureId: "tree-1", instanceId: "inst-1" } as unknown as ReturnType<typeof getInstancesForFeature>[number],
       ]);
 
       const layout: FeatureCollection<Geometry> = {
@@ -208,9 +208,9 @@ describe("sunAnalysis", () => {
 
     it("ignores short plants (< 1.5m)", () => {
       const mockPlant = { name: "Tomat", heightMaxCm: 100 };
-      vi.mocked(getPlantById).mockReturnValue(mockPlant as ReturnType<typeof getPlantById>);
+      vi.mocked(getPlantById).mockReturnValue(mockPlant as unknown as ReturnType<typeof getPlantById>);
       vi.mocked(getInstancesForFeature).mockReturnValue([
-        { speciesId: "tomato", featureId: "bed-1", instanceId: "inst-1" } as ReturnType<typeof getInstancesForFeature>[number],
+        { speciesId: "tomato", featureId: "bed-1", instanceId: "inst-1" } as unknown as ReturnType<typeof getInstancesForFeature>[number],
       ]);
 
       const layout: FeatureCollection<Geometry> = {

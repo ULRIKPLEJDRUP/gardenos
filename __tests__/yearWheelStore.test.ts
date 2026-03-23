@@ -19,7 +19,6 @@ const fakeStorage = {
 };
 // @ts-expect-error — minimal browser-like global
 globalThis.window = globalThis;
-// @ts-expect-error — attach minimal localStorage
 (globalThis as Record<string, unknown>).localStorage = fakeStorage;
 
 // ── Mock userStorage before importing the store ──

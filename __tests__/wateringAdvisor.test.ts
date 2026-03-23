@@ -46,7 +46,7 @@ function makeWeather(opts: {
       tempMin: temp - 5,
       precipitation: daily7extra,
       description: "clear",
-    } as WeatherDay);
+    } as unknown as WeatherDay);
   }
   for (let i = 0; i < 3; i++) {
     recentDays.push({
@@ -55,7 +55,7 @@ function makeWeather(opts: {
       tempMin: temp - 5,
       precipitation: daily3,
       description: "clear",
-    } as WeatherDay);
+    } as unknown as WeatherDay);
   }
 
   // Build forecast — next 2 days
@@ -67,14 +67,14 @@ function makeWeather(opts: {
       tempMin: temp - 5,
       precipitation: forecastRain / 2,
       description: forecastRain > 0 ? "rain" : "clear",
-    } as WeatherDay,
+    } as unknown as WeatherDay,
     {
       date: "2025-07-09",
       tempMax: temp + 2,
       tempMin: temp - 5,
       precipitation: forecastRain / 2,
       description: forecastRain > 0 ? "rain" : "clear",
-    } as WeatherDay,
+    } as unknown as WeatherDay,
   ];
 
   return {
@@ -87,7 +87,7 @@ function makeWeather(opts: {
     },
     recentDays,
     forecast,
-  } as WeatherData;
+  } as unknown as WeatherData;
 }
 
 function makePlant(water: "low" | "medium" | "high" = "medium"): PlantSpecies {
