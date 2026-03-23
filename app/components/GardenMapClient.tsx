@@ -147,6 +147,50 @@ import {
   type PlantConflict,
   type SpreadSpec,
 } from "../lib/conflictDetection";
+import {
+  exportGeoJSON,
+  exportPlantCSV,
+  copyShareLink,
+  printGardenSummary,
+  type ExportPlantRow,
+} from "../lib/exportStore";
+import {
+  extractShadeCasters,
+  estimateShadeAtPoint,
+  sunHoursToColor,
+  sunLevelLabel,
+  type ShadeCaster,
+} from "../lib/sunAnalysis";
+import {
+  computeWateringAdvice,
+  sortByUrgency,
+  URGENCY_CONFIG,
+  type BedWateringAdvice,
+} from "../lib/wateringAdvisor";
+import {
+  getJournalEntries,
+  addJournalEntry,
+  updateJournalEntry,
+  deleteJournalEntry,
+  groupByDate,
+  getJournalStats,
+  JOURNAL_CATEGORY_CONFIG,
+  JOURNAL_CATEGORIES,
+  type JournalEntry as JournalEntryType,
+  type JournalCategory,
+} from "../lib/journalStore";
+import {
+  buildRotationPlan,
+  getCurrentSeason,
+  getFamilyColor,
+  getFamilyLabel,
+} from "../lib/rotationPlanner";
+import {
+  getSmartRecommendations,
+  SMART_STRATEGY_CONFIG,
+  monthNameDa,
+} from "../lib/smartRecommendations";
+import type { SmartStrategy, SmartContext } from "../lib/smartRecommendations";
 
 // ---------------------------------------------------------------------------
 // NOTE: We no longer use Leaflet.draw's L.EditToolbar.Edit for editing.
@@ -3032,7 +3076,7 @@ export function GardenMapClient({ userId }: { userId: string }) {
   const [newKindText, setNewKindText] = useState("");
   const [newKindError, setNewKindError] = useState<string | null>(null);
   const [undoStack, setUndoStack] = useState<UndoSnapshot[]>([]);
-  const [sidebarTab, setSidebarTab] = useState<"create" | "content" | "groups" | "plants" | "view" | "scan" | "chat" | "tasks" | "conflicts" | "designs" | "climate">("create");
+  const [sidebarTab, setSidebarTab] = useState<"create" | "content" | "groups" | "plants" | "view" | "scan" | "chat" | "tasks" | "conflicts" | "designs" | "climate" | "journal">("create");
   const [sidebarPanelOpen, setSidebarPanelOpen] = useState(true);
 
   // ── Lightweight activity tracker (fire-and-forget) ──
@@ -3068,8 +3112,11 @@ export function GardenMapClient({ userId }: { userId: string }) {
     try { const s = localStorage.getItem(userKey("gardenos:conflicts:resolved:v1")); return s ? new Set(JSON.parse(s)) : new Set(); } catch { return new Set(); }
   });
   const [conflictShowResolved, setConflictShowResolved] = useState(false);
-  const [viewSubTab, setViewSubTab] = useState<"steder" | "baggrund" | "synlighed" | "ankre">("steder");
-  const [planSubTab, setPlanSubTab] = useState<"tasks" | "calendar" | "notes">("tasks");
+  const [viewSubTab, setViewSubTab] = useState<"steder" | "baggrund" | "synlighed" | "ankre" | "eksport">("steder");
+  const [planSubTab, setPlanSubTab] = useState<"tasks" | "calendar" | "notes" | "watering" | "rotation" | "recommend">("tasks");
+  const [recStrategies, setRecStrategies] = useState<SmartStrategy[]>(["companion", "season-timing", "soil-match", "sun-match"]);
+  const [recSelectedBedId, setRecSelectedBedId] = useState<string | null>(null);
+  const [recExpandedId, setRecExpandedId] = useState<string | null>(null);
   const [noteFilter, setNoteFilter] = useState<"all" | "elements" | "soil" | "tasks">("all");
   const [climateSubTab, setClimateSubTab] = useState<"now" | "history" | "forecast">("now");
   const [libSubTab, setLibSubTab] = useState<"plants" | "soil">("plants");
@@ -3085,6 +3132,17 @@ export function GardenMapClient({ userId }: { userId: string }) {
   // ── Task list state ──
   const [taskVersion, setTaskVersion] = useState(0);
   const [taskSavedFlash, setTaskSavedFlash] = useState<string | false>(false);
+
+  // ── Journal / Dagbog state ──
+  const [journalVersion, setJournalVersion] = useState(0);
+  const [journalAdding, setJournalAdding] = useState(false);
+  const [journalEditId, setJournalEditId] = useState<string | null>(null);
+  const [journalFilter, setJournalFilter] = useState<JournalCategory | "all">("all");
+  const [journalDraftTitle, setJournalDraftTitle] = useState("");
+  const [journalDraftBody, setJournalDraftBody] = useState("");
+  const [journalDraftCategory, setJournalDraftCategory] = useState<JournalCategory>("observation");
+  const [journalDraftDate, setJournalDraftDate] = useState(() => new Date().toISOString().slice(0, 10));
+  const [journalConfirmDelete, setJournalConfirmDelete] = useState<string | null>(null);
 
   // ── Saved Designs state ──
   const [savedDesigns, setSavedDesigns] = useState<SavedDesign[]>([]);
@@ -3187,6 +3245,7 @@ export function GardenMapClient({ userId }: { userId: string }) {
     { id: "view", icon: "🗺️", label: "Kort" },
     { id: "tasks", icon: "📋", label: "Planlæg" },
     { id: "climate", icon: "🌡️", label: "Klima" },
+    { id: "journal", icon: "📓", label: "Dagbog" },
     { id: "designs", icon: "💾", label: "Designs" },
   ];
   const DEFAULT_PINNED: SidebarTabId[] = ["create", "scan", "plants", "content"];
@@ -3851,6 +3910,11 @@ export function GardenMapClient({ userId }: { userId: string }) {
   // ── Grid overlay state ──
   const [showGrid, setShowGrid] = useState(true);
   const gridLayerRef = useRef<L.Layer | null>(null);
+
+  // ── Sun exposure heatmap overlay state ──
+  const [showSunMap, setShowSunMap] = useState(false);
+  const sunLayerRef = useRef<L.Layer | null>(null);
+  const sunCastersRef = useRef<ShadeCaster[]>([]);
 
   // ── Design Lab plant overlay markers ──
   const designLabMarkersRef = useRef<L.LayerGroup | null>(null);
@@ -5510,6 +5574,98 @@ export function GardenMapClient({ userId }: { userId: string }) {
       }
     };
   }, [showGrid]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ---------------------------------------------------------------------------
+  // Sun Exposure Heatmap Overlay — shows shade/sun hours across the map
+  // ---------------------------------------------------------------------------
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+
+    // Clean up existing
+    if (sunLayerRef.current) {
+      map.removeLayer(sunLayerRef.current);
+      sunLayerRef.current = null;
+    }
+    if (!showSunMap) return;
+
+    // Extract shade casters from current layout
+    const casters = extractShadeCasters(layoutForContainment);
+    sunCastersRef.current = casters;
+
+    // Get map center lat for solar calculations
+    const mapCenter = map.getCenter();
+    const mapLat = mapCenter.lat;
+
+    const SunOverlay = L.GridLayer.extend({
+      createTile(coords: L.Coords) {
+        const tile = document.createElement("canvas");
+        const tileSize = (this as unknown as L.GridLayer).getTileSize();
+        tile.width = tileSize.x;
+        tile.height = tileSize.y;
+        const ctx = tile.getContext("2d");
+        if (!ctx) return tile;
+
+        const zoom = coords.z;
+        // Resolution: paint cells of ~5m at high zoom, ~20m at low zoom
+        let cellM = 5;
+        if (zoom < 16) cellM = 20;
+        else if (zoom < 18) cellM = 10;
+        else if (zoom < 20) cellM = 5;
+        else cellM = 2;
+
+        const nwPoint = L.point(coords.x * tileSize.x, coords.y * tileSize.y);
+        const nwLatLng = map.unproject(nwPoint, zoom);
+        const sePoint = L.point((coords.x + 1) * tileSize.x, (coords.y + 1) * tileSize.y);
+        const seLatLng = map.unproject(sePoint, zoom);
+
+        const M_PER_DEG_LAT = 111_320;
+        const mpLng = M_PER_DEG_LAT * Math.cos((nwLatLng.lat * Math.PI) / 180);
+
+        const latStep = cellM / M_PER_DEG_LAT;
+        const lngStep = cellM / mpLng;
+
+        // If no casters, paint all as full-sun
+        if (casters.length === 0) {
+          ctx.fillStyle = sunHoursToColor(15, 0.18);
+          ctx.fillRect(0, 0, tileSize.x, tileSize.y);
+          return tile;
+        }
+
+        // For each cell, compute shade and paint
+        for (let lat = seLatLng.lat; lat <= nwLatLng.lat; lat += latStep) {
+          for (let lng = nwLatLng.lng; lng <= seLatLng.lng; lng += lngStep) {
+            const shadeHours = estimateShadeAtPoint(lat, lng, casters, mapLat);
+            const sunHours = Math.max(0, 15 - shadeHours);
+            const color = sunHoursToColor(sunHours, 0.30);
+
+            // Convert lat/lng to pixel coordinates within tile
+            const px = ((lng - nwLatLng.lng) / (seLatLng.lng - nwLatLng.lng)) * tileSize.x;
+            const py = ((nwLatLng.lat - lat) / (nwLatLng.lat - seLatLng.lat)) * tileSize.y;
+            const cellW = (lngStep / (seLatLng.lng - nwLatLng.lng)) * tileSize.x;
+            const cellH = (latStep / (nwLatLng.lat - seLatLng.lat)) * tileSize.y;
+
+            ctx.fillStyle = color;
+            ctx.fillRect(px, py, cellW + 1, cellH + 1);
+          }
+        }
+
+        return tile;
+      },
+    });
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const sunLayer = new (SunOverlay as any)({ opacity: 1, zIndex: 240 }) as L.GridLayer;
+    sunLayer.addTo(map);
+    sunLayerRef.current = sunLayer;
+
+    return () => {
+      if (sunLayerRef.current) {
+        map.removeLayer(sunLayerRef.current);
+        sunLayerRef.current = null;
+      }
+    };
+  }, [showSunMap, plantInstancesVersion]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ---------------------------------------------------------------------------
   // Design Lab Plant Overlay — shows plant markers from Design Lab on main map
@@ -14725,19 +14881,20 @@ export function GardenMapClient({ userId }: { userId: string }) {
         {sidebarTab === "tasks" ? (
           <div className="mt-3 space-y-3">
             {/* Sub-tab picker */}
-            <div className="flex gap-1 rounded-lg bg-background p-1 border border-border-light shadow-sm">
-              {(["tasks", "calendar", "notes"] as const).map((st) => (
+            <div className="flex gap-1 rounded-lg bg-background p-1 border border-border-light shadow-sm flex-wrap">
+              {(["tasks", "calendar", "notes", "watering", "rotation", "recommend"] as const).map((st) => (
                 <button
                   key={st}
                   type="button"
-                  className={`flex-1 rounded-md px-2 py-1.5 text-[11px] font-medium transition-all ${
+                  className={`flex-1 rounded-md px-2 py-1.5 text-[11px] font-medium transition-all min-w-0 ${
                     planSubTab === st
-                      ? "bg-accent text-white shadow-sm"
+                      ? (st === "watering" ? "bg-blue-500 text-white shadow-sm" : st === "rotation" ? "bg-amber-600 text-white shadow-sm" : st === "recommend" ? "bg-purple-600 text-white shadow-sm" : "bg-accent text-white shadow-sm")
                       : "text-foreground/60 hover:bg-foreground/5 hover:text-foreground/80"
                   }`}
                   onClick={() => setPlanSubTab(st)}
                 >
-                  {st === "tasks" ? "📋 Opgaver" : st === "calendar" ? "📅 Årshjul" : "📝 Noter"}
+                  {st === "tasks" ? "📋" : st === "calendar" ? "📅" : st === "notes" ? "📝" : st === "watering" ? "💧" : st === "rotation" ? "🔄" : "💡"}
+                  <span className="hidden sm:inline"> {st === "tasks" ? "Opgaver" : st === "calendar" ? "Årshjul" : st === "notes" ? "Noter" : st === "watering" ? "Vanding" : st === "rotation" ? "Rotation" : "Anbefal"}</span>
                 </button>
               ))}
             </div>
@@ -14885,10 +15042,555 @@ export function GardenMapClient({ userId }: { userId: string }) {
                 </div>
               );
             })() : null}
+
+            {/* ══════════════════════════════════════════════════════════ */}
+            {/* ── VANDING SUB-TAB ── smart watering advisor              */}
+            {/* ══════════════════════════════════════════════════════════ */}
+            {planSubTab === "watering" ? (() => {
+              // Build watering advice for all beds/containers with plants
+              const adviceList: BedWateringAdvice[] = [];
+              if (layoutForContainment?.features?.length) {
+                for (const f of layoutForContainment.features) {
+                  const props = (f as GardenFeature).properties;
+                  const fId = props?.gardenosId;
+                  if (!fId) continue;
+                  const instances = getInstancesForFeature(fId);
+                  if (instances.length === 0) continue;
+                  const species = instances
+                    .map((inst) => getPlantById(inst.speciesId))
+                    .filter(Boolean) as PlantSpecies[];
+                  if (species.length === 0) continue;
+
+                  const soilId = props?.soilProfileId as string | undefined;
+                  const soilResult = soilId ? getSoilProfileById(soilId) : null;
+                  const soil: SoilProfile | null = soilResult ?? null;
+                  const bedName = props?.name || props?.kind || "Ukendt";
+
+                  adviceList.push(
+                    computeWateringAdvice({
+                      featureId: fId,
+                      bedName,
+                      weather: weatherData,
+                      soilProfile: soil,
+                      plantSpecies: species,
+                    }),
+                  );
+                }
+              }
+              const sorted = sortByUrgency(adviceList);
+              const needsWater = sorted.filter((a) => a.urgency !== "none");
+
+              return (
+                <div className="space-y-3">
+                  <div>
+                    <h3 className="text-sm font-bold text-foreground/80 mb-1">💧 Vandingsrådgiver</h3>
+                    <p className="text-[10px] text-foreground/50 leading-relaxed">
+                      Anbefalinger baseret på vejr, jord og planternes behov.
+                    </p>
+                  </div>
+
+                  {/* Summary stats */}
+                  <div className="flex gap-2">
+                    <div className={`flex-1 rounded-lg border p-2 text-center ${needsWater.length > 0 ? "border-blue-200 bg-blue-50" : "border-green-200 bg-green-50"}`}>
+                      <div className={`text-lg font-bold ${needsWater.length > 0 ? "text-blue-600" : "text-green-600"}`}>
+                        {needsWater.length}
+                      </div>
+                      <div className="text-[9px] text-foreground/40 uppercase tracking-wide">Behøver vanding</div>
+                    </div>
+                    <div className="flex-1 rounded-lg border border-green-200 bg-green-50 p-2 text-center">
+                      <div className="text-lg font-bold text-green-600">{sorted.length - needsWater.length}</div>
+                      <div className="text-[9px] text-foreground/40 uppercase tracking-wide">OK lige nu</div>
+                    </div>
+                  </div>
+
+                  {/* Weather context */}
+                  {weatherData ? (
+                    <div className="rounded-lg border border-border bg-foreground/[0.02] px-3 py-2 flex items-center gap-2">
+                      <span className="text-sm">🌡️</span>
+                      <div className="text-[10px] text-foreground/60">
+                        {Math.round(weatherData.current.temperature)}°C ·{" "}
+                        {weatherData.current.precipitation > 0
+                          ? `${weatherData.current.precipitation}mm nedbør nu`
+                          : "Ingen nedbør nu"
+                        }
+                        {weatherData.current.windSpeed > 15 ? ` · 💨 ${Math.round(weatherData.current.windSpeed)} km/t` : ""}
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2">
+                      <p className="text-[10px] text-amber-700">⚠️ Ingen vejrdata – åbn Klima-fanen for at hente vejr</p>
+                    </div>
+                  )}
+
+                  {/* Advice cards */}
+                  {sorted.length === 0 ? (
+                    <p className="text-[10px] text-foreground/40 italic text-center py-6">
+                      💧 Ingen bede med planter fundet. Tilføj planter til dine bede for vandingsanbefalinger.
+                    </p>
+                  ) : (
+                    <div className="space-y-1.5">
+                      {sorted.map((advice) => {
+                        const cfg = URGENCY_CONFIG[advice.urgency];
+                        return (
+                          <div
+                            key={advice.featureId}
+                            className={`rounded-lg border ${cfg.border} ${cfg.bg} px-3 py-2.5 space-y-1.5`}
+                          >
+                            <div className="flex items-center gap-2">
+                              <span className="text-sm">{cfg.icon}</span>
+                              <span className="text-xs font-semibold flex-1 truncate">{advice.bedName}</span>
+                              <span className={`text-[10px] font-medium ${cfg.color}`}>{cfg.label}</span>
+                            </div>
+                            <p className="text-[10px] text-foreground/60 leading-relaxed">{advice.adviceText}</p>
+                            {advice.litresPerM2 > 0 ? (
+                              <div className="text-[9px] text-foreground/40">
+                                💧 ca. {advice.litresPerM2} l/m² · {advice.drainageFactor === "fast" ? "🏜️ Hurtig dræning" : advice.drainageFactor === "slow" ? "🪨 Langsom dræning" : "Normal dræning"}
+                              </div>
+                            ) : null}
+                            {advice.reasons.length > 0 ? (
+                              <details className="group">
+                                <summary className="text-[9px] text-foreground/30 cursor-pointer hover:text-foreground/50">Detaljer ▾</summary>
+                                <ul className="mt-1 space-y-0.5">
+                                  {advice.reasons.map((r, i) => (
+                                    <li key={i} className="text-[9px] text-foreground/40 leading-tight">{r}</li>
+                                  ))}
+                                </ul>
+                              </details>
+                            ) : null}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+
+                  <p className="text-[9px] text-foreground/30 text-center leading-relaxed">
+                    Anbefalinger er vejledende – tilpas altid efter dine specifikke forhold.
+                  </p>
+                </div>
+              );
+            })() : null}
+
+            {/* ══════════════════════════════════════════════════════════ */}
+            {/* ── ROTATION SUB-TAB ── multi-year crop rotation planner   */}
+            {/* ══════════════════════════════════════════════════════════ */}
+            {planSubTab === "rotation" ? (() => {
+              const currentYear = getCurrentSeason();
+              const plan = buildRotationPlan(layoutForContainment, [currentYear - 3, currentYear + 1]);
+
+              return (
+                <div className="space-y-3">
+                  <div>
+                    <h3 className="text-sm font-bold text-foreground/80 mb-1">🔄 Vekseldrift</h3>
+                    <p className="text-[10px] text-foreground/50 leading-relaxed">
+                      Overblik over plantefamilier pr. bed over tid. Undgå at dyrke samme familie flere år i træk.
+                    </p>
+                  </div>
+
+                  {plan.rows.length === 0 ? (
+                    <p className="text-[10px] text-foreground/40 italic text-center py-8">
+                      🔄 Ingen bede fundet. Opret bede og tilføj planter med sæson-information for at se rotationsplanen.
+                    </p>
+                  ) : (
+                    <div className="space-y-2">
+                      {/* Year headers */}
+                      <div className="flex gap-1 items-center">
+                        <div className="w-20 shrink-0 text-[9px] font-semibold text-foreground/40 uppercase">Bed</div>
+                        {plan.seasons.map((s) => (
+                          <div
+                            key={s}
+                            className={`flex-1 text-center text-[10px] font-semibold ${
+                              s === currentYear ? "text-accent" : s > currentYear ? "text-foreground/30 italic" : "text-foreground/50"
+                            }`}
+                          >
+                            {s}{s === currentYear ? " ◀" : ""}
+                          </div>
+                        ))}
+                      </div>
+
+                      {/* Rotation grid */}
+                      {plan.rows.map((row) => {
+                        const suggestion = plan.suggestions[row.bed.featureId];
+                        return (
+                          <div key={row.bed.featureId} className="space-y-1">
+                            <div className="flex gap-1 items-stretch">
+                              <div className="w-20 shrink-0 text-[10px] font-medium text-foreground/70 truncate py-1" title={row.bed.bedName}>
+                                {row.bed.bedName}
+                              </div>
+                              {row.cells.map((cell) => (
+                                <div
+                                  key={cell.season}
+                                  className={`flex-1 rounded-md border p-1 min-h-[32px] text-center ${
+                                    cell.warnings.length > 0
+                                      ? "border-red-300 bg-red-50"
+                                      : cell.families.length > 0
+                                        ? "border-border bg-foreground/[0.02]"
+                                        : cell.season > currentYear
+                                          ? "border-dashed border-foreground/10 bg-foreground/[0.01]"
+                                          : "border-foreground/5 bg-foreground/[0.01]"
+                                  }`}
+                                  title={cell.speciesNames.join(", ") + (cell.warnings.length > 0 ? "\n" + cell.warnings.join("\n") : "")}
+                                >
+                                  {cell.families.length > 0 ? (
+                                    <div className="flex flex-wrap gap-0.5 justify-center">
+                                      {cell.families.map((fam) => (
+                                        <span
+                                          key={fam}
+                                          className="inline-block w-3 h-3 rounded-full"
+                                          style={{ backgroundColor: getFamilyColor(fam) }}
+                                          title={getFamilyLabel(fam)}
+                                        />
+                                      ))}
+                                    </div>
+                                  ) : (
+                                    <span className="text-[9px] text-foreground/20">{cell.season > currentYear ? "?" : "–"}</span>
+                                  )}
+                                  {cell.warnings.length > 0 ? (
+                                    <span className="text-[8px] text-red-500 block mt-0.5">⚠️</span>
+                                  ) : null}
+                                </div>
+                              ))}
+                            </div>
+
+                            {/* Per-bed suggestion */}
+                            {suggestion && (suggestion.avoid.length > 0 || suggestion.suggest.length > 0) ? (
+                              <div className="ml-20 flex gap-2 text-[9px]">
+                                {suggestion.avoid.length > 0 ? (
+                                  <span className="text-red-500">
+                                    Undgå: {suggestion.avoid.map((f) => getFamilyLabel(f)).join(", ")}
+                                  </span>
+                                ) : null}
+                                {suggestion.suggest.length > 0 ? (
+                                  <span className="text-green-600">
+                                    Foreslå: {suggestion.suggest.slice(0, 3).map((f) => getFamilyLabel(f)).join(", ")}
+                                  </span>
+                                ) : null}
+                              </div>
+                            ) : null}
+                          </div>
+                        );
+                      })}
+
+                      {/* Legend */}
+                      <div className="rounded-lg border border-border bg-foreground/[0.02] p-2 mt-2">
+                        <p className="text-[9px] font-semibold text-foreground/40 uppercase tracking-wide mb-1.5">Familiefarver</p>
+                        <div className="flex flex-wrap gap-2">
+                          {(["solanaceae", "brassicaceae", "fabaceae", "cucurbitaceae", "apiaceae", "amaryllidaceae", "asteraceae"] as const).map((fam) => (
+                            <div key={fam} className="flex items-center gap-1">
+                              <span className="inline-block w-2.5 h-2.5 rounded-full" style={{ backgroundColor: getFamilyColor(fam) }} />
+                              <span className="text-[9px] text-foreground/50">{getFamilyLabel(fam)}</span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+
+                      <p className="text-[9px] text-foreground/30 text-center leading-relaxed">
+                        Sæt &quot;sæson&quot;-felt på dine plantninger for at spore rotation over år.
+                      </p>
+                    </div>
+                  )}
+                </div>
+              );
+            })() : null}
+
+            {/* ══════════════════════════════════════════════════════════ */}
+            {/* ── RECOMMEND SUB-TAB ── smart plant recommendations      */}
+            {/* ══════════════════════════════════════════════════════════ */}
+            {planSubTab === "recommend" ? (() => {
+              // Collect all beds with their species, soil, and estimated sun
+              type BedInfo = {
+                featureId: string;
+                bedName: string;
+                speciesIds: string[];
+                soil: SoilProfile | null;
+                sunHours: number | null;
+              };
+              const beds: BedInfo[] = [];
+              if (layoutForContainment?.features?.length) {
+                const mapLat = mapRef.current?.getCenter()?.lat ?? 55.67;
+                const casters = sunCastersRef.current;
+                for (const f of layoutForContainment.features) {
+                  const props = (f as GardenFeature).properties;
+                  const fId = props?.gardenosId;
+                  if (!fId) continue;
+                  const instances = getInstancesForFeature(fId);
+                  const speciesIds = instances.map((inst) => inst.speciesId);
+                  const soilId = props?.soilProfileId as string | undefined;
+                  const soilResult = soilId ? getSoilProfileById(soilId) : null;
+                  const soil: SoilProfile | null = soilResult ?? null;
+
+                  // Estimate sun at bed centroid
+                  let sunHours: number | null = null;
+                  const geom = f.geometry;
+                  if (geom && geom.type === "Polygon" && (geom as GeoJSON.Polygon).coordinates?.[0]) {
+                    const ring = (geom as GeoJSON.Polygon).coordinates[0];
+                    const cLat = ring.reduce((s, c) => s + c[1], 0) / ring.length;
+                    const cLng = ring.reduce((s, c) => s + c[0], 0) / ring.length;
+                    if (casters.length > 0) {
+                      const shade = estimateShadeAtPoint(cLat, cLng, casters, mapLat);
+                      sunHours = Math.max(0, 15 - shade);
+                    }
+                  } else if (geom && geom.type === "Point") {
+                    const coords = (geom as GeoJSON.Point).coordinates;
+                    if (casters.length > 0) {
+                      const shade = estimateShadeAtPoint(coords[1], coords[0], casters, mapLat);
+                      sunHours = Math.max(0, 15 - shade);
+                    }
+                  }
+
+                  beds.push({
+                    featureId: fId,
+                    bedName: props?.name || props?.kind || "Ukendt",
+                    speciesIds,
+                    soil,
+                    sunHours,
+                  });
+                }
+              }
+              // Sort: beds with plants first, then by name
+              beds.sort((a, b) => {
+                if (a.speciesIds.length > 0 && b.speciesIds.length === 0) return -1;
+                if (a.speciesIds.length === 0 && b.speciesIds.length > 0) return 1;
+                return a.bedName.localeCompare(b.bedName, "da");
+              });
+
+              const activeBedId = recSelectedBedId ?? (beds.length > 0 ? beds[0].featureId : null);
+              const activeBed = beds.find((b) => b.featureId === activeBedId) ?? null;
+
+              const currentMonth = new Date().getMonth() + 1;
+              const currentTempC = weatherData?.current?.temperature ?? null;
+              const frostRisk = weatherData?.forecast
+                ? weatherData.forecast.some((d) => (d.tempMin ?? 99) < 3)
+                : false;
+
+              const ctx: SmartContext | null = activeBed
+                ? {
+                    existingSpeciesIds: activeBed.speciesIds,
+                    soil: activeBed.soil,
+                    sunHours: activeBed.sunHours,
+                    currentMonth,
+                    currentTempC,
+                    frostRisk,
+                  }
+                : null;
+
+              const recommendations = ctx
+                ? getSmartRecommendations(ctx, recStrategies, 15)
+                : [];
+
+              const allStrategies: SmartStrategy[] = [
+                "companion", "biodiversity", "nutrition", "color", "forest-layer",
+                "soil-match", "sun-match", "season-timing", "frost-safe",
+              ];
+
+              return (
+                <div className="space-y-3">
+                  <div>
+                    <h3 className="text-sm font-bold text-foreground/80 mb-1">💡 Smarte Anbefalinger</h3>
+                    <p className="text-[10px] text-foreground/50 leading-relaxed">
+                      Planteanbefalinger baseret på jord, sol, sæson og eksisterende planter.
+                    </p>
+                  </div>
+
+                  {beds.length === 0 ? (
+                    <p className="text-[10px] text-foreground/40 italic text-center py-8">
+                      💡 Opret bede for at få anbefalinger.
+                    </p>
+                  ) : (
+                    <>
+                      {/* Bed selector */}
+                      <div>
+                        <label className="text-[9px] font-semibold text-foreground/40 uppercase tracking-wide block mb-1">Vælg bed</label>
+                        <select
+                          className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-[11px] text-foreground/80"
+                          value={activeBedId ?? ""}
+                          onChange={(e) => {
+                            setRecSelectedBedId(e.target.value || null);
+                            setRecExpandedId(null);
+                          }}
+                        >
+                          {beds.map((b) => (
+                            <option key={b.featureId} value={b.featureId}>
+                              {b.bedName} ({b.speciesIds.length} planter)
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+
+                      {/* Bed context summary */}
+                      {activeBed ? (
+                        <div className="flex gap-2 flex-wrap">
+                          {activeBed.soil ? (
+                            <span className="inline-flex items-center gap-1 rounded-full bg-amber-50 border border-amber-200 px-2 py-0.5 text-[9px] text-amber-700">
+                              🪨 {activeBed.soil.name}{activeBed.soil.phMeasured != null ? ` · pH ${activeBed.soil.phMeasured.toFixed(1)}` : ""}
+                            </span>
+                          ) : (
+                            <span className="inline-flex items-center gap-1 rounded-full bg-foreground/5 border border-border px-2 py-0.5 text-[9px] text-foreground/40">
+                              🪨 Ingen jordprofil
+                            </span>
+                          )}
+                          {activeBed.sunHours != null ? (
+                            <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[9px] border ${
+                              activeBed.sunHours >= 6 ? "bg-yellow-50 border-yellow-200 text-yellow-700" :
+                              activeBed.sunHours >= 3 ? "bg-green-50 border-green-200 text-green-700" :
+                              "bg-blue-50 border-blue-200 text-blue-700"
+                            }`}>
+                              ☀️ ~{activeBed.sunHours.toFixed(0)}t sol
+                            </span>
+                          ) : null}
+                          {frostRisk ? (
+                            <span className="inline-flex items-center gap-1 rounded-full bg-blue-50 border border-blue-200 px-2 py-0.5 text-[9px] text-blue-700">
+                              ❄️ Frostrisiko
+                            </span>
+                          ) : null}
+                          <span className="inline-flex items-center gap-1 rounded-full bg-purple-50 border border-purple-200 px-2 py-0.5 text-[9px] text-purple-700">
+                            📅 {monthNameDa(currentMonth)}
+                          </span>
+                        </div>
+                      ) : null}
+
+                      {/* Strategy toggles */}
+                      <div>
+                        <label className="text-[9px] font-semibold text-foreground/40 uppercase tracking-wide block mb-1.5">Strategier</label>
+                        <div className="flex flex-wrap gap-1">
+                          {allStrategies.map((s) => {
+                            const cfg = SMART_STRATEGY_CONFIG[s];
+                            const active = recStrategies.includes(s);
+                            return (
+                              <button
+                                key={s}
+                                type="button"
+                                className={`rounded-full px-2 py-0.5 text-[9px] font-medium border transition-all ${
+                                  active
+                                    ? "bg-purple-100 border-purple-300 text-purple-700"
+                                    : "bg-foreground/5 border-border text-foreground/40 hover:text-foreground/60"
+                                }`}
+                                onClick={() =>
+                                  setRecStrategies((prev) =>
+                                    active ? prev.filter((x) => x !== s) : [...prev, s],
+                                  )
+                                }
+                                title={cfg.description}
+                              >
+                                {cfg.emoji} {cfg.label}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
+
+                      {/* Results */}
+                      {recommendations.length === 0 ? (
+                        <p className="text-[10px] text-foreground/40 italic text-center py-4">
+                          Ingen anbefalinger med valgte strategier. Prøv at aktivere flere.
+                        </p>
+                      ) : (
+                        <div className="space-y-1.5">
+                          <p className="text-[9px] text-foreground/40 uppercase tracking-wide font-semibold">
+                            {recommendations.length} anbefalinger
+                          </p>
+                          {recommendations.map((rec) => {
+                            const expanded = recExpandedId === rec.species.id;
+                            const positiveReasons = rec.reasons.filter((r) => r.score > 0);
+                            const negativeReasons = rec.reasons.filter((r) => r.score < 0);
+                            return (
+                              <div
+                                key={rec.species.id}
+                                className="rounded-lg border border-border bg-background p-2 hover:border-purple-200 transition-colors cursor-pointer"
+                                onClick={() => setRecExpandedId(expanded ? null : rec.species.id)}
+                              >
+                                <div className="flex items-center gap-2">
+                                  <div className="flex-1 min-w-0">
+                                    <div className="flex items-center gap-1.5">
+                                      <span className="text-[11px] font-semibold text-foreground/80 truncate">{rec.species.name}</span>
+                                      {rec.species.latinName ? (
+                                        <span className="text-[9px] text-foreground/30 italic truncate">{rec.species.latinName}</span>
+                                      ) : null}
+                                    </div>
+                                    <div className="flex flex-wrap gap-0.5 mt-0.5">
+                                      {positiveReasons.slice(0, expanded ? 99 : 3).map((r, i) => (
+                                        <span key={i} className="inline-flex items-center gap-0.5 rounded bg-green-50 px-1 py-0 text-[8px] text-green-700">
+                                          {r.emoji} {r.text}
+                                        </span>
+                                      ))}
+                                      {!expanded && positiveReasons.length > 3 ? (
+                                        <span className="text-[8px] text-foreground/30">+{positiveReasons.length - 3}</span>
+                                      ) : null}
+                                    </div>
+                                  </div>
+                                  <div className="shrink-0 flex flex-col items-center">
+                                    <span className={`text-sm font-bold ${rec.totalScore >= 8 ? "text-purple-600" : rec.totalScore >= 4 ? "text-green-600" : "text-foreground/50"}`}>
+                                      {rec.totalScore}
+                                    </span>
+                                    <span className="text-[7px] text-foreground/30 uppercase">Score</span>
+                                  </div>
+                                </div>
+
+                                {expanded ? (
+                                  <div className="mt-2 pt-2 border-t border-border space-y-1.5">
+                                    {/* Species details */}
+                                    <div className="flex flex-wrap gap-2 text-[9px] text-foreground/50">
+                                      {rec.species.family ? (
+                                        <span>🧬 {rec.species.family}</span>
+                                      ) : null}
+                                      {rec.species.light ? (
+                                        <span>☀️ {rec.species.light === "full-sun" ? "Fuld sol" : rec.species.light === "partial-shade" ? "Halvskygge" : "Skygge"}</span>
+                                      ) : null}
+                                      {rec.species.water ? (
+                                        <span>💧 {rec.species.water}</span>
+                                      ) : null}
+                                      {rec.species.sowOutdoor ? (
+                                        <span>🌱 Udså {monthNameDa(rec.species.sowOutdoor.from)}–{monthNameDa(rec.species.sowOutdoor.to)}</span>
+                                      ) : null}
+                                      {rec.species.harvest ? (
+                                        <span>🧺 Høst {monthNameDa(rec.species.harvest.from)}–{monthNameDa(rec.species.harvest.to)}</span>
+                                      ) : null}
+                                    </div>
+
+                                    {/* All positive reasons */}
+                                    {positiveReasons.length > 0 ? (
+                                      <div>
+                                        <p className="text-[8px] text-green-600 font-semibold mb-0.5">✅ Fordele</p>
+                                        {positiveReasons.map((r, i) => (
+                                          <div key={i} className="flex items-center gap-1 text-[9px] text-green-700">
+                                            <span>{r.emoji}</span>
+                                            <span>{r.text}</span>
+                                            <span className="text-green-400 ml-auto">+{r.score}</span>
+                                          </div>
+                                        ))}
+                                      </div>
+                                    ) : null}
+
+                                    {/* Negative reasons */}
+                                    {negativeReasons.length > 0 ? (
+                                      <div>
+                                        <p className="text-[8px] text-red-500 font-semibold mb-0.5">⚠️ Ulemper</p>
+                                        {negativeReasons.map((r, i) => (
+                                          <div key={i} className="flex items-center gap-1 text-[9px] text-red-600">
+                                            <span>{r.emoji}</span>
+                                            <span>{r.text}</span>
+                                            <span className="text-red-400 ml-auto">{r.score}</span>
+                                          </div>
+                                        ))}
+                                      </div>
+                                    ) : null}
+                                  </div>
+                                ) : null}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+
+                      <p className="text-[9px] text-foreground/30 text-center leading-relaxed">
+                        Tilføj jordprofiler og aktiver solkortet for bedre anbefalinger.
+                      </p>
+                    </>
+                  )}
+                </div>
+              );
+            })() : null}
           </div>
         ) : null}
-
-        {/* ── AI Chat / Rådgiver Tab ── */}
         {sidebarTab === "chat" ? (
           <div className="mt-3 flex flex-col" style={{ height: "calc(100vh - 220px)" }}>
 
@@ -15474,19 +16176,19 @@ export function GardenMapClient({ userId }: { userId: string }) {
         {sidebarTab === "view" ? (
           <div className="mt-3 space-y-3">
             {/* ── Visning sub-tabs ── */}
-            <div className="flex gap-1 rounded-lg bg-background p-1 border border-border-light shadow-sm">
-              {(["steder", "baggrund", "synlighed", "ankre"] as const).map((st) => (
+            <div className="flex gap-1 rounded-lg bg-background p-1 border border-border-light shadow-sm flex-wrap">
+              {(["steder", "baggrund", "synlighed", "ankre", "eksport"] as const).map((st) => (
                 <button
                   key={st}
                   type="button"
                   className={`flex-1 rounded-md px-2 py-1.5 text-[11px] font-medium transition-all ${
                     viewSubTab === st
-                      ? (st === "ankre" ? "bg-orange-500 text-white shadow-sm" : "bg-accent text-white shadow-sm")
+                      ? (st === "ankre" ? "bg-orange-500 text-white shadow-sm" : st === "eksport" ? "bg-emerald-600 text-white shadow-sm" : "bg-accent text-white shadow-sm")
                       : "text-foreground/60 hover:bg-foreground/5 hover:text-foreground/80"
                   }`}
                   onClick={() => setViewSubTab(st)}
                 >
-                  {st === "steder" ? "📍 Steder" : st === "baggrund" ? "🗺️ Baggrund" : st === "synlighed" ? "👁 Synlighed" : "📌 Ankre"}
+                  {st === "steder" ? "📍 Steder" : st === "baggrund" ? "🗺️ Baggrund" : st === "synlighed" ? "👁 Synlighed" : st === "ankre" ? "📌 Ankre" : "📤 Eksport"}
                   {st === "steder" && bookmarks.length > 0 ? ` ${bookmarks.length}` : ""}
                   {st === "ankre" && anchors.length > 0 ? ` ${anchors.length}` : ""}
                 </button>
@@ -16083,6 +16785,35 @@ export function GardenMapClient({ userId }: { userId: string }) {
               >
                 📏 Gitter{showGrid ? " (aktiv)" : ""}
               </button>
+              <button
+                type="button"
+                className={`w-full rounded-lg border px-3 py-2 text-left text-xs font-medium transition-all ${
+                  showSunMap
+                    ? "border-amber-400 bg-amber-50 text-amber-800 shadow-sm"
+                    : "border-border bg-background text-foreground/60 hover:bg-foreground/5 hover:shadow-sm"
+                }`}
+                onClick={() => setShowSunMap((v) => !v)}
+              >
+                ☀️ Solkort{showSunMap ? " (aktiv)" : ""}
+              </button>
+              {showSunMap ? (
+                <div className="rounded-lg border border-amber-200 bg-amber-50/50 p-2 space-y-1.5">
+                  <p className="text-[10px] font-semibold text-amber-700">Solkort – farveforklaring</p>
+                  <div className="flex gap-1 items-center">
+                    <div className="w-4 h-3 rounded-sm" style={{ background: sunHoursToColor(15, 0.7) }} />
+                    <span className="text-[9px] text-foreground/60">Fuld sol (15t)</span>
+                    <div className="w-4 h-3 rounded-sm ml-2" style={{ background: sunHoursToColor(10, 0.7) }} />
+                    <span className="text-[9px] text-foreground/60">Delvis sol</span>
+                    <div className="w-4 h-3 rounded-sm ml-2" style={{ background: sunHoursToColor(4, 0.7) }} />
+                    <span className="text-[9px] text-foreground/60">Skygge</span>
+                    <div className="w-4 h-3 rounded-sm ml-2" style={{ background: sunHoursToColor(0, 0.7) }} />
+                    <span className="text-[9px] text-foreground/60">Dyb</span>
+                  </div>
+                  <p className="text-[9px] text-foreground/40 leading-tight">
+                    Beregnet ud fra placerede træers og buskenes højde, solvinkel ved 56°N og sæsongennemsnit (april–september).
+                  </p>
+                </div>
+              ) : null}
               {showMatrikel ? (
                 <div className="mt-1.5 space-y-1">
                   {!dfReady ? (
@@ -16291,10 +17022,388 @@ export function GardenMapClient({ userId }: { userId: string }) {
             </div>
             </div>
             ) : null}
+
+            {/* ══════════════════════════════════════════════════════════ */}
+            {/* ── EKSPORT SUB-TAB ──                                     */}
+            {/* ══════════════════════════════════════════════════════════ */}
+            {viewSubTab === "eksport" ? (() => {
+              // Build plant rows for CSV / print
+              const plantRows: ExportPlantRow[] = [];
+              if (layoutForContainment?.features?.length) {
+                for (const f of layoutForContainment.features) {
+                  const props = (f as GardenFeature).properties;
+                  const bedName = props?.name || props?.kind || "Ukendt bed";
+                  const fId = props?.gardenosId;
+                  if (!fId) continue;
+                  const instances = getInstancesForFeature(fId);
+                  for (const inst of instances) {
+                    const sp = getPlantById(inst.speciesId);
+                    const c: number = inst.count != null ? inst.count : 1;
+                    const s: string = inst.season != null ? String(inst.season) : "";
+                    plantRows.push({
+                      bed: bedName,
+                      species: sp?.name || inst.speciesId,
+                      variety: inst.varietyName || "",
+                      count: c,
+                      plantedAt: inst.plantedAt || "",
+                      season: s,
+                      notes: inst.notes || "",
+                    });
+                  }
+                }
+              }
+              const featureCount = layoutForContainment?.features?.length || 0;
+              const uniqueSpecies = new Set(plantRows.map((r) => r.species)).size;
+
+              return (
+                <div className="space-y-4">
+                  <div>
+                    <h3 className="text-sm font-bold text-foreground/80 mb-1">📤 Eksportér din have</h3>
+                    <p className="text-[10px] text-foreground/50 leading-relaxed">
+                      Download din haveplan som GeoJSON, CSV-planteoversigt, eller print en PDF-oversigt.
+                    </p>
+                  </div>
+
+                  {/* Stats summary */}
+                  <div className="grid grid-cols-3 gap-2">
+                    <div className="rounded-lg border border-border bg-foreground/[0.02] p-2 text-center">
+                      <div className="text-lg font-bold text-accent">{featureCount}</div>
+                      <div className="text-[9px] text-foreground/40 uppercase tracking-wide">Elementer</div>
+                    </div>
+                    <div className="rounded-lg border border-border bg-foreground/[0.02] p-2 text-center">
+                      <div className="text-lg font-bold text-emerald-600">{plantRows.length}</div>
+                      <div className="text-[9px] text-foreground/40 uppercase tracking-wide">Plantninger</div>
+                    </div>
+                    <div className="rounded-lg border border-border bg-foreground/[0.02] p-2 text-center">
+                      <div className="text-lg font-bold text-blue-600">{uniqueSpecies}</div>
+                      <div className="text-[9px] text-foreground/40 uppercase tracking-wide">Arter</div>
+                    </div>
+                  </div>
+
+                  {/* Export buttons */}
+                  <div className="space-y-2">
+                    <button
+                      type="button"
+                      className="w-full flex items-center gap-3 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2.5 hover:bg-emerald-100 hover:border-emerald-300 transition-all group"
+                      onClick={() => exportGeoJSON(layoutForContainment, "gardenos-have")}
+                    >
+                      <span className="text-xl">🗺️</span>
+                      <div className="flex-1 text-left">
+                        <div className="text-xs font-semibold text-emerald-800">GeoJSON</div>
+                        <div className="text-[10px] text-emerald-600/70">Komplet haveplan med alle elementer og geometrier</div>
+                      </div>
+                      <span className="text-emerald-400 group-hover:text-emerald-600 transition-colors text-xs">↓</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      className="w-full flex items-center gap-3 rounded-lg border border-blue-200 bg-blue-50 px-3 py-2.5 hover:bg-blue-100 hover:border-blue-300 transition-all group"
+                      onClick={() => exportPlantCSV(plantRows, "gardenos-have")}
+                      disabled={plantRows.length === 0}
+                    >
+                      <span className="text-xl">📊</span>
+                      <div className="flex-1 text-left">
+                        <div className={`text-xs font-semibold ${plantRows.length > 0 ? "text-blue-800" : "text-foreground/30"}`}>CSV Planteoversigt</div>
+                        <div className={`text-[10px] ${plantRows.length > 0 ? "text-blue-600/70" : "text-foreground/25"}`}>
+                          {plantRows.length > 0 ? `${plantRows.length} plantninger · åbn i Excel / Google Sheets` : "Ingen planter registreret"}
+                        </div>
+                      </div>
+                      <span className="text-blue-400 group-hover:text-blue-600 transition-colors text-xs">↓</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      className="w-full flex items-center gap-3 rounded-lg border border-purple-200 bg-purple-50 px-3 py-2.5 hover:bg-purple-100 hover:border-purple-300 transition-all group"
+                      onClick={() => {
+                        const weatherStr = weatherData
+                          ? `Temperatur: ${weatherData.current.temperature}°C, Luftfugtighed: ${weatherData.current.humidity}%, Nedbør: ${weatherData.current.precipitation}mm`
+                          : undefined;
+                        printGardenSummary({
+                          gardenName: "Min Have – GardenOS",
+                          featureCount,
+                          plantRows,
+                          weatherSummary: weatherStr,
+                        });
+                      }}
+                    >
+                      <span className="text-xl">🖨️</span>
+                      <div className="flex-1 text-left">
+                        <div className="text-xs font-semibold text-purple-800">Print / PDF</div>
+                        <div className="text-[10px] text-purple-600/70">Haveoversigt klar til print – åbner i nyt vindue</div>
+                      </div>
+                      <span className="text-purple-400 group-hover:text-purple-600 transition-colors text-xs">→</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      className="w-full flex items-center gap-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2.5 hover:bg-amber-100 hover:border-amber-300 transition-all group"
+                      onClick={async () => {
+                        const ok = await copyShareLink(layoutForContainment);
+                        if (ok) {
+                          showToast("🔗 Delelink kopieret til udklipsholder!", "success");
+                        } else {
+                          showToast("❌ Kunne ikke kopiere link", "error");
+                        }
+                      }}
+                    >
+                      <span className="text-xl">🔗</span>
+                      <div className="flex-1 text-left">
+                        <div className="text-xs font-semibold text-amber-800">Del haveplan</div>
+                        <div className="text-[10px] text-amber-600/70">Kopiér delelink til udklipsholder</div>
+                      </div>
+                      <span className="text-amber-400 group-hover:text-amber-600 transition-colors text-xs">📋</span>
+                    </button>
+                  </div>
+
+                  <p className="text-[9px] text-foreground/30 text-center leading-relaxed">
+                    GeoJSON kan importeres i QGIS, Google Earth og andre GIS-værktøjer.<br />
+                    CSV-filen bruger semikolon (;) som separator og UTF-8 med BOM.
+                  </p>
+                </div>
+              );
+            })() : null}
           </div>
         ) : null}
 
-        {/* ── Saved Designs / Gemte Designs Tab ── */}
+        {/* ══════════════════════════════════════════════════════════════ */}
+        {/* ── JOURNAL / DAGBOG TAB ──                                    */}
+        {/* ══════════════════════════════════════════════════════════════ */}
+        {sidebarTab === "journal" ? (() => {
+          // eslint-disable-next-line react-hooks/rules-of-hooks
+          void journalVersion; // reactivity trigger
+          const entries = getJournalEntries();
+          const filtered = journalFilter === "all"
+            ? entries
+            : entries.filter((e) => e.category === journalFilter);
+          const dayGroups = groupByDate(filtered);
+          const stats = getJournalStats();
+
+          const resetForm = () => {
+            setJournalAdding(false);
+            setJournalEditId(null);
+            setJournalDraftTitle("");
+            setJournalDraftBody("");
+            setJournalDraftCategory("observation");
+            setJournalDraftDate(new Date().toISOString().slice(0, 10));
+          };
+
+          const handleSave = () => {
+            if (!journalDraftTitle.trim()) return;
+            if (journalEditId) {
+              updateJournalEntry(journalEditId, {
+                title: journalDraftTitle.trim(),
+                body: journalDraftBody.trim(),
+                category: journalDraftCategory,
+                date: journalDraftDate,
+              });
+            } else {
+              addJournalEntry({
+                title: journalDraftTitle.trim(),
+                body: journalDraftBody.trim(),
+                category: journalDraftCategory,
+                date: journalDraftDate,
+                featureIds: [],
+                tags: [],
+              });
+            }
+            setJournalVersion((v) => v + 1);
+            resetForm();
+          };
+
+          const startEdit = (entry: JournalEntryType) => {
+            setJournalEditId(entry.id);
+            setJournalAdding(true);
+            setJournalDraftTitle(entry.title);
+            setJournalDraftBody(entry.body);
+            setJournalDraftCategory(entry.category);
+            setJournalDraftDate(entry.date);
+          };
+
+          return (
+            <div className="mt-3 space-y-3">
+              {/* Header */}
+              <div className="flex items-center justify-between">
+                <div>
+                  <h3 className="text-sm font-bold text-foreground/80">📓 Havedagbog</h3>
+                  <p className="text-[9px] text-foreground/40">{stats.total} indlæg · {stats.thisMonth} denne måned</p>
+                </div>
+                <button
+                  type="button"
+                  className="rounded-lg bg-accent text-white px-3 py-1.5 text-xs font-medium hover:bg-accent/90 transition-colors"
+                  onClick={() => { resetForm(); setJournalAdding(true); }}
+                >
+                  + Ny
+                </button>
+              </div>
+
+              {/* Add / Edit form */}
+              {journalAdding ? (
+                <div className="rounded-lg border border-accent/30 bg-accent/5 p-3 space-y-2">
+                  <div className="flex gap-2">
+                    <input
+                      type="date"
+                      className="rounded-md border border-border px-2 py-1 text-xs"
+                      value={journalDraftDate}
+                      onChange={(e) => setJournalDraftDate(e.target.value)}
+                    />
+                    <select
+                      className="flex-1 rounded-md border border-border px-2 py-1 text-xs"
+                      value={journalDraftCategory}
+                      onChange={(e) => setJournalDraftCategory(e.target.value as JournalCategory)}
+                    >
+                      {JOURNAL_CATEGORIES.map((cat) => (
+                        <option key={cat} value={cat}>
+                          {JOURNAL_CATEGORY_CONFIG[cat].icon} {JOURNAL_CATEGORY_CONFIG[cat].label}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <input
+                    type="text"
+                    className="w-full rounded-md border border-border px-2.5 py-1.5 text-xs placeholder:text-foreground/30"
+                    placeholder="Titel…"
+                    value={journalDraftTitle}
+                    onChange={(e) => setJournalDraftTitle(e.target.value)}
+                    autoFocus
+                  />
+                  <textarea
+                    className="w-full rounded-md border border-border px-2.5 py-1.5 text-xs placeholder:text-foreground/30 resize-none"
+                    placeholder="Hvad skete der i haven? Observationer, noter…"
+                    rows={3}
+                    value={journalDraftBody}
+                    onChange={(e) => setJournalDraftBody(e.target.value)}
+                  />
+                  <div className="flex gap-1.5">
+                    <button
+                      type="button"
+                      className="flex-1 rounded-md bg-accent text-white px-2 py-1.5 text-xs font-medium hover:bg-accent/90"
+                      onClick={handleSave}
+                      disabled={!journalDraftTitle.trim()}
+                    >
+                      {journalEditId ? "Opdatér" : "Gem"}
+                    </button>
+                    <button
+                      type="button"
+                      className="rounded-md border border-border px-2 py-1.5 text-xs text-foreground/60 hover:bg-foreground/5"
+                      onClick={resetForm}
+                    >
+                      Annullér
+                    </button>
+                  </div>
+                </div>
+              ) : null}
+
+              {/* Category filter pills */}
+              <div className="flex flex-wrap gap-1">
+                <button
+                  type="button"
+                  className={`rounded-full border px-2 py-0.5 text-[10px] font-medium transition-all ${
+                    journalFilter === "all"
+                      ? "border-accent/40 bg-accent-light text-accent-dark"
+                      : "border-border bg-background text-foreground/50 hover:bg-foreground/5"
+                  }`}
+                  onClick={() => setJournalFilter("all")}
+                >
+                  Alle ({entries.length})
+                </button>
+                {JOURNAL_CATEGORIES.map((cat) => {
+                  const cfg = JOURNAL_CATEGORY_CONFIG[cat];
+                  const count = stats.categories[cat];
+                  if (count === 0) return null;
+                  return (
+                    <button
+                      key={cat}
+                      type="button"
+                      className={`rounded-full border px-2 py-0.5 text-[10px] font-medium transition-all ${
+                        journalFilter === cat
+                          ? "border-accent/40 bg-accent-light text-accent-dark"
+                          : "border-border bg-background text-foreground/50 hover:bg-foreground/5"
+                      }`}
+                      onClick={() => setJournalFilter(cat)}
+                    >
+                      {cfg.icon} {count}
+                    </button>
+                  );
+                })}
+              </div>
+
+              {/* Timeline */}
+              {dayGroups.length === 0 ? (
+                <p className="text-[10px] text-foreground/40 italic text-center py-8">
+                  📓 Ingen dagbogsindlæg endnu. Tryk &quot;+ Ny&quot; for at starte.
+                </p>
+              ) : (
+                <div className="space-y-3">
+                  {dayGroups.map((group) => (
+                    <div key={group.date}>
+                      <div className="flex items-center gap-2 mb-1.5">
+                        <div className="h-px flex-1 bg-border" />
+                        <span className="text-[9px] font-semibold text-foreground/40 uppercase tracking-wide whitespace-nowrap">
+                          {group.label}
+                        </span>
+                        <div className="h-px flex-1 bg-border" />
+                      </div>
+                      <div className="space-y-1.5">
+                        {group.entries.map((entry) => {
+                          const cfg = JOURNAL_CATEGORY_CONFIG[entry.category];
+                          return (
+                            <div
+                              key={entry.id}
+                              className="rounded-lg border border-foreground/10 bg-foreground/[0.02] px-3 py-2.5 hover:bg-foreground/[0.04] transition-all group"
+                            >
+                              <div className="flex items-center gap-2 mb-1">
+                                <span className="text-sm">{cfg.icon}</span>
+                                <span className="text-xs font-semibold flex-1 truncate">{entry.title}</span>
+                                <span className={`text-[9px] ${cfg.color}`}>{cfg.label}</span>
+                              </div>
+                              {entry.body ? (
+                                <p className="text-[10px] text-foreground/55 leading-relaxed line-clamp-3 mb-1.5">{entry.body}</p>
+                              ) : null}
+                              {entry.time ? (
+                                <span className="text-[9px] text-foreground/30">🕐 {entry.time}</span>
+                              ) : null}
+                              <div className="flex gap-1 mt-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                                <button
+                                  type="button"
+                                  className="rounded border border-border px-1.5 py-0.5 text-[9px] text-foreground/40 hover:bg-foreground/5"
+                                  onClick={() => startEdit(entry)}
+                                >
+                                  ✏️ Redigér
+                                </button>
+                                {journalConfirmDelete === entry.id ? (
+                                  <button
+                                    type="button"
+                                    className="rounded border border-red-300 bg-red-50 px-1.5 py-0.5 text-[9px] text-red-600"
+                                    onClick={() => {
+                                      deleteJournalEntry(entry.id);
+                                      setJournalVersion((v) => v + 1);
+                                      setJournalConfirmDelete(null);
+                                    }}
+                                  >
+                                    Bekræft slet
+                                  </button>
+                                ) : (
+                                  <button
+                                    type="button"
+                                    className="rounded border border-border px-1.5 py-0.5 text-[9px] text-foreground/40 hover:text-red-500"
+                                    onClick={() => setJournalConfirmDelete(entry.id)}
+                                  >
+                                    🗑
+                                  </button>
+                                )}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          );
+        })() : null}
+
         {sidebarTab === "designs" ? (() => {
           const loadDesigns = async () => {
             setDesignsLoading(true);
