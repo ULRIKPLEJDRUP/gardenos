@@ -60,7 +60,7 @@ export default function LoginPage() {
           className="space-y-4 rounded-xl border border-gray-200 bg-white p-6 shadow-sm"
         >
           {error && (
-            <div className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700 border border-red-200">
+            <div role="alert" className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700 border border-red-200">
               {error}
             </div>
           )}

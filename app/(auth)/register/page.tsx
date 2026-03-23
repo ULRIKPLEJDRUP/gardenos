@@ -83,16 +83,17 @@ export default function RegisterPage() {
           className="space-y-4 rounded-xl border border-gray-200 bg-white p-6 shadow-sm"
         >
           {error && (
-            <div className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700 border border-red-200">
+            <div role="alert" className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700 border border-red-200">
               {error}
             </div>
           )}
 
           <div>
-            <label className="block text-sm font-medium text-gray-700">
+            <label htmlFor="inviteCode" className="block text-sm font-medium text-gray-700">
               Invitationskode *
             </label>
             <input
+              id="inviteCode"
               type="text"
               required
               className="mt-1 block w-full rounded-lg border border-gray-300 bg-white px-3 py-2.5 text-sm font-mono tracking-widest uppercase shadow-sm placeholder:text-gray-400 focus:border-green-500 focus:outline-none focus:ring-2 focus:ring-green-500/20"
@@ -103,10 +104,11 @@ export default function RegisterPage() {
           </div>
 
           <div>
-            <label className="block text-sm font-medium text-gray-700">
+            <label htmlFor="name" className="block text-sm font-medium text-gray-700">
               Navn
             </label>
             <input
+              id="name"
               type="text"
               className="mt-1 block w-full rounded-lg border border-gray-300 bg-white px-3 py-2.5 text-sm shadow-sm placeholder:text-gray-400 focus:border-green-500 focus:outline-none focus:ring-2 focus:ring-green-500/20"
               placeholder="Dit navn"
@@ -116,10 +118,11 @@ export default function RegisterPage() {
           </div>
 
           <div>
-            <label className="block text-sm font-medium text-gray-700">
+            <label htmlFor="email" className="block text-sm font-medium text-gray-700">
               Email *
             </label>
             <input
+              id="email"
               type="email"
               required
               autoComplete="email"
@@ -131,10 +134,11 @@ export default function RegisterPage() {
           </div>
 
           <div>
-            <label className="block text-sm font-medium text-gray-700">
+            <label htmlFor="password" className="block text-sm font-medium text-gray-700">
               Adgangskode * <span className="text-gray-400 font-normal">(min. 8 tegn)</span>
             </label>
             <input
+              id="password"
               type="password"
               required
               autoComplete="new-password"
@@ -146,10 +150,11 @@ export default function RegisterPage() {
           </div>
 
           <div>
-            <label className="block text-sm font-medium text-gray-700">
+            <label htmlFor="passwordConfirm" className="block text-sm font-medium text-gray-700">
               Bekræft adgangskode *
             </label>
             <input
+              id="passwordConfirm"
               type="password"
               required
               autoComplete="new-password"

@@ -61,6 +61,7 @@ import TaskList from "./TaskList";
 import FeedbackPanel from "./FeedbackPanel";
 import GuidedTour from "./GuidedTour";
 import ChatPanel from "./ChatPanel";
+import ClimateTab from "./ClimateTab";
 import DesignLab from "./DesignLab";
 import type { BedLayout } from "../lib/bedLayoutTypes";
 import { getBedLayout } from "../lib/bedLayoutStore";
@@ -2304,7 +2305,7 @@ function markerIcon(kind: GardenFeatureKind | undefined, selected: boolean, grou
     const selectedClass = selected ? "gardenos-emoji-marker--selected" : "";
     const groupClass = groupHighlight ? "gardenos-emoji-marker--group" : "";
     const html = isImageIcon
-      ? `<img src="${emoji}" style="width:${imgSize}px;height:${imgSize}px;object-fit:contain;border-radius:4px;display:block;" />`
+      ? `<img src="${emoji}" alt="" style="width:${imgSize}px;height:${imgSize}px;object-fit:contain;border-radius:4px;display:block;" />`
       : `<span style="font-size:${emojiSize}px;line-height:1;display:flex;align-items:center;justify-content:center;width:100%;height:100%">${emoji}</span>`;
     return L.divIcon({
       className: `gardenos-emoji-marker ${selectedClass} ${groupClass}`.trim(),
@@ -3129,7 +3130,6 @@ export function GardenMapClient({ userId }: { userId: string }) {
   const [recSelectedBedId, setRecSelectedBedId] = useState<string | null>(null);
   const [recExpandedId, setRecExpandedId] = useState<string | null>(null);
   const [noteFilter, setNoteFilter] = useState<"all" | "elements" | "soil" | "tasks">("all");
-  const [climateSubTab, setClimateSubTab] = useState<"now" | "history" | "forecast">("now");
   const [libSubTab, setLibSubTab] = useState<"plants" | "soil">("plants");
   const [libSoilEditId, setLibSoilEditId] = useState<string | null>(null);
   const [soilEditReturnToContent, setSoilEditReturnToContent] = useState(false);
@@ -3432,24 +3432,6 @@ export function GardenMapClient({ userId }: { userId: string }) {
     return () => window.removeEventListener("keydown", handler);
   }, [ALL_SIDEBAR_TABS, selected, toggleSidebarPanel]);
 
-  // ── AI Chat / Rådgiver state ──
-  type ChatMsg = { role: "user" | "assistant"; content: string; ts: number };
-  const CHAT_STORAGE_KEY = "gardenos:chat:history:v1";
-  const CHAT_PERSONA_KEY = "gardenos:chat:persona:v1";
-
-  const [chatMessages, setChatMessages] = useState<ChatMsg[]>(() => {
-    if (typeof window === "undefined") return [];
-    try { const raw = localStorage.getItem(userKey(CHAT_STORAGE_KEY)); return raw ? JSON.parse(raw) : []; } catch { return []; }
-  });
-  const [chatInput, setChatInput] = useState("");
-  const [chatLoading, setChatLoading] = useState(false);
-  const [chatPersona, setChatPersona] = useState<string>(() => {
-    if (typeof window === "undefined") return "organic";
-    return localStorage.getItem(userKey(CHAT_PERSONA_KEY)) ?? "organic";
-  });
-  const chatEndRef = useRef<HTMLDivElement>(null);
-  const chatInputRef = useRef<HTMLTextAreaElement>(null);
-
   // ── Weather module state ──
   const [weatherData, setWeatherData] = useState<WeatherData | null>(() => loadWeatherCache());
   const [weatherLoading, setWeatherLoading] = useState(false);
@@ -3501,354 +3483,6 @@ export function GardenMapClient({ userId }: { userId: string }) {
     if (!slice.length) return null;
     return { stats: computeWeatherStats(slice), count: slice.length };
   }, [weatherHistory, weatherStatRange]);
-
-  // Persist chat messages
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    localStorage.setItem(userKey(CHAT_STORAGE_KEY), JSON.stringify(chatMessages));
-  }, [chatMessages]);
-
-  // Persist persona choice
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    localStorage.setItem(userKey(CHAT_PERSONA_KEY), chatPersona);
-  }, [chatPersona]);
-
-  // Scroll to bottom on new messages
-  useEffect(() => {
-    chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [chatMessages, chatLoading]);
-
-  const estimateDanishClimateZone = useCallback((lat: number, _lng: number) => {
-    // Simple USDA-style estimate for Denmark based on latitude.
-    // North = slightly colder, South = slightly milder.
-    if (lat >= 57.4) return "7a";
-    if (lat >= 56.6) return "7b";
-    return "8a";
-  }, []);
-
-  // Build garden context string for AI
-  const buildGardenContext = useCallback(() => {
-    const parts: string[] = [];
-
-    // 0. Time + location + climate zone (critical for sowing/planting timing)
-    try {
-      const now = new Date();
-      const nowDate = new Intl.DateTimeFormat("da-DK", {
-        dateStyle: "full",
-        timeStyle: "short",
-        timeZone: "Europe/Copenhagen",
-      }).format(now);
-
-      const month = Number(
-        new Intl.DateTimeFormat("en-GB", {
-          month: "numeric",
-          timeZone: "Europe/Copenhagen",
-        }).format(now)
-      );
-
-      const viewRaw = localStorage.getItem(userKey("gardenos:view:v1"));
-      let locationLine = "Lokation ukendt";
-
-      if (viewRaw) {
-        const view = JSON.parse(viewRaw) as { center?: [number, number]; zoom?: number };
-        const lat = Number(view?.center?.[0]);
-        const lng = Number(view?.center?.[1]);
-
-        if (Number.isFinite(lat) && Number.isFinite(lng)) {
-          const zone = estimateDanishClimateZone(lat, lng);
-          locationLine = `Koordinater: ${lat.toFixed(5)}, ${lng.toFixed(5)} (estimeret klimazone: ${zone})`;
-        }
-      }
-
-      const bookmarkRaw = localStorage.getItem(userKey("gardenos:bookmarks:v1"));
-      let addressHint = "";
-      if (bookmarkRaw) {
-        const bms = JSON.parse(bookmarkRaw) as Array<{ name?: string; favorite?: boolean }>;
-        const primary = bms.find((b) => b.favorite && b.name) ?? bms.find((b) => b.name);
-        if (primary?.name) {
-          addressHint = `\nSted/adressehint: ${primary.name}`;
-        }
-      }
-
-      parts.push(
-        `Nuværende dato/tid (Danmark): ${nowDate}\nMånedstal: ${month}\n${locationLine}${addressHint}`
-      );
-    } catch {
-      // ignore
-    }
-
-    // 1. Garden features (beds, areas, elements)
-    try {
-      const layoutRaw = localStorage.getItem(userKey("gardenos:layout:v1"));
-      if (layoutRaw) {
-        const layout = JSON.parse(layoutRaw);
-        if (layout?.features?.length) {
-          const featureSummaries = layout.features.map((f: GardenFeature) => {
-            const p = f.properties;
-            const name = p.name || p.kind || "Unavngivet";
-            const cat = p.category || "";
-            const planted = p.planted ? `, plantet: ${p.planted}` : "";
-            const species = p.speciesId ? `, art-id: ${p.speciesId}` : "";
-            return `- ${name} (${cat}${planted}${species})`;
-          });
-          parts.push(`Haven har ${layout.features.length} elementer:\n${featureSummaries.join("\n")}`);
-        }
-      }
-    } catch { /* ignore */ }
-
-    // 2. Plant instances with FULL species data (harvest, sowing, etc.)
-    try {
-      const instancesRaw = localStorage.getItem(userKey("gardenos:plants:instances:v1"));
-      if (instancesRaw) {
-        const instances = JSON.parse(instancesRaw) as Array<{
-          speciesId?: string; varietyId?: string; varietyName?: string;
-          featureId?: string; count?: number; plantedAt?: string; notes?: string;
-        }>;
-        if (instances.length > 0) {
-          // Build a lookup: featureId → name
-          const featureNames = new Map<string, string>();
-          try {
-            const lr = localStorage.getItem(userKey("gardenos:layout:v1"));
-            if (lr) {
-              const lj = JSON.parse(lr);
-              for (const f of lj?.features ?? []) {
-                const id = f.properties?.gardenosId;
-                const nm = f.properties?.name || f.properties?.kind || "Unavngivet";
-                if (id) featureNames.set(id, nm);
-              }
-            }
-          } catch { /* ignore */ }
-
-          // Group instances by species and enrich with full PlantSpecies data
-          const bySpecies = new Map<string, typeof instances>();
-          for (const inst of instances) {
-            const sid = inst.speciesId ?? "unknown";
-            const arr = bySpecies.get(sid) ?? [];
-            arr.push(inst);
-            bySpecies.set(sid, arr);
-          }
-
-          const plantLines: string[] = [];
-          for (const [speciesId, insts] of bySpecies) {
-            const sp = getPlantById(speciesId);
-            if (!sp) {
-              plantLines.push(`- ${speciesId}: ${insts.length} stk (ukendt art)`);
-              continue;
-            }
-            const totalCount = insts.reduce((s, i) => s + (i.count ?? 1), 0);
-            const locations = [...new Set(insts.map(i => featureNames.get(i.featureId ?? "") ?? "ukendt bed"))];
-            const varieties = [...new Set(insts.filter(i => i.varietyName).map(i => i.varietyName!))];
-
-            let line = `- ${sp.icon ?? ""} ${sp.name} (${sp.latinName ?? speciesId}): ${totalCount} stk`;
-            line += `, placering: ${locations.join(", ")}`;
-            if (varieties.length) line += `, sorter: ${varieties.join(", ")}`;
-            line += `, kategori: ${PLANT_CATEGORY_LABELS[sp.category] ?? sp.category}`;
-            if (sp.lifecycle) line += `, livscyklus: ${sp.lifecycle}`;
-            if (sp.sowIndoor) line += `, forspiring indendørs: ${formatMonthRange(sp.sowIndoor)}`;
-            if (sp.sowOutdoor) line += `, direkte s\u00e5ning: ${formatMonthRange(sp.sowOutdoor)}`;
-            if (sp.plantOut) line += `, udplantning: ${formatMonthRange(sp.plantOut)}`;
-            if (sp.harvest) line += `, h\u00f8st: ${formatMonthRange(sp.harvest)}`;
-            if (sp.light) line += `, lys: ${sp.light}`;
-            if (sp.water) line += `, vand: ${sp.water}`;
-            if (sp.frostHardy) line += `, frostfast: ja`;
-            if (isEdiblePlant(sp)) line += `, spiselig: ja`;
-            if (sp.harvestTips) line += `, h\u00f8sttips: ${sp.harvestTips}`;
-            if (sp.pests?.length) line += `, skadedyr: ${sp.pests.join(", ")}`;
-            if (sp.diseases?.length) line += `, sygdomme: ${sp.diseases.join(", ")}`;
-            const planted = insts.find(i => i.plantedAt);
-            if (planted?.plantedAt) line += `, plantet dato: ${planted.plantedAt}`;
-
-            plantLines.push(line);
-          }
-
-          parts.push(
-            `BRUGERENS PLANTEDE PLANTER I HAVEN (${instances.length} instanser, ${bySpecies.size} arter):\n` +
-            `Dette er de faktiske planter brugeren har i sin have RIGHT NOW:\n${plantLines.join("\n")}`
-          );
-        }
-      }
-    } catch { /* ignore */ }
-
-    // 3. Species NOT planted but available in database (brief, for suggestions only)
-    try {
-      const allPlants = getAllPlants();
-      const instancesRaw = localStorage.getItem(userKey("gardenos:plants:instances:v1"));
-      const plantedIds = new Set<string>();
-      if (instancesRaw) {
-        const instances = JSON.parse(instancesRaw) as Array<{ speciesId?: string }>;
-        instances.forEach(i => { if (i.speciesId) plantedIds.add(i.speciesId); });
-      }
-      const unplanted = allPlants.filter(p => !plantedIds.has(p.id));
-      if (unplanted.length > 0) {
-        const byCategory: Record<string, string[]> = {};
-        const edibleUnplanted: string[] = [];
-        unplanted.forEach((p) => {
-          const cat = PLANT_CATEGORY_LABELS[p.category] || p.category;
-          if (!byCategory[cat]) byCategory[cat] = [];
-          byCategory[cat].push(p.name);
-          if (isEdiblePlant(p)) edibleUnplanted.push(p.name);
-        });
-        const catSummary = Object.entries(byCategory).map(([cat, names]) =>
-          `- ${cat}: ${names.join(", ")}`
-        );
-        let bibText = `Plantebibliotek (IKKE plantet endnu, ${unplanted.length} arter tilg\u00e6ngelige til forslag):\n${catSummary.join("\n")}`;
-        if (edibleUnplanted.length > 0) {
-          bibText += `\n\nSpiselige arter i biblioteket (${edibleUnplanted.length} stk): ${edibleUnplanted.join(", ")}`;
-        }
-        parts.push(bibText);
-      }
-    } catch { /* ignore */ }
-
-    // 4. Weather data (current, forecast, stats)
-    try {
-      const weatherCtx = buildWeatherContextString(weatherData);
-      if (weatherCtx) parts.push(weatherCtx);
-    } catch { /* ignore */ }
-
-    // 5. Historical climate stats (if available)
-    try {
-      if (weatherStats) {
-        const s = weatherStats.stats;
-        const rangeLabel = `${weatherStatRange} dage`;
-        parts.push(
-          `Historisk klimastatistik (sidste ${rangeLabel}, ${weatherStats.count} datapunkter):\n` +
-          `- Gns. dagtemperatur (maks): ${s.avgTempMax}°C\n` +
-          `- Gns. nattemperatur (min): ${s.avgTempMin}°C\n` +
-          `- Total nedbør: ${s.totalPrecipitation} mm\n` +
-          `- Frostdage: ${s.frostDays}\n` +
-          `- Regndage: ${s.rainDays}`
-        );
-      }
-    } catch { /* ignore */ }
-
-    // 6. Soil profiles
-    try {
-      const profiles = loadSoilProfiles();
-      if (profiles.length > 0) {
-        const profileLines = profiles.map((p) => {
-          const details: string[] = [];
-          if (p.baseType) details.push(`type: ${SOIL_BASE_TYPE_LABELS[p.baseType]}`);
-          if (p.drainage) details.push(`dræning: ${DRAINAGE_LABELS[p.drainage]}`);
-          if (p.moisture) details.push(`fugtighed: ${MOISTURE_LABELS[p.moisture]}`);
-          if (p.droughtProne) details.push("udtørringstruet");
-          if (p.earthworms) details.push(`regnorme: ${EARTHWORM_LABELS[p.earthworms]}`);
-          if (p.soilHealth) details.push(`sundhed: ${SOIL_HEALTH_LABELS[p.soilHealth]}`);
-          if (p.organicVisual) details.push(`organisk: ${ORGANIC_LABELS[p.organicVisual]}`);
-          if (p.organicPercent != null) details.push(`organisk %: ${p.organicPercent}`);
-          if (p.phMeasured != null) details.push(`pH: ${p.phMeasured}`);
-          if (p.phCategory) details.push(`pH-kategori: ${PH_CATEGORY_LABELS[p.phCategory]}`);
-          if (p.limeContent) details.push(`kalk: ${LIME_CONTENT_LABELS[p.limeContent]}`);
-          if (p.limedRecently) details.push("kalket for nylig");
-          if (p.compostTypes?.length) details.push(`kompost: ${p.compostTypes.map(c => COMPOST_TYPE_LABELS[c]).join(", ")}`);
-          if (p.compostMaturity) details.push(`kompost-modenhed: ${COMPOST_MATURITY_LABELS[p.compostMaturity]}`);
-          if (p.nitrogen) details.push(`N: ${NUTRIENT_LABELS[p.nitrogen]}`);
-          if (p.phosphorus) details.push(`P: ${NUTRIENT_LABELS[p.phosphorus]}`);
-          if (p.potassium) details.push(`K: ${NUTRIENT_LABELS[p.potassium]}`);
-          if (p.compression) details.push(`kompression: ${COMPRESSION_LABELS[p.compression]}`);
-          if (p.lastAmendment) details.push(`seneste forbedring: ${p.lastAmendment}`);
-          if (p.notes) details.push(`noter: ${p.notes}`);
-          return `- ${p.name}: ${details.length > 0 ? details.join(", ") : "ingen data registreret"}`;
-        });
-        parts.push(
-          `JORDPROFILER I HAVEN (${profiles.length} profiler):\n${profileLines.join("\n")}`
-        );
-      }
-    } catch { /* ignore */ }
-
-    // 7. Active tasks / opgaver
-    try {
-      const allTasks = loadTasks();
-      const activeTasks = allTasks.filter(t => !t.completedAt);
-      const completedRecently = allTasks.filter(t => t.completedAt && (Date.now() - t.completedAt < 30 * 24 * 60 * 60 * 1000));
-      if (activeTasks.length > 0 || completedRecently.length > 0) {
-        const lines: string[] = [];
-        if (activeTasks.length > 0) {
-          lines.push(`Aktive opgaver (${activeTasks.length}):`);
-          for (const t of activeTasks) {
-            let line = `  - ${PRIORITY_ICONS[t.priority]} ${t.title}`;
-            if (t.month) line += ` (mål-måned: ${t.month})`;
-            if (t.description) line += ` – ${t.description.slice(0, 100)}`;
-            lines.push(line);
-          }
-        }
-        if (completedRecently.length > 0) {
-          lines.push(`Nyligt fuldførte opgaver (${completedRecently.length}):`);
-          for (const t of completedRecently) {
-            lines.push(`  - ✅ ${t.title}`);
-          }
-        }
-        parts.push(lines.join("\n"));
-      }
-    } catch { /* ignore */ }
-
-    return parts.length > 0 ? parts.join("\n\n") : "";
-  }, [estimateDanishClimateZone, weatherData, weatherStats, weatherStatRange]);
-
-  // Send chat message
-  const sendChatMessage = useCallback(async () => {
-    const text = chatInput.trim();
-    if (!text || chatLoading) return;
-
-    const userMsg: ChatMsg = { role: "user", content: text, ts: Date.now() };
-    setChatMessages((prev) => [...prev, userMsg]);
-    setChatInput("");
-    setChatLoading(true);
-    trackActivity("chat:message", chatPersona);
-
-    try {
-      const gardenContext = buildGardenContext();
-
-      // Build messages array for API (last 20 messages for context)
-      const recentMessages = [...chatMessages.slice(-20), userMsg].map((m) => ({
-        role: m.role as "user" | "assistant",
-        content: m.content,
-      }));
-
-      const response = await fetch("/api/chat", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          messages: recentMessages,
-          persona: chatPersona,
-          gardenContext,
-        }),
-      });
-
-      if (!response.ok) {
-        const errData = await response.json().catch(() => ({ error: "Ukendt fejl" }));
-        throw new Error(errData.error || `HTTP ${response.status}`);
-      }
-
-      // Read streaming response — add empty assistant message, then update it
-      setChatMessages((prev) => [...prev, { role: "assistant", content: "", ts: Date.now() }]);
-      const assistantText = await readSSEStream(response, (text) => {
-        setChatMessages((prev) => {
-          const updated = [...prev];
-          updated[updated.length - 1] = { role: "assistant", content: text, ts: Date.now() };
-          return updated;
-        });
-      });
-
-      if (!assistantText) {
-        // Remove empty assistant message if no content was received
-        setChatMessages((prev) => prev.slice(0, -1));
-      }
-    } catch (err) {
-      const errMsg = err instanceof Error ? err.message : "Ukendt fejl";
-      setChatMessages((prev) => [
-        ...prev,
-        { role: "assistant", content: `⚠️ Fejl: ${errMsg}`, ts: Date.now() },
-      ]);
-    } finally {
-      setChatLoading(false);
-    }
-  }, [chatInput, chatLoading, chatMessages, chatPersona, buildGardenContext]);
-
-  const clearChatHistory = useCallback(() => {
-    setChatMessages([]);
-    localStorage.removeItem(userKey(CHAT_STORAGE_KEY));
-  }, []);
 
   const addToScanHistory = useCallback(async (type: ScanType, imageDataUrl: string, data: Record<string, unknown>) => {
     const thumbnail = await createThumbnail(imageDataUrl);
@@ -4877,7 +4511,7 @@ export function GardenMapClient({ userId }: { userId: string }) {
       const icon = L.divIcon({
         className: "gardenos-row-emoji-overlay",
         html: isImg
-          ? `<img src="${rowIcon}" style="width:20px;height:20px;object-fit:contain;border-radius:3px;" />`
+          ? `<img src="${rowIcon}" alt="" style="width:20px;height:20px;object-fit:contain;border-radius:3px;" />`
           : `<span>${rowIcon}</span>`,
         iconSize: [0, 0],
         iconAnchor: [0, 0],
@@ -7805,7 +7439,7 @@ export function GardenMapClient({ userId }: { userId: string }) {
   }, [selected, selectedCategory]);
 
   return (
-    <div className="grid h-[calc(100dvh)] w-full grid-cols-1 grid-rows-[auto_1fr] md:grid-cols-[1fr_auto_48px]">
+    <div id="main-content" className="grid h-[calc(100dvh)] w-full grid-cols-1 grid-rows-[auto_1fr] md:grid-cols-[1fr_auto_48px]">
       <div data-tour="toolbar" className="gardenos-toolbar col-span-1 row-start-1 flex items-center justify-between gap-1 md:gap-2 border-b border-border bg-toolbar-bg px-2 md:px-3 py-1.5 md:py-2 md:col-span-3 shadow-sm">
         <div className="flex items-center gap-1 md:gap-3">
           <div className="flex items-center gap-1.5 mr-1">
@@ -8788,7 +8422,7 @@ export function GardenMapClient({ userId }: { userId: string }) {
       {/* ══════════════════════════════════════════════════════════════
            Vertical Icon Bar (desktop, 48px grid column)
          ══════════════════════════════════════════════════════════════ */}
-      <nav className="row-start-2 col-start-3 hidden md:flex flex-col w-12 border-l border-border bg-sidebar-bg items-center py-2 gap-0.5 overflow-y-auto scrollbar-hide z-[50]">
+      <nav className="row-start-2 col-start-3 hidden md:flex flex-col w-12 border-l border-border bg-sidebar-bg items-center py-2 gap-0.5 overflow-y-auto scrollbar-hide z-[50]" role="tablist" aria-label="Sidebar navigation" aria-orientation="vertical">
         {(() => {
           const renderTab = (tab: (typeof ALL_SIDEBAR_TABS)[number]) => {
             const isActive = sidebarTab === tab.id && sidebarPanelOpen;
@@ -8802,6 +8436,9 @@ export function GardenMapClient({ userId }: { userId: string }) {
               <button
                 key={tab.id}
                 type="button"
+                role="tab"
+                aria-selected={isActive}
+                aria-controls={`tabpanel-${tab.id}`}
                 data-tour={`tab-${tab.id}`}
                 disabled={!!isDisabled}
                 className={`relative flex flex-col items-center justify-center w-10 h-10 rounded-xl transition-all group ${
@@ -8857,6 +8494,9 @@ export function GardenMapClient({ userId }: { userId: string }) {
           return (
             <button
               type="button"
+              role="tab"
+              aria-selected={isActive}
+              aria-controls="tabpanel-designs"
               data-tour="tab-designs"
               className={`relative flex flex-col items-center justify-center w-10 h-10 rounded-xl transition-all group ${
                 isActive
@@ -8966,7 +8606,7 @@ export function GardenMapClient({ userId }: { userId: string }) {
         max-md:border-t max-md:overflow-hidden
         ${mobileSidebarOpen ? "max-md:translate-y-0" : "max-md:translate-y-full"}
         max-md:pb-[calc(60px+env(safe-area-inset-bottom,0px))]
-      `}>
+      `} role="tabpanel" id={`tabpanel-${sidebarTab}`} aria-label={`${ALL_SIDEBAR_TABS.find(t => t.id === sidebarTab)?.label ?? sidebarTab} panel`}>
         {/* Mobile drag handle */}
         <div className="md:hidden flex justify-center pt-2 pb-1">
           <div className="w-9 h-1 rounded-full bg-border" />
@@ -15793,399 +15433,15 @@ export function GardenMapClient({ userId }: { userId: string }) {
 
         {/* ── Klima Tab ── */}
         {sidebarTab === "climate" ? (
-          <div className="mt-3 space-y-3">
-            {/* Sub-tabs */}
-            <div className="flex gap-1 rounded-lg bg-background p-1 border border-border-light shadow-sm">
-              {(["now", "history", "forecast"] as const).map((st) => (
-                <button
-                  key={st}
-                  type="button"
-                  className={`flex-1 rounded-md px-2 py-1.5 text-[11px] font-semibold transition-all ${
-                    climateSubTab === st
-                      ? "bg-white shadow-sm text-foreground/90 border border-border/60"
-                      : "text-foreground/50 hover:text-foreground/70 border border-transparent"
-                  }`}
-                  onClick={() => setClimateSubTab(st)}
-                >
-                  {st === "now" ? "☀️ Nu" : st === "history" ? "📊 Historik" : "🔮 Sæson"}
-                </button>
-              ))}
-            </div>
-
-            {/* ── Nu (current weather + 7-day forecast) ── */}
-            {climateSubTab === "now" && (
-              <div className="space-y-3">
-                {weatherData ? (
-                  <>
-                    {/* Current conditions card */}
-                    <div className="rounded-xl border border-sky-200/60 bg-gradient-to-br from-sky-50 via-blue-50 to-cyan-50 p-3" data-tour="weather-card">
-                      <div className="flex items-center gap-3 mb-3">
-                        <span className="text-3xl">{getWeatherEmoji(weatherData.current.weatherCode)}</span>
-                        <div>
-                          <div className="text-2xl font-bold text-foreground/85 leading-none">{Math.round(weatherData.current.temperature)}°C</div>
-                          <div className="text-[11px] text-foreground/50 mt-0.5">{getWeatherLabel(weatherData.current.weatherCode)}</div>
-                        </div>
-                      </div>
-                      <div className="grid grid-cols-3 gap-2 text-center">
-                        <div className="rounded-lg bg-white/60 border border-white/80 px-2 py-1.5">
-                          <div className="text-[9px] text-foreground/40 uppercase font-semibold">Føles som</div>
-                          <div className="text-[13px] font-bold text-foreground/70">{Math.round(weatherData.current.apparentTemperature)}°C</div>
-                        </div>
-                        <div className="rounded-lg bg-white/60 border border-white/80 px-2 py-1.5">
-                          <div className="text-[9px] text-foreground/40 uppercase font-semibold">Fugtighed</div>
-                          <div className="text-[13px] font-bold text-foreground/70">{weatherData.current.humidity}%</div>
-                        </div>
-                        <div className="rounded-lg bg-white/60 border border-white/80 px-2 py-1.5">
-                          <div className="text-[9px] text-foreground/40 uppercase font-semibold">Vind</div>
-                          <div className="text-[13px] font-bold text-foreground/70">{Math.round(weatherData.current.windSpeed)} km/t</div>
-                        </div>
-                      </div>
-                      {weatherData.forecast.some((d) => d.tempMin <= 0) && (
-                        <div className="mt-2 rounded-lg bg-blue-100/80 border border-blue-200 px-3 py-2 text-[11px] text-blue-800 font-medium flex items-center gap-2">
-                          <span className="text-base">❄️</span>
-                          <div>
-                            <div className="font-semibold">Nattefrost forventet</div>
-                            <div className="text-[10px] text-blue-700/70 mt-0.5">{weatherData.forecast.filter((d) => d.tempMin <= 0).map((d) => {
-                              const dt = new Date(d.date + "T12:00:00");
-                              return dt.toLocaleDateString("da-DK", { weekday: "short", day: "numeric", month: "short" });
-                            }).join(", ")}</div>
-                          </div>
-                        </div>
-                      )}
-                    </div>
-
-                    {/* 7-day forecast */}
-                    <div>
-                      <div className="text-[10px] font-bold text-foreground/50 uppercase tracking-wider mb-2">7-dages prognose</div>
-                      <div className="rounded-xl border border-border-light bg-white/80 overflow-hidden divide-y divide-border/30">
-                        {weatherData.forecast.slice(0, 7).map((d) => {
-                          const dt = new Date(d.date + "T12:00:00");
-                          const dayName = dt.toLocaleDateString("da-DK", { weekday: "short" });
-                          const dayNum = dt.getDate();
-                          const month = dt.toLocaleDateString("da-DK", { month: "short" });
-                          const range = Math.round(d.tempMax) - Math.round(d.tempMin);
-                          const barWidth = Math.max(20, Math.min(100, range * 5));
-                          return (
-                            <div key={d.date} className="flex items-center px-3 py-2 gap-2 hover:bg-foreground/[0.02] transition-colors">
-                              <span className="w-16 text-[11px] font-medium text-foreground/70">{dayName} {dayNum}. {month}</span>
-                              <span className="w-6 text-center text-sm">{getWeatherEmoji(d.weatherCode)}</span>
-                              <span className="w-10 text-right text-[11px] font-mono text-blue-600">{Math.round(d.tempMin)}°</span>
-                              <div className="flex-1 h-[6px] rounded-full bg-foreground/5 relative mx-1">
-                                <div className="h-full rounded-full bg-gradient-to-r from-blue-300 to-orange-300" style={{ width: `${barWidth}%` }} />
-                              </div>
-                              <span className="w-10 text-[11px] font-mono text-orange-600">{Math.round(d.tempMax)}°</span>
-                              <span className="w-12 text-right text-[10px] text-blue-500">{d.precipitation > 0 ? `💧${d.precipitation}mm` : ""}</span>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    </div>
-                    <div className="text-[8px] text-foreground/25 text-right">Open-Meteo · opdateret {new Date(weatherData.fetchedAt).toLocaleTimeString("da-DK", { hour: "2-digit", minute: "2-digit" })}</div>
-                  </>
-                ) : weatherLoading ? (
-                  <div className="rounded-xl border border-sky-200/40 bg-sky-50/50 px-4 py-8 text-center">
-                    <div className="text-2xl mb-2">🌤️</div>
-                    <div className="text-[11px] text-foreground/50">Henter vejrdata…</div>
-                  </div>
-                ) : weatherError ? (
-                  <div className="rounded-xl border border-amber-200/60 bg-amber-50/50 px-4 py-4 text-center">
-                    <div className="text-xl mb-1">⚠️</div>
-                    <div className="text-[11px] text-amber-700">{weatherError}</div>
-                  </div>
-                ) : (
-                  <div className="rounded-xl border border-border bg-background px-4 py-8 text-center">
-                    <div className="text-2xl mb-2">🌡️</div>
-                    <div className="text-[11px] text-foreground/50">Ingen vejrdata tilgængelig</div>
-                  </div>
-                )}
-              </div>
-            )}
-
-            {/* ── Historik (accumulated climate stats) ── */}
-            {climateSubTab === "history" && (
-              <div className="space-y-3">
-                {/* Range selector */}
-                <div className="flex items-center justify-between">
-                  <div className="text-[10px] font-bold text-foreground/50 uppercase tracking-wider">Periode</div>
-                  <div className="flex gap-1">
-                    {[{ v: 7, l: "7d" }, { v: 30, l: "30d" }, { v: 90, l: "3 mdr" }, { v: 365, l: "1 år" }].map((d) => (
-                      <button
-                        key={d.v}
-                        type="button"
-                        className={`rounded-lg px-2.5 py-1 text-[10px] font-semibold transition-all border ${
-                          weatherStatRange === d.v
-                            ? "border-sky-400 bg-sky-100 text-sky-800 shadow-sm"
-                            : "border-border/60 bg-white hover:bg-foreground/5 text-foreground/60"
-                        }`}
-                        onClick={() => setWeatherStatRange(d.v)}
-                      >
-                        {d.l}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-
-                {weatherStats ? (
-                  <>
-                    {/* Stats cards */}
-                    <div className="grid grid-cols-2 gap-2">
-                      <div className="rounded-xl border border-orange-200/50 bg-gradient-to-br from-orange-50 to-amber-50 px-3 py-2.5">
-                        <div className="text-[9px] text-foreground/40 uppercase font-semibold">📈 Snit dagmaks</div>
-                        <div className="text-lg font-bold text-orange-700 mt-0.5">{weatherStats.stats.avgTempMax}°C</div>
-                      </div>
-                      <div className="rounded-xl border border-blue-200/50 bg-gradient-to-br from-blue-50 to-cyan-50 px-3 py-2.5">
-                        <div className="text-[9px] text-foreground/40 uppercase font-semibold">📉 Snit natmin</div>
-                        <div className="text-lg font-bold text-blue-700 mt-0.5">{weatherStats.stats.avgTempMin}°C</div>
-                      </div>
-                      <div className="rounded-xl border border-sky-200/50 bg-gradient-to-br from-sky-50 to-blue-50 px-3 py-2.5">
-                        <div className="text-[9px] text-foreground/40 uppercase font-semibold">🌧️ Total nedbør</div>
-                        <div className="text-lg font-bold text-sky-700 mt-0.5">{weatherStats.stats.totalPrecipitation} mm</div>
-                      </div>
-                      <div className="rounded-xl border border-cyan-200/50 bg-gradient-to-br from-cyan-50 to-sky-50 px-3 py-2.5">
-                        <div className="text-[9px] text-foreground/40 uppercase font-semibold">☔ Regndage</div>
-                        <div className="text-lg font-bold text-cyan-700 mt-0.5">{weatherStats.stats.rainDays}</div>
-                      </div>
-                      <div className="rounded-xl border border-indigo-200/50 bg-gradient-to-br from-indigo-50 to-violet-50 px-3 py-2.5">
-                        <div className="text-[9px] text-foreground/40 uppercase font-semibold">❄️ Frostdage</div>
-                        <div className="text-lg font-bold text-indigo-700 mt-0.5">{weatherStats.stats.frostDays}</div>
-                      </div>
-                      <div className="rounded-xl border border-gray-200/50 bg-gradient-to-br from-gray-50 to-slate-50 px-3 py-2.5">
-                        <div className="text-[9px] text-foreground/40 uppercase font-semibold">📅 Datapunkter</div>
-                        <div className="text-lg font-bold text-gray-700 mt-0.5">{weatherStats.count}</div>
-                      </div>
-                    </div>
-
-                    {/* Temperature mini-chart (text-based bar chart) */}
-                    {(() => {
-                      const slice = getHistorySlice(weatherHistory, weatherStatRange);
-                      if (slice.length < 2) return null;
-                      const maxT = Math.max(...slice.map(d => d.tempMax));
-                      const minT = Math.min(...slice.map(d => d.tempMin));
-                      const range = maxT - minT || 1;
-                      // Show last 14 entries max in the chart
-                      const shown = slice.slice(-14);
-                      return (
-                        <div>
-                          <div className="text-[10px] font-bold text-foreground/50 uppercase tracking-wider mb-2">Temperaturforløb</div>
-                          <div className="rounded-xl border border-border-light bg-white/80 p-2 space-y-[2px]">
-                            {shown.map((d) => {
-                              const dt = new Date(d.date + "T12:00:00");
-                              const label = dt.toLocaleDateString("da-DK", { day: "numeric", month: "short" });
-                              const lowPct = ((d.tempMin - minT) / range) * 100;
-                              const highPct = ((d.tempMax - minT) / range) * 100;
-                              return (
-                                <div key={d.date} className="flex items-center gap-1">
-                                  <span className="w-12 text-[9px] text-foreground/50 text-right font-medium shrink-0">{label}</span>
-                                  <div className="flex-1 h-[8px] rounded-full bg-foreground/[0.04] relative">
-                                    <div
-                                      className="absolute h-full rounded-full bg-gradient-to-r from-blue-400 to-orange-400"
-                                      style={{ left: `${lowPct}%`, width: `${Math.max(4, highPct - lowPct)}%` }}
-                                    />
-                                  </div>
-                                  <span className="w-14 text-[8px] font-mono text-foreground/40 shrink-0">{Math.round(d.tempMin)}°/{Math.round(d.tempMax)}°</span>
-                                </div>
-                              );
-                            })}
-                          </div>
-                          <div className="flex justify-between text-[8px] text-foreground/25 mt-1 px-14">
-                            <span>{Math.round(minT)}°C</span>
-                            <span>{Math.round(maxT)}°C</span>
-                          </div>
-                        </div>
-                      );
-                    })()}
-
-                    {/* Precipitation chart */}
-                    {(() => {
-                      const slice = getHistorySlice(weatherHistory, weatherStatRange);
-                      if (slice.length < 2) return null;
-                      const maxP = Math.max(...slice.map(d => d.precipitation), 1);
-                      const shown = slice.slice(-14);
-                      return (
-                        <div>
-                          <div className="text-[10px] font-bold text-foreground/50 uppercase tracking-wider mb-2">Nedbør</div>
-                          <div className="rounded-xl border border-border-light bg-white/80 p-2">
-                            <div className="flex items-end gap-[3px]" style={{ height: 60 }}>
-                              {shown.map((d) => {
-                                const hPct = (d.precipitation / maxP) * 100;
-                                const dt = new Date(d.date + "T12:00:00");
-                                return (
-                                  <div key={d.date} className="flex-1 flex flex-col items-center justify-end h-full" title={`${dt.toLocaleDateString("da-DK", { day: "numeric", month: "short" })}: ${d.precipitation}mm`}>
-                                    <div
-                                      className="w-full rounded-t bg-gradient-to-t from-sky-500 to-sky-300 min-h-[1px]"
-                                      style={{ height: `${Math.max(2, hPct)}%` }}
-                                    />
-                                  </div>
-                                );
-                              })}
-                            </div>
-                            <div className="flex justify-between text-[7px] text-foreground/25 mt-1">
-                              {shown.filter((_, i) => i === 0 || i === shown.length - 1).map((d) => {
-                                const dt = new Date(d.date + "T12:00:00");
-                                return <span key={d.date}>{dt.toLocaleDateString("da-DK", { day: "numeric", month: "short" })}</span>;
-                              })}
-                            </div>
-                          </div>
-                        </div>
-                      );
-                    })()}
-                  </>
-                ) : (
-                  <div className="rounded-xl border border-border bg-background px-4 py-8 text-center">
-                    <div className="text-2xl mb-2">📊</div>
-                    <div className="text-[11px] text-foreground/50">Ingen historiske data endnu</div>
-                    <div className="text-[10px] text-foreground/30 mt-1">Data akkumuleres automatisk over tid</div>
-                  </div>
-                )}
-              </div>
-            )}
-
-            {/* ── Sæsonprognose ── */}
-            {climateSubTab === "forecast" && (
-              <div className="space-y-3">
-                {(() => {
-                  const now = new Date();
-                  const month = now.getMonth(); // 0-11
-                  type SeasonInfo = { name: string; emoji: string; months: string; tips: string[]; params: { label: string; emoji: string; value: string; note: string }[] };
-                  const seasons: SeasonInfo[] = [
-                    {
-                      name: "Forår", emoji: "🌱", months: "Mar – Maj",
-                      tips: [
-                        "Start forharvesting og forspiring indendørs",
-                        "Pas på sene nattefrost — dæk ømfindtlige planter",
-                        "Jord-temperatur bør nå 8°C+ for direkte såning",
-                        "Optimal tid til at plante buske og træer",
-                      ],
-                      params: [
-                        { label: "Dagslængde", emoji: "☀️", value: "10–16 timer", note: "Stiger hurtigt" },
-                        { label: "Jordtemperatur", emoji: "🌡️", value: "5–15°C", note: "Stiger langsomt" },
-                        { label: "Nattefrost-risiko", emoji: "❄️", value: "Høj → Lav", note: "Aftager i maj" },
-                        { label: "Nedbør", emoji: "🌧️", value: "30–50mm/mdr", note: "Moderat" },
-                      ],
-                    },
-                    {
-                      name: "Sommer", emoji: "☀️", months: "Jun – Aug",
-                      tips: [
-                        "Vand tidligt morgen eller sen aften",
-                        "Mulch'er for at holde på fugtighed",
-                        "Høst løbende for at fremme ny vækst",
-                        "Hold øje med skadedyr i varme perioder",
-                      ],
-                      params: [
-                        { label: "Dagslængde", emoji: "☀️", value: "15–17 timer", note: "Længste dage" },
-                        { label: "Jordtemperatur", emoji: "🌡️", value: "15–22°C", note: "Optimal vækst" },
-                        { label: "Tørkerisiko", emoji: "🏜️", value: "Moderat → Høj", note: "Vand regelmæssigt" },
-                        { label: "Nedbør", emoji: "🌧️", value: "50–80mm/mdr", note: "Variabelt" },
-                      ],
-                    },
-                    {
-                      name: "Efterår", emoji: "🍂", months: "Sep – Nov",
-                      tips: [
-                        "Plant løg til forårsblomstring",
-                        "Saml blade til kompost og mulch",
-                        "Sidste chance for vinterhårdføre afgrøder",
-                        "Beskær frugtbuske efter høst",
-                      ],
-                      params: [
-                        { label: "Dagslængde", emoji: "☀️", value: "8–12 timer", note: "Falder hurtigt" },
-                        { label: "Jordtemperatur", emoji: "🌡️", value: "5–15°C", note: "Faldende" },
-                        { label: "Første frost", emoji: "❄️", value: "Okt–Nov", note: "Dæk følsomme planter" },
-                        { label: "Nedbør", emoji: "🌧️", value: "60–90mm/mdr", note: "Stigende" },
-                      ],
-                    },
-                    {
-                      name: "Vinter", emoji: "❄️", months: "Dec – Feb",
-                      tips: [
-                        "Planlæg næste sæson — bestil frø",
-                        "Beskyt stauder med halm eller granris",
-                        "Vedligehold redskaber og komposter",
-                        "Start forspiring i januar-februar",
-                      ],
-                      params: [
-                        { label: "Dagslængde", emoji: "☀️", value: "7–9 timer", note: "Korteste dage" },
-                        { label: "Jordtemperatur", emoji: "🌡️", value: "-2–5°C", note: "Minimal vækst" },
-                        { label: "Frostdage", emoji: "❄️", value: "15–25/mdr", note: "Daglig frost mulig" },
-                        { label: "Nedbør", emoji: "🌧️", value: "40–60mm/mdr", note: "Sne/slud" },
-                      ],
-                    },
-                  ];
-                  const seasonIdx = month <= 1 ? 3 : month <= 4 ? 0 : month <= 7 ? 1 : month <= 10 ? 2 : 3;
-                  const current = seasons[seasonIdx];
-                  const next = seasons[(seasonIdx + 1) % 4];
-
-                  return (
-                    <>
-                      {/* Current season */}
-                      <div className="rounded-xl border border-accent/20 bg-gradient-to-br from-accent-light/50 to-green-50 p-3">
-                        <div className="flex items-center gap-2 mb-2">
-                          <span className="text-xl">{current.emoji}</span>
-                          <div>
-                            <div className="text-[13px] font-bold text-foreground/80">{current.name}</div>
-                            <div className="text-[10px] text-foreground/45">{current.months} · DK klimazone 7-8</div>
-                          </div>
-                          <span className="ml-auto rounded-full bg-accent/15 text-accent text-[9px] font-bold px-2 py-0.5">NU</span>
-                        </div>
-                        <div className="grid grid-cols-2 gap-1.5">
-                          {current.params.map((p) => (
-                            <div key={p.label} className="rounded-lg bg-white/70 border border-white/90 px-2 py-1.5">
-                              <div className="text-[8px] text-foreground/35 uppercase font-semibold">{p.emoji} {p.label}</div>
-                              <div className="text-[12px] font-bold text-foreground/75 mt-0.5">{p.value}</div>
-                              <div className="text-[8px] text-foreground/35">{p.note}</div>
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-
-                      {/* Season tips */}
-                      <div>
-                        <div className="text-[10px] font-bold text-foreground/50 uppercase tracking-wider mb-1.5">💡 Sæsontips — {current.name}</div>
-                        <div className="space-y-1">
-                          {current.tips.map((tip, i) => (
-                            <div key={i} className="flex items-start gap-2 rounded-lg bg-background border border-border-light px-2.5 py-1.5">
-                              <span className="text-[10px] text-accent font-bold mt-px">✓</span>
-                              <span className="text-[11px] text-foreground/65">{tip}</span>
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-
-                      {/* Next season preview */}
-                      <div className="rounded-xl border border-border bg-foreground/[0.02] p-3">
-                        <div className="flex items-center gap-2 mb-2">
-                          <span className="text-lg">{next.emoji}</span>
-                          <div>
-                            <div className="text-[12px] font-bold text-foreground/60">Næste: {next.name}</div>
-                            <div className="text-[10px] text-foreground/35">{next.months}</div>
-                          </div>
-                          <span className="ml-auto text-[9px] text-foreground/30 font-medium">KOMMENDE</span>
-                        </div>
-                        <div className="grid grid-cols-2 gap-1.5">
-                          {next.params.map((p) => (
-                            <div key={p.label} className="rounded-lg bg-white/50 border border-border/40 px-2 py-1.5">
-                              <div className="text-[8px] text-foreground/30 uppercase font-semibold">{p.emoji} {p.label}</div>
-                              <div className="text-[11px] font-bold text-foreground/55 mt-0.5">{p.value}</div>
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-
-                      {/* Integration note */}
-                      {weatherStats && (
-                        <div className="rounded-lg bg-sky-50/50 border border-sky-200/40 px-3 py-2">
-                          <div className="text-[10px] font-semibold text-sky-800/70 mb-1">📍 Din haves klima</div>
-                          <div className="text-[10px] text-sky-700/60">
-                            Baseret på {weatherStats.count} dages data: snit maks {weatherStats.stats.avgTempMax}°C,
-                            snit min {weatherStats.stats.avgTempMin}°C, {weatherStats.stats.frostDays} frostdage,
-                            {weatherStats.stats.totalPrecipitation}mm nedbør.
-                          </div>
-                        </div>
-                      )}
-                    </>
-                  );
-                })()}
-              </div>
-            )}
-          </div>
+          <ClimateTab
+            weatherData={weatherData}
+            weatherLoading={weatherLoading}
+            weatherError={weatherError}
+            weatherHistory={weatherHistory}
+            weatherStatRange={weatherStatRange}
+            setWeatherStatRange={setWeatherStatRange}
+            weatherStats={weatherStats}
+          />
         ) : null}
 
         {sidebarTab === "view" ? (

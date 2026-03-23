@@ -49,6 +49,9 @@ export default function RootLayout({
       <body
         className={`${geistSans.variable} ${geistMono.variable} antialiased bg-background text-foreground`}
       >
+        <a href="#main-content" className="sr-only focus:not-sr-only focus:absolute focus:z-[99999] focus:top-2 focus:left-2 focus:rounded-lg focus:bg-accent focus:text-white focus:px-4 focus:py-2 focus:text-sm focus:font-semibold focus:shadow-lg">
+          Spring til indhold
+        </a>
         <SessionProvider>{children}</SessionProvider>
         {/* Service Worker registration for PWA */}
         <script
