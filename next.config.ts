@@ -1,14 +1,17 @@
 import type { NextConfig } from "next";
 
+// ── CRITICAL: Build output MUST live outside OneDrive in dev ──
+// The workspace is inside a OneDrive-synced shared folder. Turbopack uses
+// an LMDB key-value store for persistent caching inside .next/. OneDrive's
+// background sync continuously locks these binary files, causing:
+//   "Persisting failed: Another write batch or compaction is already active"
+// and eventually crashing the dev server → ERR_CONNECTION_REFUSED.
+// By placing distDir on /tmp we avoid ALL sync conflicts.
+// In CI/production (Vercel) we keep the default .next/ folder.
+const isLocal = !process.env.CI && !process.env.VERCEL;
+
 const nextConfig: NextConfig = {
-  // ── CRITICAL: Build output MUST live outside OneDrive ──
-  // The workspace is inside a OneDrive-synced shared folder. Turbopack uses
-  // an LMDB key-value store for persistent caching inside .next/. OneDrive's
-  // background sync continuously locks these binary files, causing:
-  //   "Persisting failed: Another write batch or compaction is already active"
-  // and eventually crashing the dev server → ERR_CONNECTION_REFUSED.
-  // By placing distDir on the LOCAL filesystem we avoid ALL sync conflicts.
-  distDir: "/tmp/gardenos-next",
+  ...(isLocal && { distDir: "/tmp/gardenos-next" }),
 
   async headers() {
     return [
