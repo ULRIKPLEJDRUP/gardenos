@@ -68,6 +68,8 @@ import DesignLab from "./DesignLab";
 import JournalTab from "./JournalTab";
 import ConflictsTab from "./ConflictsTab";
 import GroupsTab from "./GroupsTab";
+import DesignsTab from "./DesignsTab";
+import SettingsModal from "./SettingsModal";
 import type { BedLayout } from "../lib/bedLayoutTypes";
 import { getBedLayout } from "../lib/bedLayoutStore";
 import { bedLocalToGeo } from "../lib/bedGeometry";
@@ -116,14 +118,9 @@ import {
 } from "../lib/soilTypes";
 import {
   fetchDesigns,
-  createDesign,
   updateDesign,
-  deleteDesign,
-  fetchVersions,
-  restoreVersion,
   DEFAULT_MAX_DESIGNS,
   type SavedDesign,
-  type DesignVersion,
 } from "../lib/designStore";
 import {
   getInfraElementById,
@@ -3080,34 +3077,18 @@ export function GardenMapClient({ userId }: { userId: string }) {
 
   // ── User settings modal state ──
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [settingsCurrentPw, setSettingsCurrentPw] = useState("");
-  const [settingsNewPw, setSettingsNewPw] = useState("");
-  const [settingsNewPw2, setSettingsNewPw2] = useState("");
-  const [settingsName, setSettingsName] = useState("");
-  const [settingsError, setSettingsError] = useState<string | null>(null);
-  const [settingsSuccess, setSettingsSuccess] = useState<string | null>(null);
-  const [settingsSaving, setSettingsSaving] = useState(false);
 
   // ── Saved Designs state ──
   const [savedDesigns, setSavedDesigns] = useState<SavedDesign[]>([]);
   const [designsLoading, setDesignsLoading] = useState(false);
   const [designError, setDesignError] = useState<string | null>(null);
-  const [designNewName, setDesignNewName] = useState("");
   const [designSaving, setDesignSaving] = useState(false);
-  const [designConfirmDelete, setDesignConfirmDelete] = useState<string | null>(null);
-  const [designRenamingId, setDesignRenamingId] = useState<string | null>(null);
-  const [designRenameText, setDesignRenameText] = useState("");
   const [designLoadedFlash, setDesignLoadedFlash] = useState<string | false>(false);
   const [userMaxDesigns, setUserMaxDesigns] = useState(DEFAULT_MAX_DESIGNS);
   const designsLoadedOnce = useRef(false);
   const [activeDesignId, setActiveDesignId] = useState<string | null>(null);
   const [activeDesignName, setActiveDesignName] = useState<string | null>(null);
   const [quickSaveFlash, setQuickSaveFlash] = useState(false);
-  // ── Version history state ──
-  const [versionHistoryId, setVersionHistoryId] = useState<string | null>(null); // which design's history is open
-  const [versionList, setVersionList] = useState<DesignVersion[]>([]);
-  const [versionLoading, setVersionLoading] = useState(false);
-  const [versionRestoring, setVersionRestoring] = useState<string | null>(null); // version id being restored
 
   // Seed default soil profiles on first load (if user has none yet)
   useEffect(() => {
@@ -3147,6 +3128,36 @@ export function GardenMapClient({ userId }: { userId: string }) {
       setDesignSaving(false);
     }
   }, [activeDesignId]);
+
+  // ── DesignsTab callbacks ──
+  const getCurrentLayoutAndPlants = useCallback(() => {
+    const group = featureGroupRef.current;
+    if (!group) return null;
+    return {
+      layoutJson: JSON.stringify(serializeGroup(group)),
+      plantsJson: JSON.stringify(loadPlantInstances()),
+    };
+  }, []);
+
+  const applyDesignToMap = useCallback((layoutJson: string, plantsJson: string) => {
+    const layout = JSON.parse(layoutJson);
+    const plants: PlantInstance[] = JSON.parse(plantsJson);
+    const group = featureGroupRef.current;
+    if (!group) throw new Error("featureGroup unavailable");
+    group.clearLayers();
+    const geoJsonLayer = L.geoJSON(layout, {
+      onEachFeature: (feature, layer) => {
+        attachClickHandlerRef.current(layer, feature as GardenFeature);
+      },
+    });
+    geoJsonLayer.eachLayer((layer) => group.addLayer(layer));
+    window.localStorage.setItem(userKey(STORAGE_LAYOUT_KEY), JSON.stringify(layout));
+    markDirty(STORAGE_LAYOUT_KEY);
+    setLayoutForContainment(layout);
+    savePlantInstances(plants);
+    setPlantInstancesVersion((v) => v + 1);
+    setSelectedAndFocus(null);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Mobile sidebar state ──
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
@@ -8415,15 +8426,7 @@ export function GardenMapClient({ userId }: { userId: string }) {
             type="button"
             className="flex flex-col items-center justify-center w-10 h-10 rounded-xl text-foreground/30 hover:bg-foreground/5 hover:text-foreground/50 transition-all"
             title="Indstillinger"
-            onClick={() => {
-              setSettingsOpen(true);
-              setSettingsName(sessionData.user?.name || "");
-              setSettingsCurrentPw("");
-              setSettingsNewPw("");
-              setSettingsNewPw2("");
-              setSettingsError(null);
-              setSettingsSuccess(null);
-            }}
+            onClick={() => setSettingsOpen(true)}
             aria-label="Brugerindstillinger"
           >
             <span className="text-[15px] leading-none">👤</span>
@@ -14427,375 +14430,27 @@ export function GardenMapClient({ userId }: { userId: string }) {
           />
         ) : null}
 
-        {sidebarTab === "designs" ? (() => {
-          const loadDesigns = async () => {
-            setDesignsLoading(true);
-            setDesignError(null);
-            try {
-              const resp = await fetchDesigns();
-              setSavedDesigns(resp.designs);
-              setUserMaxDesigns(resp.maxDesigns);
-            } catch (e: unknown) {
-              setDesignError(e instanceof Error ? e.message : "Fejl ved hentning");
-            } finally {
-              setDesignsLoading(false);
-            }
-          };
-
-          const handleSave = async () => {
-            const trimmed = designNewName.trim();
-            if (!trimmed) return;
-            if (savedDesigns.length >= userMaxDesigns) {
-              setDesignError(`Maks ${userMaxDesigns} designs. Slet et først.`);
-              return;
-            }
-            setDesignSaving(true);
-            setDesignError(null);
-            try {
-              const group = featureGroupRef.current;
-              if (!group) return;
-              const layoutJson = JSON.stringify(serializeGroup(group));
-              const plantsJson = JSON.stringify(loadPlantInstances());
-              const d = await createDesign({ name: trimmed, layout: layoutJson, plants: plantsJson });
-              setSavedDesigns((prev) => [d, ...prev]);
-              setDesignNewName("");
-              setActiveDesignId(d.id);
-              setActiveDesignName(d.name);
-              setDesignLoadedFlash("Gemt!");
-              setTimeout(() => setDesignLoadedFlash(false), 2000);
-            } catch (e: unknown) {
-              setDesignError(e instanceof Error ? e.message : "Fejl");
-            } finally {
-              setDesignSaving(false);
-            }
-          };
-
-          const handleOverwrite = async (id: string) => {
-            setDesignSaving(true);
-            setDesignError(null);
-            try {
-              const group = featureGroupRef.current;
-              if (!group) return;
-              const layoutJson = JSON.stringify(serializeGroup(group));
-              const plantsJson = JSON.stringify(loadPlantInstances());
-              const d = await updateDesign(id, { layout: layoutJson, plants: plantsJson });
-              setSavedDesigns((prev) => prev.map((x) => (x.id === id ? d : x)));
-              setDesignLoadedFlash("Opdateret!");
-              setTimeout(() => setDesignLoadedFlash(false), 2000);
-            } catch (e: unknown) {
-              setDesignError(e instanceof Error ? e.message : "Fejl");
-            } finally {
-              setDesignSaving(false);
-            }
-          };
-
-          const handleLoad = (design: SavedDesign) => {
-            try {
-              const layout = JSON.parse(design.layout);
-              const plants: PlantInstance[] = JSON.parse(design.plants);
-
-              // Apply layout
-              const group = featureGroupRef.current;
-              if (!group) return;
-              group.clearLayers();
-              const geoJsonLayer = L.geoJSON(layout, {
-                onEachFeature: (feature, layer) => {
-                  attachClickHandlerRef.current(layer, feature as GardenFeature);
-                },
-              });
-              geoJsonLayer.eachLayer((layer) => group.addLayer(layer));
-              window.localStorage.setItem(userKey(STORAGE_LAYOUT_KEY), JSON.stringify(layout));
-              markDirty(STORAGE_LAYOUT_KEY);
-              setLayoutForContainment(layout);
-
-              // Apply plants
-              savePlantInstances(plants);
-              setPlantInstancesVersion((v) => v + 1);
-
-              setSelectedAndFocus(null);
-              setActiveDesignId(design.id);
-              setActiveDesignName(design.name);
-              setDesignLoadedFlash(`"${design.name}" indlæst`);
-              setTimeout(() => setDesignLoadedFlash(false), 2500);
-            } catch {
-              setDesignError("Kunne ikke indlæse design");
-            }
-          };
-
-          const handleDelete = async (id: string) => {
-            try {
-              await deleteDesign(id);
-              setSavedDesigns((prev) => prev.filter((d) => d.id !== id));
-              setDesignConfirmDelete(null);
-              if (id === activeDesignId) { setActiveDesignId(null); setActiveDesignName(null); }
-            } catch (e: unknown) {
-              setDesignError(e instanceof Error ? e.message : "Fejl");
-            }
-          };
-
-          const handleRename = async (id: string) => {
-            const trimmed = designRenameText.trim();
-            if (!trimmed) return;
-            try {
-              const d = await updateDesign(id, { name: trimmed });
-              setSavedDesigns((prev) => prev.map((x) => (x.id === id ? d : x)));
-              setDesignRenamingId(null);
-              if (id === activeDesignId) setActiveDesignName(trimmed);
-            } catch (e: unknown) {
-              setDesignError(e instanceof Error ? e.message : "Fejl");
-            }
-          };
-
-          return (
-            <div className="mt-3 space-y-3">
-              <div className="flex items-center justify-between">
-                <h3 className="text-sm font-semibold text-foreground/80">💾 Gemte Designs</h3>
-                <button
-                  type="button"
-                  className="text-[10px] text-accent hover:text-accent/80 font-medium"
-                  onClick={loadDesigns}
-                  disabled={designsLoading}
-                >
-                  {designsLoading ? "Henter…" : "↻ Opdater"}
-                </button>
-              </div>
-
-              <p className="text-[11px] text-foreground/50">
-                Gem dit nuværende havedesign og eksperimenter frit. Du kan gemme op til {userMaxDesigns} designs.
-              </p>
-
-              {/* Flash message */}
-              {designLoadedFlash && (
-                <div className="rounded-lg bg-green-100 border border-green-200 px-3 py-1.5 text-[11px] text-green-700 font-medium text-center animate-pulse">
-                  ✓ {designLoadedFlash}
-                </div>
-              )}
-
-              {/* Error */}
-              {designError && (
-                <div className="rounded-lg bg-red-50 border border-red-200 px-3 py-1.5 text-[11px] text-red-600">
-                  {designError}
-                  <button type="button" className="ml-2 underline" onClick={() => setDesignError(null)}>Luk</button>
-                </div>
-              )}
-
-              {/* Save current as new */}
-              <div className="rounded-lg border border-border bg-background p-3 space-y-2">
-                <label className="block text-[11px] font-semibold text-foreground/60 uppercase tracking-wide">
-                  Gem nuværende som nyt design
-                </label>
-                <div className="flex gap-2">
-                  <input
-                    type="text"
-                    placeholder={`Navngiv design (f.eks. "Forår 2026")`}
-                    className="flex-1 rounded-md border border-border px-2 py-1.5 text-xs bg-background focus:border-accent focus:outline-none"
-                    value={designNewName}
-                    onChange={(e) => setDesignNewName(e.target.value)}
-                    onKeyDown={(e) => e.key === "Enter" && handleSave()}
-                    maxLength={40}
-                  />
-                  <button
-                    type="button"
-                    className="rounded-md bg-accent text-white px-3 py-1.5 text-xs font-medium hover:bg-accent/90 disabled:opacity-50 disabled:cursor-not-allowed transition-colors whitespace-nowrap"
-                    onClick={handleSave}
-                    disabled={designSaving || !designNewName.trim() || savedDesigns.length >= userMaxDesigns}
-                  >
-                    {designSaving ? "…" : "💾 Gem"}
-                  </button>
-                </div>
-                <p className="text-[10px] text-foreground/40">
-                  {savedDesigns.length}/{userMaxDesigns} brugt
-                </p>
-              </div>
-
-              {/* List of saved designs */}
-              {savedDesigns.length === 0 && !designsLoading ? (
-                <div className="text-center py-6 text-foreground/40 text-xs">
-                  <div className="text-2xl mb-2">🗂️</div>
-                  Ingen gemte designs endnu.
-                  <br />
-                  <button type="button" className="text-accent underline mt-1" onClick={loadDesigns}>Hent fra server</button>
-                </div>
-              ) : (
-                <div className="space-y-2">
-                  {savedDesigns.map((design) => (
-                    <div
-                      key={design.id}
-                      className={`rounded-lg border p-3 transition-colors ${
-                        design.id === activeDesignId
-                          ? "border-accent bg-accent/5 shadow-sm"
-                          : "border-border bg-background hover:border-accent/30"
-                      }`}
-                    >
-                      <div className="flex items-center justify-between mb-1">
-                        {designRenamingId === design.id ? (
-                          <div className="flex gap-1 flex-1 mr-2">
-                            <input
-                              type="text"
-                              className="flex-1 rounded border border-accent/40 px-1.5 py-0.5 text-xs bg-background focus:outline-none"
-                              value={designRenameText}
-                              onChange={(e) => setDesignRenameText(e.target.value)}
-                              onKeyDown={(e) => {
-                                if (e.key === "Enter") handleRename(design.id);
-                                if (e.key === "Escape") setDesignRenamingId(null);
-                              }}
-                              autoFocus
-                              maxLength={40}
-                            />
-                            <button type="button" className="text-[10px] text-accent font-medium" onClick={() => handleRename(design.id)} aria-label="Gem designnavn">✓</button>
-                            <button type="button" className="text-[10px] text-foreground/40" onClick={() => setDesignRenamingId(null)} aria-label="Annullér omdøbning">✕</button>
-                          </div>
-                        ) : (
-                          <span className="text-sm font-semibold text-foreground/80 truncate">{design.name}</span>
-                        )}
-                        <div className="text-right ml-2 shrink-0">
-                          <div className="text-[10px] text-foreground/35 whitespace-nowrap">
-                            {new Date(design.updatedAt).toLocaleDateString("da-DK", { day: "numeric", month: "short", year: "numeric" })}{" "}
-                            {new Date(design.updatedAt).toLocaleTimeString("da-DK", { hour: "2-digit", minute: "2-digit" })}
-                          </div>
-                          {design.createdAt !== design.updatedAt && (
-                            <div className="text-[9px] text-foreground/25 whitespace-nowrap">
-                              oprettet {new Date(design.createdAt).toLocaleDateString("da-DK", { day: "numeric", month: "short" })}{" "}
-                              {new Date(design.createdAt).toLocaleTimeString("da-DK", { hour: "2-digit", minute: "2-digit" })}
-                            </div>
-                          )}
-                        </div>
-                      </div>
-
-                      <div className="flex gap-1.5 mt-2">
-                        <button
-                          type="button"
-                          className="flex-1 rounded-md bg-accent/10 text-accent px-2 py-1.5 text-[11px] font-medium hover:bg-accent/20 transition-colors"
-                          onClick={() => handleLoad(design)}
-                        >
-                          📂 Indlæs
-                        </button>
-                        <button
-                          type="button"
-                          className="rounded-md bg-foreground/5 text-foreground/60 px-2 py-1.5 text-[11px] hover:bg-foreground/10 transition-colors"
-                          onClick={() => handleOverwrite(design.id)}
-                          title="Overskriv med nuværende kort"
-                        >
-                          ⬆️
-                        </button>
-                        <button
-                          type="button"
-                          className="rounded-md bg-foreground/5 text-foreground/60 px-2 py-1.5 text-[11px] hover:bg-foreground/10 transition-colors"
-                          onClick={() => { setDesignRenamingId(design.id); setDesignRenameText(design.name); }}
-                          title="Omdøb"
-                        >
-                          ✏️
-                        </button>
-                        {designConfirmDelete === design.id ? (
-                          <div className="flex gap-1 items-center">
-                            <button
-                              type="button"
-                              className="rounded-md bg-red-500 text-white px-2 py-1 text-[10px] font-medium hover:bg-red-600"
-                              onClick={() => handleDelete(design.id)}
-                            >
-                              Slet!
-                            </button>
-                            <button
-                              type="button"
-                              className="text-[10px] text-foreground/40"
-                              onClick={() => setDesignConfirmDelete(null)}
-                            >
-                              Nej
-                            </button>
-                          </div>
-                        ) : (
-                          <button
-                            type="button"
-                            className="rounded-md bg-red-50 text-red-400 px-2 py-1.5 text-[11px] hover:bg-red-100 transition-colors"
-                            onClick={() => setDesignConfirmDelete(design.id)}
-                            title="Slet design"
-                          >
-                            🗑
-                          </button>
-                        )}
-                      </div>
-
-                      {/* ── Version History Toggle ── */}
-                      <div className="mt-2">
-                        <button
-                          type="button"
-                          className="text-[10px] text-foreground/40 hover:text-accent transition-colors flex items-center gap-1"
-                          onClick={async () => {
-                            if (versionHistoryId === design.id) {
-                              setVersionHistoryId(null);
-                              setVersionList([]);
-                              return;
-                            }
-                            setVersionHistoryId(design.id);
-                            setVersionLoading(true);
-                            try {
-                              const versions = await fetchVersions(design.id);
-                              setVersionList(versions);
-                            } catch {
-                              setVersionList([]);
-                            } finally {
-                              setVersionLoading(false);
-                            }
-                          }}
-                        >
-                          <span style={{ display: "inline-block", transform: versionHistoryId === design.id ? "rotate(90deg)" : "rotate(0)", transition: "transform 0.15s" }}>▶</span>
-                          🕓 Historik
-                        </button>
-
-                        {versionHistoryId === design.id && (
-                          <div className="mt-1.5 ml-2 border-l-2 border-foreground/10 pl-2 space-y-1">
-                            {versionLoading ? (
-                              <p className="text-[10px] text-foreground/40 animate-pulse">Henter versioner…</p>
-                            ) : versionList.length === 0 ? (
-                              <p className="text-[10px] text-foreground/30 italic">Ingen tidligere versioner endnu</p>
-                            ) : (
-                              versionList.map((ver) => (
-                                <div key={ver.id} className="flex items-center justify-between gap-2 rounded border border-foreground/5 bg-foreground/[0.02] px-2 py-1">
-                                  <span className="text-[10px] text-foreground/50">
-                                    {new Date(ver.savedAt).toLocaleDateString("da-DK", { day: "numeric", month: "short" })}{" "}
-                                    {new Date(ver.savedAt).toLocaleTimeString("da-DK", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}
-                                  </span>
-                                  <button
-                                    type="button"
-                                    className="text-[10px] text-accent font-medium hover:text-accent/80 disabled:opacity-40 transition-colors whitespace-nowrap"
-                                    disabled={versionRestoring === ver.id}
-                                    onClick={async () => {
-                                      setVersionRestoring(ver.id);
-                                      try {
-                                        const restored = await restoreVersion(ver.id);
-                                        // Update design in list
-                                        setSavedDesigns((prev) => prev.map((x) => (x.id === design.id ? { ...x, layout: restored.layout, plants: restored.plants, updatedAt: restored.updatedAt } : x)));
-                                        // If this is the active design, reload it into the map
-                                        if (design.id === activeDesignId) {
-                                          handleLoad({ ...design, layout: restored.layout, plants: restored.plants, updatedAt: restored.updatedAt });
-                                        }
-                                        setDesignLoadedFlash("Version gendannet!");
-                                        setTimeout(() => setDesignLoadedFlash(false), 2500);
-                                        // Refresh version list
-                                        const versions = await fetchVersions(design.id);
-                                        setVersionList(versions);
-                                      } catch {
-                                        setDesignError("Kunne ikke gendanne version");
-                                      } finally {
-                                        setVersionRestoring(null);
-                                      }
-                                    }}
-                                  >
-                                    {versionRestoring === ver.id ? "…" : "↩ Gendan"}
-                                  </button>
-                                </div>
-                              ))
-                            )}
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          );
-        })() : null}
+        {sidebarTab === "designs" ? (
+          <DesignsTab
+            savedDesigns={savedDesigns}
+            setSavedDesigns={setSavedDesigns}
+            designsLoading={designsLoading}
+            setDesignsLoading={setDesignsLoading}
+            designError={designError}
+            setDesignError={setDesignError}
+            designSaving={designSaving}
+            setDesignSaving={setDesignSaving}
+            designLoadedFlash={designLoadedFlash}
+            setDesignLoadedFlash={setDesignLoadedFlash}
+            userMaxDesigns={userMaxDesigns}
+            setUserMaxDesigns={setUserMaxDesigns}
+            activeDesignId={activeDesignId}
+            setActiveDesignId={setActiveDesignId}
+            setActiveDesignName={setActiveDesignName}
+            getCurrentLayoutAndPlants={getCurrentLayoutAndPlants}
+            applyDesignToMap={applyDesignToMap}
+          />
+        ) : null}
         </div>
         </div>{/* end inner wrapper */}
       </aside>
@@ -15000,157 +14655,12 @@ export function GardenMapClient({ userId }: { userId: string }) {
       })() : null}
 
       {/* ── User Settings Modal ── */}
-      {settingsOpen ? (
-        <div className="fixed inset-0 z-[10001] flex items-center justify-center bg-black/40" onClick={() => setSettingsOpen(false)}>
-          <div
-            className="bg-background rounded-2xl shadow-2xl border border-border w-[90vw] max-w-md p-5 space-y-4"
-            onClick={(e) => e.stopPropagation()}
-            role="dialog"
-            aria-modal="true"
-            aria-label="Brugerindstillinger"
-          >
-            <div className="flex items-center justify-between">
-              <h2 className="text-base font-bold text-foreground/80">⚙️ Indstillinger</h2>
-              <button
-                type="button"
-                className="w-7 h-7 rounded-lg hover:bg-foreground/10 flex items-center justify-center text-foreground/40 text-lg"
-                onClick={() => setSettingsOpen(false)}
-                aria-label="Luk indstillinger"
-              >×</button>
-            </div>
-
-            {/* Profile info */}
-            <div className="rounded-lg border border-border bg-foreground/[0.02] p-3 space-y-2">
-              <p className="text-[10px] font-semibold text-foreground/40 uppercase tracking-wide">Profil</p>
-              <div className="text-[11px] text-foreground/60 space-y-1">
-                <p>📧 {sessionData?.user?.email}</p>
-                <p>📅 Oprettet: {sessionData?.user?.id ? "–" : "–"}</p>
-              </div>
-            </div>
-
-            {/* Change name */}
-            <div className="space-y-2">
-              <label className="text-[10px] font-semibold text-foreground/40 uppercase tracking-wide block">Skift navn</label>
-              <div className="flex gap-2">
-                <input
-                  type="text"
-                  className="flex-1 rounded-md border border-border bg-background px-2 py-1.5 text-[11px]"
-                  placeholder="Dit navn"
-                  value={settingsName}
-                  onChange={(e) => setSettingsName(e.target.value)}
-                />
-                <button
-                  type="button"
-                  className="rounded-md bg-accent text-white px-3 py-1.5 text-[11px] font-medium hover:bg-accent/90 disabled:opacity-50"
-                  disabled={settingsSaving || !settingsName.trim()}
-                  onClick={async () => {
-                    setSettingsSaving(true);
-                    setSettingsError(null);
-                    setSettingsSuccess(null);
-                    try {
-                      const res = await fetch("/api/user/settings", {
-                        method: "PUT",
-                        headers: { "Content-Type": "application/json" },
-                        body: JSON.stringify({ action: "change-name", name: settingsName.trim() }),
-                      });
-                      const data = await res.json();
-                      if (!res.ok) {
-                        setSettingsError(data.error || "Fejl");
-                      } else {
-                        setSettingsSuccess("Navn opdateret ✓");
-                      }
-                    } catch {
-                      setSettingsError("Netværksfejl");
-                    }
-                    setSettingsSaving(false);
-                  }}
-                >
-                  Gem
-                </button>
-              </div>
-            </div>
-
-            {/* Change password */}
-            <div className="space-y-2">
-              <label className="text-[10px] font-semibold text-foreground/40 uppercase tracking-wide block">Skift kodeord</label>
-              <input
-                type="password"
-                className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-[11px]"
-                placeholder="Nuværende kodeord"
-                value={settingsCurrentPw}
-                onChange={(e) => setSettingsCurrentPw(e.target.value)}
-                autoComplete="current-password"
-              />
-              <input
-                type="password"
-                className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-[11px]"
-                placeholder="Nyt kodeord (min. 8 tegn)"
-                value={settingsNewPw}
-                onChange={(e) => setSettingsNewPw(e.target.value)}
-                autoComplete="new-password"
-              />
-              <input
-                type="password"
-                className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-[11px]"
-                placeholder="Gentag nyt kodeord"
-                value={settingsNewPw2}
-                onChange={(e) => setSettingsNewPw2(e.target.value)}
-                autoComplete="new-password"
-              />
-              <button
-                type="button"
-                className="w-full rounded-md bg-accent text-white px-3 py-2 text-[11px] font-medium hover:bg-accent/90 disabled:opacity-50"
-                disabled={settingsSaving || !settingsCurrentPw || !settingsNewPw || settingsNewPw.length < 8 || settingsNewPw !== settingsNewPw2}
-                onClick={async () => {
-                  if (settingsNewPw !== settingsNewPw2) {
-                    setSettingsError("Kodeordene matcher ikke.");
-                    return;
-                  }
-                  setSettingsSaving(true);
-                  setSettingsError(null);
-                  setSettingsSuccess(null);
-                  try {
-                    const res = await fetch("/api/user/settings", {
-                      method: "PUT",
-                      headers: { "Content-Type": "application/json" },
-                      body: JSON.stringify({
-                        action: "change-password",
-                        currentPassword: settingsCurrentPw,
-                        newPassword: settingsNewPw,
-                      }),
-                    });
-                    const data = await res.json();
-                    if (!res.ok) {
-                      setSettingsError(data.error || "Fejl");
-                    } else {
-                      setSettingsSuccess("Kodeord opdateret ✓");
-                      setSettingsCurrentPw("");
-                      setSettingsNewPw("");
-                      setSettingsNewPw2("");
-                    }
-                  } catch {
-                    setSettingsError("Netværksfejl");
-                  }
-                  setSettingsSaving(false);
-                }}
-              >
-                {settingsSaving ? "Gemmer…" : "Opdater kodeord"}
-              </button>
-              {settingsNewPw && settingsNewPw2 && settingsNewPw !== settingsNewPw2 ? (
-                <p className="text-[10px] text-red-500">Kodeordene matcher ikke.</p>
-              ) : null}
-            </div>
-
-            {/* Feedback messages */}
-            {settingsError ? (
-              <div className="rounded-md bg-red-50 border border-red-200 px-3 py-2 text-[11px] text-red-700">{settingsError}</div>
-            ) : null}
-            {settingsSuccess ? (
-              <div className="rounded-md bg-green-50 border border-green-200 px-3 py-2 text-[11px] text-green-700">{settingsSuccess}</div>
-            ) : null}
-          </div>
-        </div>
-      ) : null}
+      <SettingsModal
+        open={settingsOpen}
+        onClose={() => setSettingsOpen(false)}
+        userEmail={sessionData?.user?.email}
+        initialName={sessionData?.user?.name || ""}
+      />
 
       {/* ── Guided Tour ── */}
       <GuidedTour
