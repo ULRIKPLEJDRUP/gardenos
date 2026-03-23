@@ -16,6 +16,10 @@
 # next.js
 /.next/
 /out/
+/tmp/
+
+# distDir output (lives at /tmp/gardenos-next but git sees relative path)
+tmp/
 
 # production
 /build

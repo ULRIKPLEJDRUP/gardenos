@@ -59,6 +59,8 @@ import YearWheel from "./YearWheel";
 import TaskList from "./TaskList";
 import FeedbackPanel from "./FeedbackPanel";
 import GuidedTour from "./GuidedTour";
+import DesignLab from "./DesignLab";
+import type { BedLayout } from "../lib/bedLayoutTypes";
 import { createTask, parseAiResponse, loadTasks, PRIORITY_ICONS } from "../lib/taskStore";
 import {
   loadSoilProfiles,
@@ -3841,6 +3843,12 @@ export function GardenMapClient({ userId }: { userId: string }) {
   const [autoElementCount, setAutoElementCount] = useState(0); // 0 = auto-max
   const [autoElementEdgeMarginCm, setAutoElementEdgeMarginCm] = useState(15);
 
+  // ── Design Lab overlay state ──
+  const [showDesignLab, setShowDesignLab] = useState(false);
+
+  // ── Design Lab layout change handler ref (populated after rebuildFromGroupAndUpdateSelection is defined) ──
+  const designLabLayoutChangeRef = useRef<((layout: BedLayout) => void) | null>(null);
+
   // ── Plant recommendation state (shared by auto-row + auto-element) ──
   const [recRowOpen, setRecRowOpen] = useState(false);
   const [recRowStrategies, setRecRowStrategies] = useState<RecommendationStrategy[]>([]);
@@ -5352,6 +5360,63 @@ export function GardenMapClient({ userId }: { userId: string }) {
       setSelectedAndFocus(found ? { gardenosId: prevSelected.gardenosId, feature: found } : null);
     }
   }, [setSelectedAndFocus]);
+
+  // ── Design Lab layout change handler (bed resize sync to map) ──
+  useEffect(() => {
+    designLabLayoutChangeRef.current = (updatedLayout: BedLayout) => {
+      const group = featureGroupRef.current;
+      if (!group) return;
+
+      const selId = selectedRef.current?.gardenosId;
+      if (!selId) return;
+
+      // Find the Leaflet layer for this feature
+      let targetLayer: L.Layer | null = null;
+      group.eachLayer((layer) => {
+        const f = (layer as L.Layer & { feature?: GardenFeature }).feature;
+        if (f?.properties?.gardenosId === selId) {
+          targetLayer = layer;
+        }
+      });
+
+      if (!targetLayer) return;
+      // Check if it's a polygon-like path with setLatLngs
+      const polyLayer = targetLayer as unknown as { setLatLngs?: (latlngs: L.LatLng[][]) => void };
+      if (typeof polyLayer.setLatLngs !== "function") return;
+
+      // Recompute geo coords from the new bed layout dimensions
+      const M_PER_DEG_LAT = 111_320;
+      const midLat = updatedLayout.centroidLat;
+      const midLng = updatedLayout.centroidLng;
+      const mpLng = M_PER_DEG_LAT * Math.cos((midLat * Math.PI) / 180);
+
+      const halfW = (updatedLayout.widthCm / 100) / 2;
+      const halfL = (updatedLayout.lengthCm / 100) / 2;
+
+      // Convert outline from bed-local cm to geo [lat, lng]
+      const newLatLngs = updatedLayout.outlineCm.map((p) => {
+        const mx = (p.x / 100) - halfW;
+        const my = halfL - (p.y / 100); // flip Y back
+        const lng = midLng + mx / mpLng;
+        const lat = midLat + my / M_PER_DEG_LAT;
+        return L.latLng(lat, lng);
+      });
+
+      // Update the Leaflet polygon
+      polyLayer.setLatLngs([newLatLngs]);
+
+      // Update the feature's geometry stored on the layer
+      const layerFeature = (targetLayer as L.Layer & { feature?: GardenFeature }).feature;
+      if (layerFeature && layerFeature.geometry.type === "Polygon") {
+        layerFeature.geometry.coordinates = [
+          newLatLngs.map((ll) => [ll.lng, ll.lat]),
+        ];
+      }
+
+      // Persist the change
+      rebuildFromGroupAndUpdateSelection();
+    };
+  }, [rebuildFromGroupAndUpdateSelection]);
 
   // ---------------------------------------------------------------------------
   // Helper: build a gardenosId → L.Layer lookup for the current featureGroup.
@@ -9713,6 +9778,18 @@ export function GardenMapClient({ userId }: { userId: string }) {
               );
             })() : null}
 
+
+            {/* ── Design Lab button ── */}
+            {selectedIsPolygon && (selectedCategory === "seedbed" || selectedCategory === "area" || selectedCategory === "container") ? (
+              <button
+                type="button"
+                className="w-full flex items-center justify-center gap-2 px-3 py-2 rounded-lg text-sm font-medium transition-colors shadow-sm"
+                style={{ background: "var(--accent)", color: "#fff" }}
+                onClick={() => setShowDesignLab(true)}
+              >
+                🎨 Åbn i Design Lab
+              </button>
+            ) : null}
 
             {/* ── Auto-row + Auto-element panels ── */}
             {selectedIsPolygon && (selectedCategory === "seedbed" || selectedCategory === "area" || selectedCategory === "container") ? (
@@ -16504,6 +16581,68 @@ export function GardenMapClient({ userId }: { userId: string }) {
           </div>
         </div>
       )}
+
+      {/* ── Design Lab Overlay ── */}
+      {showDesignLab && selected && selected.feature.geometry.type === "Polygon" ? (() => {
+        const ring = (selected.feature as Feature<Polygon, GardenFeatureProperties>).geometry.coordinates[0] as [number, number][];
+        const featureName = selected.feature.properties?.name ?? "Bed";
+
+        // Gather plant instances linked to this bed
+        const instances = getInstancesForFeature(selected.gardenosId);
+        const designLabPlants = instances.map((inst) => {
+          const sp = getPlantById(inst.speciesId);
+          return {
+            id: inst.id,
+            speciesId: inst.speciesId,
+            name: sp?.name ?? inst.speciesId,
+            icon: sp?.icon ?? "🌱",
+            count: inst.count ?? 1,
+            spacingCm: sp?.spacingCm ?? 10,
+            spreadCm: sp?.spreadDiameterCm ?? sp?.spacingCm ?? 10,
+            rowSpacingCm: sp?.rowSpacingCm ?? 30,
+            category: sp?.category,
+            matureHeightM: sp?.matureHeightM,
+            forestGardenLayer: sp?.forestGardenLayer,
+          };
+        });
+
+        // Also include species from child rows (parentBedId)
+        for (const f of layoutForContainment.features) {
+          const props = (f as GardenFeature).properties;
+          if (props?.parentBedId === selected.gardenosId && props?.speciesId) {
+            // Check if already included
+            if (!designLabPlants.some((p) => p.speciesId === props.speciesId)) {
+              const sp = getPlantById(props.speciesId);
+              const childInst = getInstancesForFeature(props.gardenosId);
+              const totalCount = childInst.reduce((s, i) => s + (i.count ?? 1), 0);
+              designLabPlants.push({
+                id: props.gardenosId,
+                speciesId: props.speciesId,
+                name: sp?.name ?? props.speciesId,
+                icon: sp?.icon ?? "🌱",
+                count: totalCount || 1,
+                spacingCm: sp?.spacingCm ?? 10,
+                spreadCm: sp?.spreadDiameterCm ?? sp?.spacingCm ?? 10,
+                rowSpacingCm: sp?.rowSpacingCm ?? 30,
+                category: sp?.category,
+                matureHeightM: sp?.matureHeightM,
+                forestGardenLayer: sp?.forestGardenLayer,
+              });
+            }
+          }
+        }
+
+        return (
+          <DesignLab
+            featureId={selected.gardenosId}
+            featureName={featureName}
+            ring={ring}
+            plants={designLabPlants}
+            onClose={() => setShowDesignLab(false)}
+            onLayoutChange={(layout) => designLabLayoutChangeRef.current?.(layout)}
+          />
+        );
+      })() : null}
 
       {/* ── Guided Tour ── */}
       <GuidedTour

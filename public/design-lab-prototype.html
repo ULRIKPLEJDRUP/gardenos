@@ -1,0 +1,668 @@
+<!DOCTYPE html>
+<html lang="da">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Design Lab — Visuel Prototype</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #1a1a2e; color: #e0e0e0; }
+  
+  .header { padding: 20px 32px; background: #16213e; border-bottom: 1px solid #0f3460; }
+  .header h1 { font-size: 20px; font-weight: 600; }
+  .header p { font-size: 13px; color: #888; margin-top: 4px; }
+  
+  .controls { padding: 16px 32px; background: #16213e; border-bottom: 1px solid #0f3460; display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
+  
+  .season-slider-wrap { flex: 1; min-width: 300px; }
+  .season-slider-wrap label { font-size: 12px; color: #aaa; display: block; margin-bottom: 6px; }
+  .season-slider { width: 100%; accent-color: #53a653; }
+  .season-label { display: flex; justify-content: space-between; font-size: 10px; color: #666; margin-top: 2px; }
+  
+  .month-display { 
+    font-size: 18px; font-weight: 700; min-width: 160px; text-align: center;
+    padding: 8px 16px; background: #0f3460; border-radius: 8px;
+  }
+  
+  .toggle-group { display: flex; gap: 4px; }
+  .toggle-btn {
+    padding: 6px 12px; font-size: 11px; border: 1px solid #333; border-radius: 6px;
+    background: transparent; color: #aaa; cursor: pointer; transition: all 0.2s;
+  }
+  .toggle-btn.active { background: #0f3460; color: #fff; border-color: #53a653; }
+  
+  .main { display: flex; height: calc(100vh - 140px); }
+  
+  .canvas-area { flex: 1; display: flex; align-items: center; justify-content: center; padding: 32px; overflow: hidden; }
+  
+  .sidebar-right { width: 260px; background: #16213e; border-left: 1px solid #0f3460; padding: 16px; overflow-y: auto; }
+  .sidebar-right h3 { font-size: 13px; font-weight: 600; margin-bottom: 8px; color: #53a653; }
+  .sidebar-right .legend-item { display: flex; align-items: center; gap: 8px; padding: 6px 0; font-size: 12px; border-bottom: 1px solid #ffffff08; }
+  .legend-color { width: 24px; height: 24px; border-radius: 50%; border: 2px solid #fff2; flex-shrink: 0; }
+  .legend-info { line-height: 1.3; }
+  .legend-info .name { font-weight: 500; }
+  .legend-info .detail { font-size: 10px; color: #888; }
+  
+  .phase-badge {
+    display: inline-block; padding: 1px 6px; border-radius: 4px; font-size: 9px; font-weight: 600;
+    margin-top: 2px;
+  }
+  
+  svg text { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; }
+  
+  .soil-info { margin-top: 16px; padding: 12px; background: #0f3460; border-radius: 8px; font-size: 11px; }
+  .soil-info h4 { font-size: 12px; margin-bottom: 6px; }
+  .soil-info .stat { display: flex; justify-content: space-between; padding: 2px 0; }
+  .soil-info .stat-label { color: #888; }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <h1>🎨 Design Lab — Visuel Prototype: Sæsonfarver</h1>
+  <p>Grøntsagsbed 1 — 3.2m × 1.2m — træk slideren for at se sæsonskift</p>
+</div>
+
+<div class="controls">
+  <div class="season-slider-wrap">
+    <label>Sæson-slider</label>
+    <input type="range" min="1" max="12" value="7" class="season-slider" id="monthSlider">
+    <div class="season-label">
+      <span>Jan</span><span>Feb</span><span>Mar</span><span>Apr</span><span>Maj</span><span>Jun</span>
+      <span>Jul</span><span>Aug</span><span>Sep</span><span>Okt</span><span>Nov</span><span>Dec</span>
+    </div>
+  </div>
+  <div class="month-display" id="monthDisplay">🌞 Juli</div>
+  <div class="toggle-group">
+    <button class="toggle-btn active" onclick="setView('color')" id="btnColor">🎨 Farve</button>
+    <button class="toggle-btn" onclick="setView('icon')" id="btnIcon">😀 Ikoner</button>
+    <button class="toggle-btn" onclick="setView('both')" id="btnBoth">🎨+😀 Begge</button>
+  </div>
+</div>
+
+<div class="main">
+  <div class="canvas-area">
+    <svg id="bedSvg" viewBox="-10 -10 340 140" width="100%" style="max-width: 900px; max-height: 70vh; filter: drop-shadow(0 4px 20px rgba(0,0,0,0.5));">
+      <defs>
+        <!-- Soil texture pattern -->
+        <pattern id="soilPattern" x="0" y="0" width="8" height="8" patternUnits="userSpaceOnUse">
+          <rect width="8" height="8" fill="#8B7355"/>
+          <circle cx="2" cy="3" r="0.5" fill="#7a6545" opacity="0.5"/>
+          <circle cx="6" cy="7" r="0.4" fill="#9c8565" opacity="0.4"/>
+          <circle cx="5" cy="1" r="0.3" fill="#7a6545" opacity="0.3"/>
+        </pattern>
+        
+        <!-- Mulch pattern -->
+        <pattern id="mulchPattern" x="0" y="0" width="12" height="12" patternUnits="userSpaceOnUse">
+          <rect width="12" height="12" fill="#6B4423"/>
+          <ellipse cx="3" cy="4" rx="2" ry="0.8" fill="#5a3a1a" opacity="0.4" transform="rotate(15 3 4)"/>
+          <ellipse cx="9" cy="8" rx="2.5" ry="0.7" fill="#7a5533" opacity="0.3" transform="rotate(-20 9 8)"/>
+          <ellipse cx="6" cy="1" rx="1.5" ry="0.6" fill="#5a3a1a" opacity="0.3" transform="rotate(30 6 1)"/>
+        </pattern>
+        
+        <!-- Leaf shapes for canopy rendering -->
+        <symbol id="leaf-simple" viewBox="-5 -5 10 10">
+          <ellipse cx="0" cy="0" rx="4" ry="2.5" />
+        </symbol>
+        
+        <!-- Flower petal -->
+        <symbol id="flower-petal" viewBox="-5 -8 10 16">
+          <ellipse cx="0" cy="-3" rx="2" ry="4" />
+        </symbol>
+
+        <!-- Glow filter for selected -->
+        <filter id="glow">
+          <feGaussianBlur stdDeviation="1.5" result="blur"/>
+          <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+        </filter>
+        
+        <!-- Shadow -->
+        <filter id="shadow">
+          <feDropShadow dx="0.5" dy="0.5" stdDeviation="0.8" flood-opacity="0.3"/>
+        </filter>
+      </defs>
+      
+      <!-- Bed outline with soil -->
+      <rect id="bedBg" x="0" y="0" width="320" height="120" rx="4" ry="4" fill="url(#soilPattern)" stroke="#5a4a35" stroke-width="1.5"/>
+      
+      <!-- Bed edge (wooden border) -->
+      <rect x="0" y="0" width="320" height="120" rx="4" ry="4" fill="none" stroke="#8B6914" stroke-width="2.5" opacity="0.7"/>
+      
+      <!-- Grid (subtle) -->
+      <g id="gridLines" opacity="0.15" stroke="#fff" stroke-width="0.3">
+        <!-- Every 10cm = 10 units -->
+      </g>
+      
+      <!-- Plant rows will be rendered by JS -->
+      <g id="plantLayer" filter="url(#shadow)"></g>
+      
+      <!-- Labels -->
+      <g id="labelLayer"></g>
+      
+      <!-- Dimension labels -->
+      <text x="160" y="-4" text-anchor="middle" fill="#888" font-size="5" font-weight="500">3.2 m</text>
+      <text x="-5" y="60" text-anchor="middle" fill="#888" font-size="5" font-weight="500" transform="rotate(-90 -5 60)">1.2 m</text>
+    </svg>
+  </div>
+  
+  <div class="sidebar-right">
+    <h3>🌱 Planter i bedet</h3>
+    <div id="legendPanel"></div>
+    
+    <div class="soil-info">
+      <h4>📊 Bed-statistik</h4>
+      <div class="stat"><span class="stat-label">Rækker</span><span id="statRows">4</span></div>
+      <div class="stat"><span class="stat-label">Planter i alt</span><span id="statPlants">-</span></div>
+      <div class="stat"><span class="stat-label">Udnyttelse</span><span id="statUtil">-</span></div>
+      <div class="stat"><span class="stat-label">Companion-score</span><span id="statComp">-</span></div>
+    </div>
+  </div>
+</div>
+
+<script>
+// ═══════════════════════════════════════════════════════════════
+// PLANT SEASON COLOR SYSTEM — The core of the visual engine
+// ═══════════════════════════════════════════════════════════════
+
+/**
+ * Each plant species defines seasonal visual phases.
+ * Colors are NOT emoji — they are rich SVG shapes with gradients.
+ * 
+ * Phases:
+ *   dormant    → bare soil / mulch visible, plant barely visible
+ *   sprouting  → tiny green shoots, small scale
+ *   growing    → full foliage, species-characteristic color
+ *   flowering  → accent color appears (petals, buds)
+ *   fruiting   → fruit color dominates
+ *   harvesting → golden/amber tones, "ready" indicators
+ *   dying      → yellowing, browning, withering
+ */
+
+const PLANTS = [
+  {
+    id: "gulerod",
+    name: "Gulerod",
+    icon: "🥕",
+    row: 0,
+    count: 12,
+    spacingCm: 5,
+    spreadCm: 6,
+    // Visual shape type
+    shape: "rosette",  // small leaf rosette on top
+    // Season calendar
+    sowMonth: 3,       // March
+    growStart: 4,
+    flowerMonth: null, // root veg, no visible flower in bed
+    harvestStart: 7,
+    harvestEnd: 10,
+    dieMonth: 11,
+    // Season color palette
+    colors: {
+      dormant:    { foliage: "#8B7355", stem: "#8B7355", accent: null,      ground: "#8B7355" },
+      sprouting:  { foliage: "#90BE6D", stem: "#6a9a4a", accent: null,      ground: "#8B7355" },
+      growing:    { foliage: "#2D6A4F", stem: "#40916C", accent: null,      ground: "#52796F" },
+      flowering:  { foliage: "#2D6A4F", stem: "#40916C", accent: "#F4A261", ground: "#52796F" },
+      fruiting:   { foliage: "#2D6A4F", stem: "#40916C", accent: "#E76F51", ground: "#52796F" },
+      harvesting: { foliage: "#95D5B2", stem: "#74C69D", accent: "#F4A261", ground: "#8B7355" },
+      dying:      { foliage: "#BBA87C", stem: "#A68A5B", accent: null,      ground: "#8B7355" },
+    },
+    companionGood: ["loeg", "salat"],
+    companionBad: [],
+  },
+  {
+    id: "salat",
+    name: "Salat",
+    icon: "🥬",
+    row: 1,
+    count: 10,
+    spacingCm: 8,
+    spreadCm: 10,
+    shape: "leafy",    // big leafy rosette
+    sowMonth: 3,
+    growStart: 4,
+    flowerMonth: 7,    // bolting
+    harvestStart: 5,
+    harvestEnd: 9,
+    dieMonth: 10,
+    colors: {
+      dormant:    { foliage: "#8B7355", stem: "#8B7355", accent: null,      ground: "#8B7355" },
+      sprouting:  { foliage: "#B7E4C7", stem: "#95D5B2", accent: null,      ground: "#8B7355" },
+      growing:    { foliage: "#52B788", stem: "#40916C", accent: null,      ground: "#52796F" },
+      flowering:  { foliage: "#74C69D", stem: "#52B788", accent: "#FEFAE0", ground: "#52796F" },
+      fruiting:   { foliage: "#74C69D", stem: "#52B788", accent: null,      ground: "#52796F" },
+      harvesting: { foliage: "#52B788", stem: "#40916C", accent: "#D4E09B", ground: "#52796F" },
+      dying:      { foliage: "#C9B458", stem: "#A68A5B", accent: null,      ground: "#8B7355" },
+    },
+    companionGood: ["gulerod", "loeg"],
+    companionBad: [],
+  },
+  {
+    id: "loeg",
+    name: "Løg",
+    icon: "🧅",
+    row: 2,
+    count: 16,
+    spacingCm: 4,
+    spreadCm: 5,
+    shape: "upright",  // tall thin shoots
+    sowMonth: 3,
+    growStart: 3,
+    flowerMonth: null,
+    harvestStart: 7,
+    harvestEnd: 9,
+    dieMonth: 10,
+    colors: {
+      dormant:    { foliage: "#8B7355", stem: "#8B7355", accent: null,      ground: "#8B7355" },
+      sprouting:  { foliage: "#A7C957", stem: "#6a9a4a", accent: null,      ground: "#8B7355" },
+      growing:    { foliage: "#588157", stem: "#3A5A40", accent: null,      ground: "#52796F" },
+      flowering:  { foliage: "#588157", stem: "#3A5A40", accent: "#DAD7CD", ground: "#52796F" },
+      fruiting:   { foliage: "#588157", stem: "#3A5A40", accent: "#DDA15E", ground: "#52796F" },
+      harvesting: { foliage: "#A3B18A", stem: "#588157", accent: "#DDA15E", ground: "#8B7355" },
+      dying:      { foliage: "#C9B458", stem: "#BBA87C", accent: null,      ground: "#8B7355" },
+    },
+    companionGood: ["gulerod", "salat"],
+    companionBad: [],
+  },
+  {
+    id: "boenner",
+    name: "Buskbønner",
+    icon: "🫛",
+    row: 3,
+    count: 8,
+    spacingCm: 10,
+    spreadCm: 14,
+    shape: "bushy",    // bushy with visible flowers/pods
+    sowMonth: 5,
+    growStart: 5,
+    flowerMonth: 6,
+    harvestStart: 7,
+    harvestEnd: 9,
+    dieMonth: 10,
+    colors: {
+      dormant:    { foliage: "#8B7355", stem: "#8B7355", accent: null,      ground: "#8B7355" },
+      sprouting:  { foliage: "#90BE6D", stem: "#6a9a4a", accent: null,      ground: "#8B7355" },
+      growing:    { foliage: "#386641", stem: "#2D6A4F", accent: null,      ground: "#3A5A40" },
+      flowering:  { foliage: "#386641", stem: "#2D6A4F", accent: "#FFFFFF", ground: "#3A5A40" },
+      fruiting:   { foliage: "#386641", stem: "#2D6A4F", accent: "#606C38", ground: "#3A5A40" },
+      harvesting: { foliage: "#588157", stem: "#3A5A40", accent: "#DDA15E", ground: "#52796F" },
+      dying:      { foliage: "#9E8B5C", stem: "#8B7355", accent: "#6B4423", ground: "#8B7355" },
+    },
+    companionGood: ["gulerod"],
+    companionBad: [],
+  },
+];
+
+// ═══════════════════════════════════════════════════════════════
+// SEASON PHASE COMPUTATION
+// ═══════════════════════════════════════════════════════════════
+
+const MONTH_NAMES = ["", "Januar", "Februar", "Marts", "April", "Maj", "Juni", "Juli", "August", "September", "Oktober", "November", "December"];
+const MONTH_ICONS = ["", "❄️", "❄️", "🌱", "🌸", "🌿", "☀️", "🌞", "🌾", "🍂", "🍁", "🌧️", "❄️"];
+
+function getPhase(plant, month) {
+  if (!plant.sowMonth && !plant.growStart) return "dormant";
+  
+  // Before sowing
+  if (month < plant.sowMonth) return "dormant";
+  
+  // Sowing month = sprouting
+  if (month === plant.sowMonth) return "sprouting";
+  
+  // Growing before harvest
+  if (month >= plant.growStart && month < (plant.harvestStart || 13)) {
+    if (plant.flowerMonth && month >= plant.flowerMonth && month < (plant.harvestStart || plant.flowerMonth + 1)) {
+      return "flowering";
+    }
+    return "growing";
+  }
+  
+  // Harvest period
+  if (plant.harvestStart && month >= plant.harvestStart && month <= (plant.harvestEnd || plant.harvestStart)) {
+    if (month === plant.harvestEnd) return "harvesting";
+    return "fruiting";
+  }
+  
+  // After harvest
+  if (plant.dieMonth && month >= plant.dieMonth) return "dying";
+  if (month > (plant.harvestEnd || 12)) return "dying";
+  
+  return "growing";
+}
+
+function getPhaseScale(phase) {
+  switch (phase) {
+    case "dormant": return 0.1;
+    case "sprouting": return 0.35;
+    case "growing": return 0.75;
+    case "flowering": return 0.9;
+    case "fruiting": return 1.0;
+    case "harvesting": return 0.95;
+    case "dying": return 0.5;
+    default: return 0.5;
+  }
+}
+
+function getPhaseLabel(phase) {
+  switch (phase) {
+    case "dormant": return { text: "Hvile", color: "#666" };
+    case "sprouting": return { text: "Spiring", color: "#90BE6D" };
+    case "growing": return { text: "Vækst", color: "#2D6A4F" };
+    case "flowering": return { text: "Blomstring", color: "#E9C46A" };
+    case "fruiting": return { text: "Frugt", color: "#E76F51" };
+    case "harvesting": return { text: "Høst", color: "#F4A261" };
+    case "dying": return { text: "Visner", color: "#BBA87C" };
+    default: return { text: phase, color: "#888" };
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════
+// SVG SHAPE RENDERERS — The heart of the visual system
+// ═══════════════════════════════════════════════════════════════
+
+let currentView = "both"; // "color", "icon", "both"
+
+function renderPlantShape(plant, x, y, phase, scale, colors, showIcon) {
+  const group = document.createElementNS("http://www.w3.org/2000/svg", "g");
+  group.setAttribute("transform", `translate(${x}, ${y})`);
+  
+  const r = (plant.spreadCm / 2) * scale;
+  const foliageColor = colors.foliage;
+  const stemColor = colors.stem;
+  const accentColor = colors.accent;
+  
+  if (phase === "dormant") {
+    // Just a tiny soil-colored dot
+    if (currentView !== "icon") {
+      const dot = circle(0, 0, 1.5, "#8B7355", 0.3);
+      group.appendChild(dot);
+    }
+    if (showIcon && currentView !== "color") {
+      const t = text(0, 0.5, plant.icon, 3, 0.2);
+      group.appendChild(t);
+    }
+    return group;
+  }
+  
+  // ── Color rendering ──
+  if (currentView !== "icon") {
+    switch (plant.shape) {
+      case "rosette": {
+        // Carrot-top style: small feathery rosette
+        // Ground circle (root vegetable visible beneath)
+        if (phase === "fruiting" || phase === "harvesting") {
+          const rootTop = circle(0, 0, r * 0.4, accentColor || "#E76F51", 0.6);
+          group.appendChild(rootTop);
+        }
+        // Feathery leaves radiating out
+        for (let i = 0; i < 6; i++) {
+          const angle = (i * 60) * Math.PI / 180;
+          const leafLen = r * 0.9;
+          const lx = Math.cos(angle) * leafLen * 0.4;
+          const ly = Math.sin(angle) * leafLen * 0.4;
+          const leaf = ellipse(lx, ly, r * 0.15, r * 0.45, i * 60, foliageColor, 0.8);
+          group.appendChild(leaf);
+        }
+        // Center
+        const center = circle(0, 0, r * 0.2, stemColor, 0.9);
+        group.appendChild(center);
+        break;
+      }
+      
+      case "leafy": {
+        // Lettuce style: overlapping round leaves
+        // Outer leaves
+        for (let i = 0; i < 5; i++) {
+          const angle = (i * 72 + 15) * Math.PI / 180;
+          const lx = Math.cos(angle) * r * 0.35;
+          const ly = Math.sin(angle) * r * 0.35;
+          const leaf = circle(lx, ly, r * 0.55, foliageColor, 0.5);
+          group.appendChild(leaf);
+        }
+        // Inner lighter leaves
+        for (let i = 0; i < 4; i++) {
+          const angle = (i * 90 + 30) * Math.PI / 180;
+          const lx = Math.cos(angle) * r * 0.15;
+          const ly = Math.sin(angle) * r * 0.15;
+          const leaf = circle(lx, ly, r * 0.35, lighten(foliageColor, 30), 0.7);
+          group.appendChild(leaf);
+        }
+        // Heart
+        const heart = circle(0, 0, r * 0.2, lighten(foliageColor, 50), 0.8);
+        group.appendChild(heart);
+        
+        // Bolt flower (if flowering/dying)
+        if (phase === "flowering" || phase === "dying") {
+          const bolt = circle(0, -r * 0.3, r * 0.12, "#FEFAE0", 0.9);
+          group.appendChild(bolt);
+        }
+        break;
+      }
+      
+      case "upright": {
+        // Onion/leek style: vertical thin leaves
+        // Bulb beneath (fruiting/harvest)
+        if (phase === "fruiting" || phase === "harvesting") {
+          const bulb = ellipse(0, r * 0.15, r * 0.4, r * 0.3, 0, accentColor || "#DDA15E", 0.7);
+          group.appendChild(bulb);
+        }
+        // Upright leaves
+        for (let i = -2; i <= 2; i++) {
+          const lean = i * 8;
+          const leaf = ellipse(i * r * 0.12, -r * 0.15, r * 0.08, r * 0.55, lean, foliageColor, 0.75);
+          group.appendChild(leaf);
+        }
+        break;
+      }
+      
+      case "bushy": {
+        // Bean style: bushy with compound leaves
+        // Main foliage mass
+        const mainBush = circle(0, 0, r * 0.7, foliageColor, 0.5);
+        group.appendChild(mainBush);
+        
+        // Leaf clusters
+        for (let i = 0; i < 7; i++) {
+          const angle = (i * 51.4) * Math.PI / 180;
+          const dist = r * (0.3 + Math.random() * 0.4);
+          const lx = Math.cos(angle) * dist;
+          const ly = Math.sin(angle) * dist;
+          const size = r * (0.2 + Math.random() * 0.15);
+          const leaf = circle(lx, ly, size, lighten(foliageColor, 10 + i * 3), 0.6);
+          group.appendChild(leaf);
+        }
+        
+        // Flowers (if flowering)
+        if (phase === "flowering" && accentColor) {
+          for (let i = 0; i < 4; i++) {
+            const angle = (i * 90 + 20) * Math.PI / 180;
+            const fx = Math.cos(angle) * r * 0.4;
+            const fy = Math.sin(angle) * r * 0.4;
+            const flower = circle(fx, fy, r * 0.12, accentColor, 0.9);
+            group.appendChild(flower);
+          }
+        }
+        
+        // Pods (if fruiting/harvest)
+        if ((phase === "fruiting" || phase === "harvesting") && accentColor) {
+          for (let i = 0; i < 5; i++) {
+            const angle = (i * 72 + 10) * Math.PI / 180;
+            const px = Math.cos(angle) * r * 0.45;
+            const py = Math.sin(angle) * r * 0.45;
+            const pod = ellipse(px, py, r * 0.06, r * 0.22, angle * 180 / Math.PI + 90, accentColor, 0.85);
+            group.appendChild(pod);
+          }
+        }
+        break;
+      }
+    }
+  }
+  
+  // ── Icon overlay ──
+  if (showIcon && currentView !== "color") {
+    const iconSize = currentView === "icon" ? Math.max(r * 1.8, 5) : Math.max(r * 0.9, 3.5);
+    const opacity = currentView === "icon" ? 0.95 : 0.85;
+    const t = text(0, currentView === "icon" ? 0.5 : r * 0.05, plant.icon, iconSize, opacity);
+    group.appendChild(t);
+  }
+  
+  return group;
+}
+
+// ═══════════════════════════════════════════════════════════════
+// SVG HELPERS
+// ═══════════════════════════════════════════════════════════════
+
+function circle(cx, cy, r, fill, opacity) {
+  const el = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+  el.setAttribute("cx", cx); el.setAttribute("cy", cy); el.setAttribute("r", Math.max(r, 0.5));
+  el.setAttribute("fill", fill); el.setAttribute("opacity", opacity);
+  return el;
+}
+
+function ellipse(cx, cy, rx, ry, rotation, fill, opacity) {
+  const el = document.createElementNS("http://www.w3.org/2000/svg", "ellipse");
+  el.setAttribute("cx", cx); el.setAttribute("cy", cy);
+  el.setAttribute("rx", Math.max(rx, 0.3)); el.setAttribute("ry", Math.max(ry, 0.3));
+  el.setAttribute("fill", fill); el.setAttribute("opacity", opacity);
+  if (rotation) el.setAttribute("transform", `rotate(${rotation} ${cx} ${cy})`);
+  return el;
+}
+
+function text(x, y, content, size, opacity) {
+  const el = document.createElementNS("http://www.w3.org/2000/svg", "text");
+  el.setAttribute("x", x); el.setAttribute("y", y);
+  el.setAttribute("text-anchor", "middle"); el.setAttribute("dominant-baseline", "central");
+  el.setAttribute("font-size", size); el.setAttribute("opacity", opacity);
+  el.textContent = content;
+  return el;
+}
+
+function lighten(hex, amount) {
+  const num = parseInt(hex.replace("#", ""), 16);
+  const r = Math.min(255, (num >> 16) + amount);
+  const g = Math.min(255, ((num >> 8) & 0xFF) + amount);
+  const b = Math.min(255, (num & 0xFF) + amount);
+  return `rgb(${r},${g},${b})`;
+}
+
+// ═══════════════════════════════════════════════════════════════
+// RENDER ENGINE
+// ═══════════════════════════════════════════════════════════════
+
+const BED_WIDTH = 320;  // cm
+const BED_HEIGHT = 120; // cm
+const ROW_SPACING = 25; // cm between rows
+const EDGE_MARGIN = 12; // cm from edge
+
+function render(month) {
+  const plantLayer = document.getElementById("plantLayer");
+  const legendPanel = document.getElementById("legendPanel");
+  plantLayer.innerHTML = "";
+  legendPanel.innerHTML = "";
+  
+  let totalPlants = 0;
+  
+  // Ground color transition
+  const bedBg = document.getElementById("bedBg");
+  const groundColors = {
+    1: "#6B5B45", 2: "#6B5B45", 3: "#7B6B55", 4: "#8B7B65",
+    5: "#8B7355", 6: "#8B7355", 7: "#8B7355", 8: "#8B7355",
+    9: "#7B6B55", 10: "#6B5B45", 11: "#5B4B35", 12: "#5B4B35"
+  };
+  bedBg.setAttribute("fill", groundColors[month] || "#8B7355");
+  
+  // Render row zones (subtle background strips)
+  PLANTS.forEach((plant, rowIdx) => {
+    const rowY = EDGE_MARGIN + rowIdx * ROW_SPACING;
+    const phase = getPhase(plant, month);
+    const colors = plant.colors[phase] || plant.colors.dormant;
+    
+    // Row background strip
+    if (phase !== "dormant") {
+      const strip = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+      strip.setAttribute("x", EDGE_MARGIN - 2);
+      strip.setAttribute("y", rowY - ROW_SPACING / 2 + 2);
+      strip.setAttribute("width", BED_WIDTH - EDGE_MARGIN * 2 + 4);
+      strip.setAttribute("height", ROW_SPACING - 4);
+      strip.setAttribute("rx", 3);
+      strip.setAttribute("fill", colors.ground);
+      strip.setAttribute("opacity", 0.15);
+      plantLayer.appendChild(strip);
+    }
+  });
+  
+  // Render plants
+  PLANTS.forEach((plant, rowIdx) => {
+    const rowY = EDGE_MARGIN + rowIdx * ROW_SPACING;
+    const phase = getPhase(plant, month);
+    const colors = plant.colors[phase] || plant.colors.dormant;
+    const scale = getPhaseScale(phase);
+    
+    const startX = EDGE_MARGIN + plant.spacingCm;
+    const availWidth = BED_WIDTH - EDGE_MARGIN * 2 - plant.spacingCm;
+    const actualCount = Math.min(plant.count, Math.floor(availWidth / plant.spacingCm));
+    
+    for (let i = 0; i < actualCount; i++) {
+      const x = startX + i * (availWidth / actualCount);
+      const plantEl = renderPlantShape(plant, x, rowY, phase, scale, colors, true);
+      plantLayer.appendChild(plantEl);
+      totalPlants++;
+    }
+    
+    // Legend entry
+    const phaseInfo = getPhaseLabel(phase);
+    const legendItem = document.createElement("div");
+    legendItem.className = "legend-item";
+    legendItem.innerHTML = `
+      <div class="legend-color" style="background: ${colors.foliage}; ${colors.accent ? `box-shadow: inset 0 -8px 0 ${colors.accent}` : ""}"></div>
+      <div class="legend-info">
+        <div class="name">${plant.icon} ${plant.name}</div>
+        <div class="detail">Række ${rowIdx + 1} · ${actualCount} stk · ${plant.spacingCm}cm afstand</div>
+        <span class="phase-badge" style="background: ${phaseInfo.color}22; color: ${phaseInfo.color}; border: 1px solid ${phaseInfo.color}44">${phaseInfo.text}</span>
+      </div>
+    `;
+    legendPanel.appendChild(legendItem);
+  });
+  
+  // Stats
+  document.getElementById("statPlants").textContent = totalPlants;
+  const usedRows = PLANTS.filter(p => getPhase(p, month) !== "dormant").length;
+  document.getElementById("statRows").textContent = `${usedRows} / ${PLANTS.length} aktive`;
+  document.getElementById("statUtil").textContent = `${Math.round(usedRows / PLANTS.length * 100)}%`;
+  document.getElementById("statComp").textContent = "✅ Alle gode naboer";
+}
+
+// ═══════════════════════════════════════════════════════════════
+// EVENT HANDLERS
+// ═══════════════════════════════════════════════════════════════
+
+const monthSlider = document.getElementById("monthSlider");
+const monthDisplay = document.getElementById("monthDisplay");
+
+monthSlider.addEventListener("input", () => {
+  const month = parseInt(monthSlider.value);
+  monthDisplay.textContent = `${MONTH_ICONS[month]} ${MONTH_NAMES[month]}`;
+  
+  // Background color shift for atmosphere
+  const seasonBg = {
+    1: "#1a1a2e", 2: "#1a1a2e", 3: "#1a2420", 4: "#1a2a1e",
+    5: "#1a2e1a", 6: "#1e2e1a", 7: "#2a2e1a", 8: "#2e2a1a",
+    9: "#2e241a", 10: "#2a1e1a", 11: "#1e1a1a", 12: "#1a1a2e"
+  };
+  document.body.style.background = seasonBg[month] || "#1a1a2e";
+  
+  render(month);
+});
+
+function setView(view) {
+  currentView = view;
+  document.querySelectorAll(".toggle-btn").forEach(b => b.classList.remove("active"));
+  document.getElementById("btn" + view.charAt(0).toUpperCase() + view.slice(1)).classList.add("active");
+  render(parseInt(monthSlider.value));
+}
+
+// Initial render
+render(7);
+</script>
+</body>
+</html>

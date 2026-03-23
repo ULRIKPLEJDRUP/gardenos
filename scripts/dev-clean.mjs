@@ -1,5 +1,17 @@
 import { existsSync, rmSync } from "node:fs";
-import { spawn } from "node:child_process";
+import { spawn, execSync } from "node:child_process";
+
+// ---------------------------------------------------------------------------
+// GardenOS – Dev Clean Start
+// ---------------------------------------------------------------------------
+// Ensures a fresh Turbopack cache on every dev start.
+// This is CRITICAL because the workspace lives inside a OneDrive-synced
+// folder — OneDrive's background sync conflicts with Turbopack's embedded
+// key-value store (file locking / write batches), causing:
+//   "Persisting failed: Another write batch or compaction is already active"
+//
+// Solution: Nuke the entire .next/ directory before starting.
+// ---------------------------------------------------------------------------
 
 function run(cmd, args) {
   return new Promise((resolve) => {
@@ -17,37 +29,73 @@ async function killPort3000() {
   const out = await run("lsof", ["-nP", "-iTCP:3000", "-sTCP:LISTEN"]);
   const lines = out.split("\n").map((l) => l.trim());
   // Skip header; PID is 2nd column.
-  const pid = lines
+  const pids = lines
     .slice(1)
     .map((line) => line.split(/\s+/)[1])
-    .find((v) => v && /^\d+$/.test(v));
+    .filter((v) => v && /^\d+$/.test(v));
 
-  if (!pid) return;
-
-  // Best-effort kill.
-  await run("kill", [pid]);
+  // Kill all processes on port 3000 (there can be multiple)
+  for (const pid of [...new Set(pids)]) {
+    await run("kill", ["-9", pid]);
+  }
 }
 
-function removeDevLock() {
-  const lockPath = ".next/dev/lock";
-  if (existsSync(lockPath)) {
-    rmSync(lockPath, { force: true });
+function nukeNextCache() {
+  // distDir is now /tmp/gardenos-next (outside OneDrive), but clean it
+  // on every dev start for a guaranteed fresh Turbopack state.
+  const distDir = "/tmp/gardenos-next";
+  if (existsSync(distDir)) {
+    console.log(`🧹 Renser ${distDir} cache...`);
+    rmSync(distDir, { recursive: true, force: true });
+  }
+
+  // Also clean any legacy .next/ that might still exist in the project
+  if (existsSync(".next")) {
+    console.log("🧹 Fjerner gammel .next/ mappe (nu ubrugt)...");
+    rmSync(".next", { recursive: true, force: true });
+  }
+}
+
+function ensurePrismaClient() {
+  // If node_modules/.prisma/client doesn't exist, regenerate.
+  // This can happen when OneDrive corrupts node_modules or after fresh installs.
+  const prismaClientPath = "node_modules/.prisma/client";
+  if (!existsSync(prismaClientPath)) {
+    console.log("🔄 Genererer Prisma Client...");
+    try {
+      execSync("npx prisma generate", { stdio: "inherit" });
+    } catch {
+      console.warn("⚠️  Prisma generate fejlede — fortsætter alligevel");
+    }
   }
 }
 
 async function main() {
+  console.log("🌱 GardenOS dev server starter...\n");
+
+  // 1. Kill anything on port 3000
   try {
     await killPort3000();
   } catch {
     // ignore
   }
 
+  // 2. Nuke the entire .next/ cache (prevents Turbopack corruption)
   try {
-    removeDevLock();
+    nukeNextCache();
+  } catch (err) {
+    console.warn("⚠️  Kunne ikke slette .next/:", err.message);
+  }
+
+  // 3. Ensure Prisma Client is generated
+  try {
+    ensurePrismaClient();
   } catch {
     // ignore
   }
 
+  // 4. Start the dev server
+  console.log("🚀 Starter Next.js dev server på http://localhost:3000\n");
   const child = spawn(process.platform === "win32" ? "npm.cmd" : "npm", ["run", "dev:raw"], {
     stdio: "inherit",
     env: process.env,
