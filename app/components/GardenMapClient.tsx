@@ -71,6 +71,8 @@ import GroupsTab from "./GroupsTab";
 import DesignsTab from "./DesignsTab";
 import SettingsModal from "./SettingsModal";
 import PlantsTab from "./PlantsTab";
+import CreateTab from "./CreateTab";
+import type { CreateSelectionInfo } from "./CreateTab";
 import type { BedLayout } from "../lib/bedLayoutTypes";
 import { getBedLayout } from "../lib/bedLayoutStore";
 import { bedLocalToGeo } from "../lib/bedGeometry";
@@ -804,6 +806,16 @@ const KNOWN_KIND_SET = new Set(KNOWN_KIND_DEFS.map((d) => d.kind.toLowerCase()))
 
 function isKnownKind(kind: string | undefined): kind is KnownGardenFeatureKind {
   return !!kind && KNOWN_KIND_SET.has(kind.toLowerCase());
+}
+
+/** Map elementMode → feature kind (for non-planter element modes). Used in both CreateTab and ContentTab retype. */
+function kindForElementMode(mode: string): GardenFeatureKind {
+  switch (mode) {
+    case "el": return "electric";
+    case "vand": return "water";
+    case "lampe": return "lamp";
+    default: return "plant";
+  }
 }
 
 function dedupeKindDefs(defs: KindDef[]): KindDef[] {
@@ -3014,13 +3026,9 @@ export function GardenMapClient({ userId }: { userId: string }) {
   const [selected, setSelected] = useState<SelectedFeatureState | null>(null);
   const selectedRef = useRef<SelectedFeatureState | null>(null);
   const [drawMode, setDrawMode] = useState<"select" | "bed" | "plant">("select");
-  const [createPalette, setCreatePalette] = useState<GardenFeatureCategory>("element");
-  const [createKind, setCreateKind] = useState<GardenFeatureKind>("tree");
   const [customKindDefs, setCustomKindDefs] = useState<KindDef[]>(() => loadCustomKindDefsFromStorage());
   const [hiddenKinds, setHiddenKinds] = useState<Set<string>>(() => loadHiddenKinds());
   const [hiddenVisibilityKinds, setHiddenVisibilityKinds] = useState<Set<string>>(() => loadHiddenVisKinds());
-  const [newKindText, setNewKindText] = useState("");
-  const [newKindError, setNewKindError] = useState<string | null>(null);
   const [undoStack, setUndoStack] = useState<UndoSnapshot[]>([]);
   const [sidebarTab, setSidebarTab] = useState<"create" | "content" | "groups" | "plants" | "view" | "scan" | "chat" | "tasks" | "conflicts" | "designs" | "climate" | "journal">("create");
   const [sidebarPanelOpen, setSidebarPanelOpen] = useState(true);
@@ -3466,22 +3474,10 @@ export function GardenMapClient({ userId }: { userId: string }) {
   // Ref to store child-row IDs that were inside the bed BEFORE editing started
   const preEditChildRowIdsRef = useRef<Set<string>>(new Set());
 
-  // ── Create-flow plant picker state ──
-  type ElementMode = "planter" | "el" | "vand" | "lampe";
-  const [elementMode, setElementMode] = useState<ElementMode>("planter");
-  /** SubGroup filter tab for area / condition palettes */
-  const [createSubGroupFilter, setCreateSubGroupFilter] = useState<KindSubGroup | null>(null);
-  const [createPlantSearch, setCreatePlantSearch] = useState("");
-  const [createPlantCategoryFilter, setCreatePlantCategoryFilter] = useState<PlantCategory | "all">("all");
-  const [createSelectedSpeciesId, setCreateSelectedSpeciesId] = useState<string | null>(null);
-  const [createSelectedVarietyId, setCreateSelectedVarietyId] = useState<string | null>(null);
-  const [createSelectedVarietyName, setCreateSelectedVarietyName] = useState<string | null>(null);
+  // ── Create-flow refs (needed by DrawHandler / onCreated) ──
   const createSpeciesRef = useRef<{ speciesId: string | null; varietyId: string | null; varietyName: string | null }>({
     speciesId: null, varietyId: null, varietyName: null,
   });
-
-  // ── Create-flow infra element picker state ──
-  const [createSelectedElementId, setCreateSelectedElementId] = useState<string | null>(null);
   const createElementRef = useRef<string | null>(null);
 
   const [isEditing, setIsEditing] = useState(false);
@@ -3807,19 +3803,6 @@ export function GardenMapClient({ userId }: { userId: string }) {
 
   const kindDefByKind = useMemo(() => {
     return new Map(allKindDefs.map((d) => [d.kind.toLowerCase(), d]));
-  }, [allKindDefs]);
-
-  const defaultCreateKindForPalette = useMemo(() => {
-    const first = (cat: GardenFeatureCategory) =>
-      allKindDefs.find((d) => d.category === cat)?.kind ?? "tree";
-    return {
-      element: first("element"),
-      row: first("row"),
-      seedbed: first("seedbed"),
-      container: first("container"),
-      area: first("area"),
-      condition: first("condition"),
-    } as const;
   }, [allKindDefs]);
 
   const selectedGeometry = useMemo<KindGeometry | null>(() => {
@@ -5861,51 +5844,6 @@ export function GardenMapClient({ userId }: { userId: string }) {
     setDrawMode("plant");
   }, [kindDefByKind, stopEditing]);
 
-  const beginDrawSelectedType = useCallback(() => {
-    // For elements: auto-determine kind from elementMode + selected species
-    if (createPalette === "element") {
-      if (elementMode === "planter") {
-        // Determine kind from selected species category, or default to "plant"
-        let kind: GardenFeatureKind = "plant";
-        if (createSelectedSpeciesId) {
-          const sp = getPlantById(createSelectedSpeciesId);
-          if (sp) {
-            switch (sp.category) {
-              case "tree": kind = "tree"; break;
-              case "bush": kind = "bush"; break;
-              case "flower": kind = "flower"; break;
-              default: kind = "plant"; break;
-            }
-          }
-        }
-        setCreateKind(kind);
-        createKindRef.current = kind;
-        beginDraw(kind);
-      } else {
-        // For el/vand/lampe: use selected element type's featureKind, or fallback
-        let kind: GardenFeatureKind;
-        if (createSelectedElementId) {
-          const el = getInfraElementById(createSelectedElementId);
-          kind = (el?.featureKind ?? (
-            elementMode === "el" ? "electric" :
-            elementMode === "vand" ? "water" :
-            "lamp"
-          )) as GardenFeatureKind;
-        } else {
-          kind =
-            elementMode === "el" ? "electric" :
-            elementMode === "vand" ? "water" :
-            "lamp";
-        }
-        setCreateKind(kind);
-        createKindRef.current = kind;
-        beginDraw(kind);
-      }
-      return;
-    }
-    beginDraw(createKind);
-  }, [beginDraw, createKind, createPalette, elementMode, createSelectedSpeciesId, createSelectedElementId]);
-
   const stopDrawing = useCallback(() => {
     activeDrawHandlerRef.current?.disable();
     activeDrawHandlerRef.current = null;
@@ -7017,18 +6955,6 @@ export function GardenMapClient({ userId }: { userId: string }) {
     return list.slice(0, 25);
   }, [allPlants, bedPlantSearch, selected]);
 
-  // ── Create-flow plant picker: driven by elementMode ──
-
-  /** Map elementMode → feature kind (for non-planter modes) */
-  const kindForElementMode = useCallback((mode: string): GardenFeatureKind => {
-    switch (mode) {
-      case "el": return "electric";
-      case "vand": return "water";
-      case "lampe": return "lamp";
-      default: return "plant";
-    }
-  }, []);
-
   /** Count plants per category for the filter pills */
   const plantCountByCategory = useMemo(() => {
     const counts: Record<string, number> = { all: allPlants.length };
@@ -7040,38 +6966,6 @@ export function GardenMapClient({ userId }: { userId: string }) {
     counts.edible = edibleCount;
     return counts;
   }, [allPlants]);
-
-  const createPlantResults = useMemo(() => {
-    let list = allPlants;
-    // Apply user's category filter (if not "all")
-    if (createPlantCategoryFilter !== "all") {
-      list = list.filter((p) => p.category === createPlantCategoryFilter);
-    }
-    if (createPlantSearch.trim()) {
-      const q = createPlantSearch.trim().toLowerCase();
-      list = list.filter(
-        (p) =>
-          p.name.toLowerCase().includes(q) ||
-          (p.latinName?.toLowerCase().includes(q) ?? false) ||
-          p.id.includes(q),
-      );
-    }
-    return list.slice(0, 30);
-  }, [allPlants, createPlantCategoryFilter, createPlantSearch]);
-
-  // Keep ref in sync for use in onCreated
-  useEffect(() => {
-    createSpeciesRef.current = {
-      speciesId: createSelectedSpeciesId,
-      varietyId: createSelectedVarietyId,
-      varietyName: createSelectedVarietyName,
-    };
-  }, [createSelectedSpeciesId, createSelectedVarietyId, createSelectedVarietyName]);
-
-  // Keep element ref in sync for use in onCreated
-  useEffect(() => {
-    createElementRef.current = createSelectedElementId;
-  }, [createSelectedElementId]);
 
   const groupMemberCount = useMemo(() => {
     if (!selectedGroupId || !layoutForContainment?.features?.length) return 0;
@@ -7188,97 +7082,39 @@ export function GardenMapClient({ userId }: { userId: string }) {
     return allKindDefsIncludingHidden.filter((d) => d.geometry === wantedGeometry);
   }, [allKindDefsIncludingHidden, selected, selectedGeometry]);
 
-  const createKindOptions = useMemo(() => {
-    const items = allKindDefs
-      .filter((d) => d.category === createPalette)
-      .map((d) => ({ value: d.kind as GardenFeatureKind, label: d.label, subGroup: d.subGroup ?? "default" }));
-    return items;
-  }, [allKindDefs, createPalette]);
-
-  /** SubGroups present in current palette (for optgroup rendering) */
-  const createKindSubGroups = useMemo(() => {
-    const groups: KindSubGroup[] = [];
-    for (const opt of createKindOptions) {
-      if (!groups.includes(opt.subGroup)) groups.push(opt.subGroup);
-    }
-    return groups;
-  }, [createKindOptions]);
-
-  const addCustomKind = useCallback(() => {
-    const label = newKindText.trim();
-    if (!label) {
-      setNewKindError("Skriv et navn for typen.");
-      return;
-    }
-
+  // ── Parent callbacks for CreateTab ──
+  const handleAddCustomKindForCreate = useCallback((label: string, category: GardenFeatureCategory, subGroup: KindSubGroup): string | null => {
     const lower = label.toLowerCase();
-    if (kindDefByKind.has(lower)) {
-      setNewKindError("Typen findes allerede.");
-      return;
-    }
-
-    const category: GardenFeatureCategory = createPalette;
-    const subGroup: KindSubGroup =
-      category === "element" ? "plant"
-      : category === "area" ? "zone"
-      : category === "condition" ? "climate"
-      : "default";
-    // Default geometry based on category
-    const geometry: KindGeometry =
-      category === "element" ? "point" : "polygon";
-
+    if (kindDefByKind.has(lower)) return "Typen findes allerede.";
+    const geometry: KindGeometry = category === "element" ? "point" : "polygon";
     const next: KindDef = { kind: label, label, category, geometry, subGroup };
-
     const nextCustom = dedupeKindDefs([...customKindDefs, next]).filter((d) => !isKnownKind(d.kind));
     setCustomKindDefs(nextCustom);
     saveCustomKindDefsToStorage(nextCustom);
+    return null;
+  }, [customKindDefs, kindDefByKind]);
 
-    setCreateKind(next.kind as GardenFeatureKind);
-    createKindRef.current = next.kind as GardenFeatureKind;
-    setNewKindText("");
-    setNewKindError(null);
-  }, [createPalette, customKindDefs, kindDefByKind, newKindText]);
-
-  const removeKind = useCallback((kindToRemove: string) => {
+  const handleRemoveKindForCreate = useCallback((kindToRemove: string) => {
     const lower = kindToRemove.toLowerCase();
-
     if (isKnownKind(kindToRemove)) {
-      // Built-in kind → hide it
       const next = new Set(hiddenKinds);
       next.add(lower);
       setHiddenKinds(next);
       saveHiddenKinds(next);
     } else {
-      // Custom kind → remove from custom list
       const nextCustom = customKindDefs.filter((d) => d.kind.toLowerCase() !== lower);
       setCustomKindDefs(nextCustom);
       saveCustomKindDefsToStorage(nextCustom);
     }
+  }, [customKindDefs, hiddenKinds]);
 
-    // Reset selected create kind if it was the one we removed
-    if (createKind.toLowerCase() === lower) {
-      // Compute what remains visible
-      const nextHidden = isKnownKind(kindToRemove) ? new Set([...hiddenKinds, lower]) : hiddenKinds;
-      const nextCustom = isKnownKind(kindToRemove) ? customKindDefs : customKindDefs.filter((d) => d.kind.toLowerCase() !== lower);
-      const remaining = dedupeKindDefs([...KNOWN_KIND_DEFS, ...nextCustom]).filter((d) => !nextHidden.has(d.kind.toLowerCase()));
-      const fallback = remaining.find((d) => d.category === createPalette);
-      if (fallback) {
-        setCreateKind(fallback.kind as GardenFeatureKind);
-        createKindRef.current = fallback.kind as GardenFeatureKind;
-      }
-    }
-  }, [createKind, createPalette, customKindDefs, hiddenKinds]);
+  const canRemoveKindForCreate = useCallback((category: GardenFeatureCategory): boolean => {
+    return allKindDefs.filter((d) => d.category === category).length > 1;
+  }, [allKindDefs]);
 
-  // Can only remove if at least 1 other type remains in the same category
-  const canRemoveCreateKind = useMemo(() => {
-    const sameCategory = allKindDefs.filter((d) => d.category === createPalette);
-    return sameCategory.length > 1;
-  }, [allKindDefs, createPalette]);
-
-  // Are there any hidden built-in kinds in the current palette?
-  const hiddenInCurrentPalette = useMemo(() => {
-    return KNOWN_KIND_DEFS.filter((d) => d.category === createPalette && hiddenKinds.has(d.kind.toLowerCase()));
-  }, [createPalette, hiddenKinds]);
+  const hiddenInCategoryForCreate = useCallback((category: GardenFeatureCategory): KindDef[] => {
+    return KNOWN_KIND_DEFS.filter((d) => d.category === category && hiddenKinds.has(d.kind.toLowerCase()));
+  }, [hiddenKinds]);
 
   const restoreHiddenKinds = useCallback((category: GardenFeatureCategory) => {
     const next = new Set(hiddenKinds);
@@ -7288,6 +7124,15 @@ export function GardenMapClient({ userId }: { userId: string }) {
     setHiddenKinds(next);
     saveHiddenKinds(next);
   }, [hiddenKinds]);
+
+  const handleCreateSelectionChange = useCallback((info: CreateSelectionInfo) => {
+    createSpeciesRef.current = {
+      speciesId: info.speciesId,
+      varietyId: info.varietyId,
+      varietyName: info.varietyName,
+    };
+    createElementRef.current = info.elementId;
+  }, []);
 
   const selectedContainerAreaText = useMemo(() => {
     if (!selected || !selectedIsPolygon) return "";
@@ -8497,470 +8342,22 @@ export function GardenMapClient({ userId }: { userId: string }) {
         <div className="flex-1 overflow-y-auto sidebar-scroll px-4 pb-4">
 
         {sidebarTab === "create" ? (
-          <div className="mt-3 grid grid-cols-2 gap-2">
-            <div className="col-span-2">
-              <label className="block text-[11px] font-semibold text-foreground/60 uppercase tracking-wide">Kategori</label>
-              <div className="mt-1.5 grid grid-cols-3 gap-1" data-tour="create-categories">
-                {(["area", "seedbed", "row", "container", "element", "condition"] as const).map((cat) => (
-                  <button
-                    key={cat}
-                    type="button"
-                    className={`rounded-lg border px-2 py-2 text-xs transition-all ${
-                      createPalette === cat
-                        ? "border-accent/40 bg-accent-light text-accent-dark font-semibold shadow-sm"
-                        : "border-border bg-background hover:bg-foreground/5 text-foreground/70"
-                    }`}
-                    onClick={() => {
-                      setCreatePalette(cat);
-                      const next = defaultCreateKindForPalette[cat] as GardenFeatureKind;
-                      setCreateKind(next);
-                      createKindRef.current = next;
-                      setNewKindError(null);
-                      // Reset plant picker & element mode
-                      setElementMode("planter");
-                      setCreateSubGroupFilter(null);
-                      setCreateSelectedSpeciesId(null);
-                      setCreateSelectedVarietyId(null);
-                      setCreateSelectedVarietyName(null);
-                      setCreateSelectedElementId(null);
-                      setCreatePlantSearch("");
-                      setCreatePlantCategoryFilter("all");
-                    }}
-                  >
-                    {CATEGORY_LABELS[cat]}
-                  </button>
-                ))}
-              </div>
-              <p className="mt-1 text-[10px] text-foreground/50">{CATEGORY_DESCRIPTIONS[createPalette]}</p>
-            </div>
-
-            {/* ════════════════════════════════════════════════════════════════
-                ELEMENT: new flow — Type buttons (Planter/El/Vand/Lampe) +
-                integrated plant picker
-               ════════════════════════════════════════════════════════════════ */}
-            {createPalette === "element" ? (
-              <>
-                <div className="col-span-2">
-                  <label className="block text-[11px] font-semibold text-foreground/60 uppercase tracking-wide">Type</label>
-                  <div className="mt-1.5 grid grid-cols-2 gap-1.5">
-                    {([
-                      { mode: "planter" as const, label: "🌱 Planter", desc: "Vælg fra plantearkivet" },
-                      { mode: "el" as const, label: "⚡ El / Ledning", desc: "Tegn el-ledning" },
-                      { mode: "vand" as const, label: "💧 Vand / Rør", desc: "Tegn vandledning" },
-                      { mode: "lampe" as const, label: "💡 Lampe", desc: "Placér lampe" },
-                    ]).map((opt) => (
-                      <button
-                        key={opt.mode}
-                        type="button"
-                        data-tour={opt.mode === "planter" ? "create-element-plants" : opt.mode === "el" ? "create-element-infra" : undefined}
-                        className={`rounded-lg border px-3 py-2 text-xs text-left transition-all ${
-                          elementMode === opt.mode
-                            ? "border-accent/40 bg-accent-light text-accent-dark font-semibold shadow-sm"
-                            : "border-border bg-background hover:bg-foreground/5 text-foreground/70"
-                        }`}
-                        onClick={() => {
-                          setElementMode(opt.mode);
-                          // Reset plant selection when switching mode
-                          setCreateSelectedSpeciesId(null);
-                          setCreateSelectedVarietyId(null);
-                          setCreateSelectedVarietyName(null);
-                          setCreatePlantSearch("");
-                          setCreatePlantCategoryFilter("all");
-                          // Reset element selection
-                          setCreateSelectedElementId(null);
-                          // Set kind immediately for non-plant modes
-                          if (opt.mode !== "planter") {
-                            const k = kindForElementMode(opt.mode);
-                            setCreateKind(k);
-                            createKindRef.current = k;
-                          } else {
-                            setCreateKind("plant" as GardenFeatureKind);
-                            createKindRef.current = "plant" as GardenFeatureKind;
-                          }
-                        }}
-                      >
-                        {opt.label}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-
-                {/* ── Planter mode: category pills + search + plant list ── */}
-                {elementMode === "planter" ? (
-                  <div className="col-span-2 space-y-2">
-                    {createSelectedSpeciesId ? (() => {
-                      const pickedSpecies = getPlantById(createSelectedSpeciesId);
-                      const varieties = getVarietiesForSpecies(createSelectedSpeciesId);
-                      return (
-                        <div className="space-y-1.5">
-                          <div className="flex items-center gap-1.5 rounded-md border border-accent/20 bg-accent-light/30 px-2.5 py-2">
-                            <span className="text-lg leading-none">{pickedSpecies?.icon ?? "🌱"}</span>
-                            <div className="flex-1 min-w-0">
-                              <p className="text-sm font-semibold truncate">{pickedSpecies?.name ?? createSelectedSpeciesId}</p>
-                              {pickedSpecies?.latinName ? (
-                                <p className="text-[10px] text-foreground/40 italic truncate">{pickedSpecies.latinName}</p>
-                              ) : null}
-                              {pickedSpecies ? (
-                                <p className="text-[10px] text-foreground/50">
-                                  {PLANT_CATEGORY_LABELS[pickedSpecies.category]}
-                                  {pickedSpecies.light ? ` · ${LIGHT_LABELS[pickedSpecies.light]}` : ""}
-                                </p>
-                              ) : null}
-                              {createSelectedVarietyName ? (
-                                <p className="text-[10px] text-accent font-medium">Sort: {createSelectedVarietyName}</p>
-                              ) : null}
-                            </div>
-                            <button
-                              type="button"
-                              className="shrink-0 rounded px-1.5 py-0.5 text-xs text-foreground/40 hover:bg-red-50 hover:text-red-500"
-                              onClick={() => {
-                                setCreateSelectedSpeciesId(null);
-                                setCreateSelectedVarietyId(null);
-                                setCreateSelectedVarietyName(null);
-                              }}
-                              title="Vælg en anden"
-                            >
-                              ✕
-                            </button>
-                          </div>
-
-                          {/* Variety picker */}
-                          {varieties.length > 0 ? (
-                            <div className="space-y-0.5">
-                              <p className="text-[10px] font-medium text-foreground/50">Vælg sort:</p>
-                              <div className="max-h-36 overflow-y-auto space-y-0.5">
-                                <button
-                                  type="button"
-                                  className={`flex w-full items-center gap-1.5 rounded px-2 py-1 text-left text-[11px] hover:bg-foreground/5 ${
-                                    !createSelectedVarietyId ? "bg-accent/10 font-medium text-accent" : "text-foreground/70"
-                                  }`}
-                                  onClick={() => {
-                                    setCreateSelectedVarietyId(null);
-                                    setCreateSelectedVarietyName(null);
-                                  }}
-                                >
-                                  <span className="text-sm leading-none">🌱</span>
-                                  <span className="truncate">{pickedSpecies?.name} (uspecificeret sort)</span>
-                                  {!createSelectedVarietyId ? <span className="ml-auto text-[9px]">✓</span> : null}
-                                </button>
-                                {varieties.map((v) => (
-                                  <button
-                                    key={v.id}
-                                    type="button"
-                                    className={`flex w-full items-center gap-1.5 rounded px-2 py-1 text-left text-[11px] hover:bg-foreground/5 ${
-                                      createSelectedVarietyId === v.id ? "bg-accent/10 font-medium text-accent" : "text-foreground/70"
-                                    }`}
-                                    onClick={() => {
-                                      setCreateSelectedVarietyId(v.id);
-                                      setCreateSelectedVarietyName(v.name);
-                                    }}
-                                  >
-                                    <span className="text-sm leading-none">🏷️</span>
-                                    <span className="truncate">{v.name}</span>
-                                    {v.taste ? <span className="text-[9px] text-foreground/40 ml-auto mr-1">{v.taste}</span> : null}
-                                    {createSelectedVarietyId === v.id ? <span className="text-[9px]">✓</span> : null}
-                                  </button>
-                                ))}
-                              </div>
-                            </div>
-                          ) : null}
-                        </div>
-                      );
-                    })() : (
-                      <div className="space-y-2">
-                        {/* Plant category filter pills with counts */}
-                        <div className="flex flex-wrap gap-1">
-                          <button
-                            type="button"
-                            className={`rounded-full px-2.5 py-1 text-[11px] font-medium transition-all ${
-                              createPlantCategoryFilter === "all"
-                                ? "bg-accent text-white shadow-sm"
-                                : "bg-foreground/5 text-foreground/60 hover:bg-foreground/10"
-                            }`}
-                            onClick={() => setCreatePlantCategoryFilter("all")}
-                          >
-                            Alle ({plantCountByCategory["all"] ?? 0})
-                          </button>
-                          {(Object.keys(PLANT_CATEGORY_LABELS) as PlantCategory[]).map((cat) => {
-                            const count = plantCountByCategory[cat] ?? 0;
-                            if (count === 0) return null;
-                            return (
-                              <button
-                                key={cat}
-                                type="button"
-                                className={`rounded-full px-2.5 py-1 text-[11px] font-medium transition-all ${
-                                  createPlantCategoryFilter === cat
-                                    ? "bg-accent text-white shadow-sm"
-                                    : "bg-foreground/5 text-foreground/60 hover:bg-foreground/10"
-                                }`}
-                                onClick={() => setCreatePlantCategoryFilter(cat)}
-                              >
-                                {PLANT_CATEGORY_LABELS[cat]} ({count})
-                              </button>
-                            );
-                          })}
-                        </div>
-
-                        {/* Search */}
-                        <input
-                          className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm shadow-sm"
-                          placeholder="Søg plante…"
-                          value={createPlantSearch}
-                          onChange={(e) => setCreatePlantSearch(e.target.value)}
-                        />
-
-                        {/* Plant results */}
-                        <div className="max-h-48 space-y-0.5 overflow-y-auto">
-                          {createPlantResults.map((plant) => (
-                            <button
-                              key={plant.id}
-                              type="button"
-                              className="flex w-full items-center gap-1.5 rounded border border-transparent px-2 py-1.5 text-left text-xs hover:border-foreground/15 hover:bg-foreground/5"
-                              onClick={() => {
-                                setCreateSelectedSpeciesId(plant.id);
-                                setCreateSelectedVarietyId(null);
-                                setCreateSelectedVarietyName(null);
-                                setCreatePlantSearch("");
-                              }}
-                            >
-                              <span className="text-sm leading-none">{plant.icon ?? "🌱"}</span>
-                              <span className="truncate font-medium">{plant.name}</span>
-                              <span className="ml-auto flex items-center gap-1 text-[10px] text-foreground/40">
-                                {plant.latinName ? <span className="italic truncate max-w-[80px]">{plant.latinName}</span> : null}
-                                {plant.varieties?.length ? <span className="whitespace-nowrap">{plant.varieties.length} sorter</span> : null}
-                              </span>
-                            </button>
-                          ))}
-                          {createPlantResults.length === 0 ? (
-                            <p className="px-2 py-2 text-xs text-foreground/50 italic text-center">Ingen planter fundet.</p>
-                          ) : null}
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                ) : (
-                  /* ── El / Vand / Lampe mode: element type picker ── */
-                  <div className="col-span-2 space-y-2">
-                    {createSelectedElementId ? (() => {
-                      const pickedEl = getInfraElementById(createSelectedElementId);
-                      if (!pickedEl) return null;
-                      return (
-                        <div className="flex items-center gap-1.5 rounded-md border border-accent/20 bg-accent-light/30 px-2.5 py-2">
-                          <span className="text-lg leading-none">{pickedEl.icon}</span>
-                          <div className="flex-1 min-w-0">
-                            <p className="text-sm font-semibold truncate">{pickedEl.name}</p>
-                            <p className="text-[10px] text-foreground/50">{pickedEl.description}</p>
-                            <p className="text-[10px] text-foreground/40">
-                              {pickedEl.geometry === "polyline" ? "✎ Tegnes som streg" : "📍 Placeres som markør"}
-                            </p>
-                            {pickedEl.tips ? <p className="text-[10px] text-foreground/40 italic">{pickedEl.tips}</p> : null}
-                          </div>
-                          <button
-                            type="button"
-                            className="shrink-0 rounded px-1.5 py-0.5 text-xs text-foreground/40 hover:bg-red-50 hover:text-red-500"
-                            onClick={() => setCreateSelectedElementId(null)}
-                            title="Vælg en anden"
-                          >
-                            ✕
-                          </button>
-                        </div>
-                      );
-                    })() : (
-                      <div className="space-y-1">
-                        <p className="text-[10px] font-medium text-foreground/50">
-                          {ELEMENT_MODE_ICONS[elementMode as ElementModeKey]} Vælg {ELEMENT_MODE_LABELS[elementMode as ElementModeKey]}:
-                        </p>
-                        <div className="max-h-52 space-y-0.5 overflow-y-auto">
-                          {getInfraElementsForMode(elementMode as ElementModeKey).map((el) => (
-                            <button
-                              key={el.id}
-                              type="button"
-                              className="flex w-full items-center gap-2 rounded border border-transparent px-2 py-1.5 text-left text-xs hover:border-foreground/15 hover:bg-foreground/5 transition-colors"
-                              onClick={() => {
-                                setCreateSelectedElementId(el.id);
-                                // Auto-set the kind
-                                const k = el.featureKind as GardenFeatureKind;
-                                setCreateKind(k);
-                                createKindRef.current = k;
-                              }}
-                            >
-                              <span className="text-base leading-none">{el.icon}</span>
-                              <div className="flex-1 min-w-0">
-                                <span className="font-medium block truncate">{el.name}</span>
-                                <span className="text-[10px] text-foreground/40 block truncate">{el.description}</span>
-                              </div>
-                              <span className="shrink-0 text-[9px] text-foreground/30 rounded bg-foreground/5 px-1 py-0.5">
-                                {el.geometry === "polyline" ? "✎ streg" : "📍 punkt"}
-                              </span>
-                            </button>
-                          ))}
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                )}
-              </>
-            ) : (
-              /* ════════════════════════════════════════════════════════════════
-                 NON-ELEMENT categories: type picker
-                 Area & Condition → SubGroup tabs + scrollable type list
-                 Other → simple <select> dropdown
-                 ════════════════════════════════════════════════════════════════ */
-              <>
-                {/* ── All non-element categories: SubGroup tabs (when 2+) + scrollable type list ── */}
-                <div className="col-span-2 space-y-2">
-                    <label className="block text-[11px] font-semibold text-foreground/60 uppercase tracking-wide">Type</label>
-
-                    {/* SubGroup tab buttons — only when 2+ SubGroups */}
-                    {createKindSubGroups.length > 1 ? (
-                    <div className="grid gap-1.5" style={{ gridTemplateColumns: `repeat(${createKindSubGroups.length}, 1fr)` }}>
-                      {createKindSubGroups.map((sg) => {
-                        const active = (createSubGroupFilter ?? createKindSubGroups[0]) === sg;
-                        const count = createKindOptions.filter((o) => o.subGroup === sg).length;
-                        return (
-                          <button
-                            key={sg}
-                            type="button"
-                            className={`rounded-lg border px-2 py-2 text-[11px] text-center leading-tight transition-all ${
-                              active
-                                ? "border-accent/40 bg-accent-light text-accent-dark font-semibold shadow-sm"
-                                : "border-border bg-background hover:bg-foreground/5 text-foreground/60"
-                            }`}
-                            onClick={() => {
-                              setCreateSubGroupFilter(sg);
-                              const first = createKindOptions.find((o) => o.subGroup === sg);
-                              if (first) {
-                                setCreateKind(first.value);
-                                createKindRef.current = first.value;
-                              }
-                            }}
-                          >
-                            <span className="block">{SUB_GROUP_LABELS[sg] ?? sg}</span>
-                            <span className="block text-[9px] font-normal opacity-60 mt-0.5">{count} typer</span>
-                          </button>
-                        );
-                      })}
-                    </div>
-                    ) : null}
-
-                    {/* Scrollable type list */}
-                    {(() => {
-                      const activeSg = createKindSubGroups.length > 1
-                        ? (createSubGroupFilter ?? createKindSubGroups[0])
-                        : createKindSubGroups[0];
-                      const items = activeSg
-                        ? createKindOptions.filter((o) => o.subGroup === activeSg)
-                        : createKindOptions;
-                      return items.length > 0 ? (
-                        <div className="max-h-52 space-y-0.5 overflow-y-auto">
-                          {items.map((opt) => (
-                            <button
-                              key={opt.value}
-                              type="button"
-                              className={`flex w-full items-center gap-2 rounded-md border px-3 py-2 text-left text-xs transition-all ${
-                                createKind === opt.value
-                                  ? "border-accent/30 bg-accent-light/50 text-accent-dark font-semibold"
-                                  : "border-transparent hover:border-foreground/15 hover:bg-foreground/5 text-foreground/70"
-                              }`}
-                              onClick={() => {
-                                setCreateKind(opt.value);
-                                createKindRef.current = opt.value;
-                                setNewKindError(null);
-                              }}
-                            >
-                              <span className="flex-1 truncate">{opt.label}</span>
-                              {createKind === opt.value ? <span className="text-accent text-[10px]">✓</span> : null}
-                              {canRemoveCreateKind && createKind === opt.value ? (
-                                <span
-                                  role="button"
-                                  tabIndex={0}
-                                  className="shrink-0 rounded px-1 text-foreground/30 hover:text-red-500 hover:bg-red-50"
-                                  onClick={(e) => { e.stopPropagation(); removeKind(opt.value); }}
-                                  title="Fjern denne type"
-                                >
-                                  ✕
-                                </span>
-                              ) : null}
-                            </button>
-                          ))}
-                        </div>
-                      ) : null;
-                    })()}
-
-                    {hiddenInCurrentPalette.length > 0 ? (
-                      <button
-                        type="button"
-                        className="text-[10px] text-foreground/40 hover:text-foreground/70 hover:underline"
-                        onClick={() => restoreHiddenKinds(createPalette)}
-                      >
-                        Gendan {hiddenInCurrentPalette.length} skjulte standardtype{hiddenInCurrentPalette.length > 1 ? "r" : ""}
-                      </button>
-                    ) : null}
-
-                    {/* Ny type */}
-                    <div>
-                      <label className="block text-[11px] font-semibold text-foreground/60 uppercase tracking-wide">Ny type</label>
-                      <div className="mt-1 grid grid-cols-[1fr_auto] gap-2">
-                        <input
-                          className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm shadow-sm"
-                          value={newKindText}
-                          onChange={(e) => setNewKindText(e.target.value)}
-                          placeholder={
-                            createPalette === "area" ? "Fx Orangeri, Hegn"
-                            : createPalette === "condition" ? "Fx Læside, Muldrig jord"
-                            : createPalette === "container" ? "Fx Pottebænk"
-                            : createPalette === "row" ? "Fx Dobbeltrække"
-                            : "Fx Spirebakke"
-                          }
-                        />
-                        <button
-                          type="button"
-                          className="rounded-lg border border-border bg-background px-3 py-2 text-sm font-medium text-foreground/70 hover:bg-foreground/5 transition-colors shadow-sm"
-                          onClick={addCustomKind}
-                        >
-                          Tilføj
-                        </button>
-                      </div>
-                      {newKindError ? <p className="mt-1 text-xs text-foreground/70">{newKindError}</p> : null}
-                    </div>
-                </div>
-              </>
-            )}
-
-            <button
-              type="button"
-              className="col-span-2 rounded-lg bg-accent px-3 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-accent-dark transition-colors"
-              onClick={beginDrawSelectedType}
-              data-tour="create-draw-btn"
-            >
-              {createPalette === "element"
-                ? elementMode === "planter"
-                  ? createSelectedSpeciesId
-                    ? `✚ Placér ${getPlantById(createSelectedSpeciesId)?.icon ?? "🌱"} ${getPlantById(createSelectedSpeciesId)?.name ?? ""}`
-                    : "✚ Placér plante"
-                  : (() => {
-                      const selEl = createSelectedElementId ? getInfraElementById(createSelectedElementId) : null;
-                      if (selEl) {
-                        return selEl.geometry === "polyline"
-                          ? `✎ Tegn ${selEl.icon} ${selEl.name}`
-                          : `✚ Placér ${selEl.icon} ${selEl.name}`;
-                      }
-                      return elementMode === "el" ? "⚡ Vælg el-type først"
-                        : elementMode === "vand" ? "💧 Vælg vandtype først"
-                        : "💡 Vælg lampetype først";
-                    })()
-                : "✎ Tegn område"}
-            </button>
-            <button
-              type="button"
-              className="col-span-2 rounded-lg border border-border bg-background px-3 py-2 text-sm text-foreground/60 hover:bg-foreground/5 transition-colors disabled:opacity-40"
-              onClick={enterSelectMode}
-              disabled={drawMode === "select"}
-              title="Tryk også Esc"
-            >
-              ◎ Markér/pege
-            </button>
-          </div>
+          <CreateTab
+            allPlants={allPlants}
+            plantCountByCategory={plantCountByCategory}
+            drawMode={drawMode}
+            beginDraw={beginDraw}
+            enterSelectMode={enterSelectMode}
+            createKindRef={createKindRef}
+            allKindDefs={allKindDefs}
+            knownKindDefs={KNOWN_KIND_DEFS}
+            onAddCustomKind={handleAddCustomKindForCreate}
+            onRemoveKind={handleRemoveKindForCreate}
+            onRestoreHiddenKinds={restoreHiddenKinds}
+            canRemoveKind={canRemoveKindForCreate}
+            hiddenInCategory={hiddenInCategoryForCreate}
+            onSelectionChange={handleCreateSelectionChange}
+          />
         ) : null}
 
         {sidebarTab === "content" ? (
