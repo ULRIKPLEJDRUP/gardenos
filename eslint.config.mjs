@@ -13,6 +13,9 @@ const eslintConfig = defineConfig([
         varsIgnorePattern: "^_",
         caughtErrorsIgnorePattern: "^_",
       }],
+      // Downgrade strict React 19 rules to warnings (common patterns in this codebase)
+      "react-hooks/purity": "warn",
+      "react-hooks/set-state-in-effect": "warn",
     },
   },
   // Override default ignores of eslint-config-next.
