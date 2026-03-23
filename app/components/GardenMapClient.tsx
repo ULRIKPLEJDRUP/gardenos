@@ -6,7 +6,8 @@ import "leaflet-draw";
 import "leaflet-path-drag";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { MapContainer, Marker, Popup, TileLayer, WMSTileLayer, useMap, useMapEvents } from "react-leaflet";
-import { setCurrentUser, userKey, pullFromServer, markDirty } from "../lib/userStorage";
+import { setCurrentUser, userKey, pullFromServer, markDirty, onSyncStatusChange, getSyncStatus } from "../lib/userStorage";
+import type { SyncStatus } from "../lib/userStorage";
 import { signOut, useSession } from "next-auth/react";
 import {
   getAllPlants,
@@ -191,6 +192,15 @@ import {
   monthNameDa,
 } from "../lib/smartRecommendations";
 import type { SmartStrategy, SmartContext } from "../lib/smartRecommendations";
+import {
+  buildGardenCalendar,
+  getUpcomingActivities,
+  ACTIVITY_CONFIG,
+  MONTH_NAMES_DA,
+  MONTH_SHORT_DA,
+  type CalendarMonth,
+  type CalendarActivity,
+} from "../lib/gardenCalendar";
 
 // ---------------------------------------------------------------------------
 // NOTE: We no longer use Leaflet.draw's L.EditToolbar.Edit for editing.
@@ -3133,6 +3143,12 @@ export function GardenMapClient({ userId }: { userId: string }) {
   const [taskVersion, setTaskVersion] = useState(0);
   const [taskSavedFlash, setTaskSavedFlash] = useState<string | false>(false);
 
+  // ── Sync status ──
+  const [syncStatus, setSyncStatusState] = useState<SyncStatus>(getSyncStatus);
+  useEffect(() => {
+    return onSyncStatusChange(setSyncStatusState);
+  }, []);
+
   // ── Journal / Dagbog state ──
   const [journalVersion, setJournalVersion] = useState(0);
   const [journalAdding, setJournalAdding] = useState(false);
@@ -3143,6 +3159,16 @@ export function GardenMapClient({ userId }: { userId: string }) {
   const [journalDraftCategory, setJournalDraftCategory] = useState<JournalCategory>("observation");
   const [journalDraftDate, setJournalDraftDate] = useState(() => new Date().toISOString().slice(0, 10));
   const [journalConfirmDelete, setJournalConfirmDelete] = useState<string | null>(null);
+
+  // ── User settings modal state ──
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [settingsCurrentPw, setSettingsCurrentPw] = useState("");
+  const [settingsNewPw, setSettingsNewPw] = useState("");
+  const [settingsNewPw2, setSettingsNewPw2] = useState("");
+  const [settingsName, setSettingsName] = useState("");
+  const [settingsError, setSettingsError] = useState<string | null>(null);
+  const [settingsSuccess, setSettingsSuccess] = useState<string | null>(null);
+  const [settingsSaving, setSettingsSaving] = useState(false);
 
   // ── Saved Designs state ──
   const [savedDesigns, setSavedDesigns] = useState<SavedDesign[]>([]);
@@ -7868,7 +7894,7 @@ export function GardenMapClient({ userId }: { userId: string }) {
                   autoFocus
                 />
                 {addressSearching && <span className="animate-spin text-[10px]">⏳</span>}
-                <button type="button" className="text-foreground/40 hover:text-foreground/70 text-xs px-0.5" onClick={() => { setShowAddressSearch(false); setAddressResults([]); setAddressQuery(""); }}>✕</button>
+                <button type="button" className="text-foreground/40 hover:text-foreground/70 text-xs px-0.5" onClick={() => { setShowAddressSearch(false); setAddressResults([]); setAddressQuery(""); }} aria-label="Luk adressesøgning">✕</button>
               </div>
             ) : (
               <button
@@ -8567,6 +8593,7 @@ export function GardenMapClient({ userId }: { userId: string }) {
                   type="button"
                   className="rounded-md p-1 text-foreground/40 hover:bg-foreground/5 hover:text-foreground/70 transition-colors"
                   onClick={() => setGuideAiOpen(false)}
+                  aria-label="Luk app-guide"
                 >✕</button>
               </div>
               {/* Messages */}
@@ -8615,6 +8642,7 @@ export function GardenMapClient({ userId }: { userId: string }) {
                     type="submit"
                     disabled={guideAiLoading || !guideAiInput.trim()}
                     className="rounded-lg bg-accent px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-40 hover:bg-accent/90 transition-colors"
+                    aria-label="Send besked"
                   >→</button>
                 </form>
               </div>
@@ -8757,6 +8785,7 @@ export function GardenMapClient({ userId }: { userId: string }) {
                   if (tab.id !== "groups") setHighlightedGroupId(null);
                 }}
                 title={isDisabled ? "Vælg noget på kortet først" : tab.label}
+                aria-label={tab.label}
               >
                 <span className="text-[17px] leading-none">{tab.icon}</span>
                 <span className={`text-[7px] font-semibold leading-tight tracking-tight whitespace-nowrap mt-0.5 ${
@@ -8823,18 +8852,68 @@ export function GardenMapClient({ userId }: { userId: string }) {
           </a>
         )}
         {sessionData?.user && (
-          <div className="flex flex-col items-center justify-center w-10 h-10 text-foreground/30" title={sessionData.user.name || sessionData.user.email || ""}>
+          <button
+            type="button"
+            className="flex flex-col items-center justify-center w-10 h-10 rounded-xl text-foreground/30 hover:bg-foreground/5 hover:text-foreground/50 transition-all"
+            title="Indstillinger"
+            onClick={() => {
+              setSettingsOpen(true);
+              setSettingsName(sessionData.user?.name || "");
+              setSettingsCurrentPw("");
+              setSettingsNewPw("");
+              setSettingsNewPw2("");
+              setSettingsError(null);
+              setSettingsSuccess(null);
+            }}
+            aria-label="Brugerindstillinger"
+          >
             <span className="text-[15px] leading-none">👤</span>
             <span className="text-[6px] font-medium mt-0.5 truncate max-w-[40px] text-center">
               {(sessionData.user.name || sessionData.user.email || "").split(/[\s@]/)[0]}
             </span>
-          </div>
+          </button>
         )}
+        {/* Sync status indicator */}
+        <div
+          role="status"
+          aria-live="polite"
+          className={`flex flex-col items-center justify-center w-10 h-6 transition-all ${
+            syncStatus === "idle" ? "text-green-500/50" :
+            syncStatus === "syncing" ? "text-blue-500" :
+            syncStatus === "dirty" ? "text-amber-500" :
+            syncStatus === "offline" ? "text-orange-500" :
+            "text-red-500"
+          }`}
+          title={
+            syncStatus === "idle" ? "Synkroniseret ✓" :
+            syncStatus === "syncing" ? "Synkroniserer…" :
+            syncStatus === "dirty" ? "Ændringer venter…" :
+            syncStatus === "offline" ? "Offline — prøver igen" :
+            "Synkfejl"
+          }
+          aria-label={`Synkstatus: ${syncStatus}`}
+        >
+          <span className={`text-[13px] leading-none ${syncStatus === "syncing" ? "animate-spin" : ""}`}>
+            {syncStatus === "idle" ? "☁️" :
+             syncStatus === "syncing" ? "🔄" :
+             syncStatus === "dirty" ? "💾" :
+             syncStatus === "offline" ? "📡" :
+             "⚠️"}
+          </span>
+          <span className="text-[6px] font-medium mt-0.5">
+            {syncStatus === "idle" ? "Synk ✓" :
+             syncStatus === "syncing" ? "Synk…" :
+             syncStatus === "dirty" ? "Gemmer…" :
+             syncStatus === "offline" ? "Offline" :
+             "Fejl"}
+          </span>
+        </div>
         <button
           type="button"
           className="flex flex-col items-center justify-center w-10 h-10 rounded-xl text-foreground/35 hover:bg-red-50 hover:text-red-500 transition-all mb-1"
           onClick={() => signOut({ callbackUrl: "/login" })}
           title="Log ud"
+          aria-label="Log ud"
         >
           <span className="text-[17px] leading-none">🚪</span>
           <span className="text-[7px] font-semibold mt-0.5 text-foreground/30">Log ud</span>
@@ -8875,6 +8954,7 @@ export function GardenMapClient({ userId }: { userId: string }) {
             className="rounded-md p-1 text-foreground/40 hover:bg-foreground/5 hover:text-foreground/70 transition-colors"
             onClick={() => { setSidebarPanelOpen(false); closeMobileSidebar(); }}
             title="Luk panel"
+            aria-label="Luk sidepanel"
           >
             ✕
           </button>
@@ -9663,7 +9743,7 @@ export function GardenMapClient({ userId }: { userId: string }) {
                               {pickedSpecies?.icon ?? "🌱"} {pickedSpecies?.name} — vælg sort
                               {pickedCap > 0 ? <span className="text-foreground/40 font-normal"> · {pickedCap} stk</span> : null}
                             </span>
-                            <button type="button" className="rounded px-1.5 py-1 text-xs text-foreground/50 hover:bg-foreground/5" onClick={() => { setShowBedPlantPicker(false); setBedPickerSpeciesId(null); }}>✕</button>
+                            <button type="button" className="rounded px-1.5 py-1 text-xs text-foreground/50 hover:bg-foreground/5" onClick={() => { setShowBedPlantPicker(false); setBedPickerSpeciesId(null); }} aria-label="Luk plantevælger">✕</button>
                           </div>
                           <div className="max-h-48 space-y-0.5 overflow-y-auto">
                             <button
@@ -9730,7 +9810,7 @@ export function GardenMapClient({ userId }: { userId: string }) {
                             onChange={(e) => setBedPlantSearch(e.target.value)}
                             autoFocus
                           />
-                          <button type="button" className="rounded px-1.5 py-1.5 text-xs text-foreground/50 hover:bg-foreground/5" onClick={() => setShowBedPlantPicker(false)}>✕</button>
+                          <button type="button" className="rounded px-1.5 py-1.5 text-xs text-foreground/50 hover:bg-foreground/5" onClick={() => setShowBedPlantPicker(false)} aria-label="Luk plantevælger">✕</button>
                         </div>
                         <div className="max-h-40 space-y-0.5 overflow-y-auto">
                           {bedPlantResults.map((plant) => {
@@ -14908,9 +14988,119 @@ export function GardenMapClient({ userId }: { userId: string }) {
               />
             ) : null}
 
-            {planSubTab === "calendar" ? (
-              <YearWheel plantDataVersion={plantDataVersion} plantInstancesVersion={plantInstancesVersion} flashFeatureIds={flashFeatureIds} />
-            ) : null}
+            {planSubTab === "calendar" ? (() => {
+              const currentMonth = new Date().getMonth() + 1;
+              const calendarData = buildGardenCalendar();
+              const upcoming = getUpcomingActivities(calendarData, 2);
+              const totalActivities = calendarData.reduce((s, m) => s + m.activities.length, 0);
+
+              return (
+                <div className="space-y-4">
+                  {/* YearWheel (existing) */}
+                  <YearWheel plantDataVersion={plantDataVersion} plantInstancesVersion={plantInstancesVersion} flashFeatureIds={flashFeatureIds} />
+
+                  {/* ── Auto-generated activity calendar ── */}
+                  <div className="rounded-xl border border-border-light bg-card p-3 space-y-3">
+                    <div className="flex items-center justify-between">
+                      <h3 className="font-semibold text-sm flex items-center gap-1.5">📆 Havekalender</h3>
+                      {totalActivities > 0 && (
+                        <span className="text-xs text-muted bg-background px-2 py-0.5 rounded-full border border-border-light">
+                          {totalActivities} aktivitet{totalActivities !== 1 ? "er" : ""}
+                        </span>
+                      )}
+                    </div>
+
+                    {totalActivities === 0 ? (
+                      <div className="text-center py-6 text-muted text-sm">
+                        <p className="text-2xl mb-2">🌿</p>
+                        <p>Ingen aktiviteter endnu.</p>
+                        <p className="text-xs mt-1">Plant arter i dine bede for at se kalenderen.</p>
+                      </div>
+                    ) : (
+                      <>
+                        {/* Upcoming activities highlight */}
+                        {upcoming.length > 0 && (
+                          <div className="rounded-lg bg-accent/5 border border-accent/20 p-2.5 space-y-1.5">
+                            <p className="text-xs font-medium text-accent flex items-center gap-1">
+                              ⚡ Kommende aktiviteter ({MONTH_NAMES_DA[currentMonth]})
+                            </p>
+                            <div className="space-y-1">
+                              {upcoming.slice(0, 5).map((act, i) => (
+                                <div key={`upcoming-${i}`} className="flex items-center gap-1.5 text-xs">
+                                  <span>{act.icon}</span>
+                                  <span className="font-medium">{act.plantName}</span>
+                                  <span className="text-muted">— {ACTIVITY_CONFIG[act.type].label}</span>
+                                </div>
+                              ))}
+                              {upcoming.length > 5 && (
+                                <p className="text-xs text-muted">+{upcoming.length - 5} mere…</p>
+                              )}
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Month-by-month grid */}
+                        <div className="grid grid-cols-3 gap-1.5">
+                          {calendarData.map((cm) => {
+                            const isCurrent = cm.month === currentMonth;
+                            const hasActivities = cm.activities.length > 0;
+                            return (
+                              <div
+                                key={cm.month}
+                                className={`rounded-lg border p-2 text-xs transition-all ${
+                                  isCurrent
+                                    ? "border-accent bg-accent/10 ring-1 ring-accent/30"
+                                    : hasActivities
+                                      ? "border-border-light bg-background hover:bg-foreground/5"
+                                      : "border-border-light/50 bg-background/50 opacity-50"
+                                }`}
+                              >
+                                <p className={`font-semibold mb-1 ${isCurrent ? "text-accent" : ""}`}>
+                                  {MONTH_SHORT_DA[cm.month]}
+                                </p>
+                                {cm.activities.length > 0 ? (
+                                  <div className="space-y-0.5">
+                                    {cm.activities.slice(0, 3).map((act, j) => (
+                                      <div key={j} className="flex items-center gap-0.5 text-[10px] leading-tight truncate">
+                                        <span>{act.icon}</span>
+                                        <span className="truncate">{act.plantName}</span>
+                                      </div>
+                                    ))}
+                                    {cm.activities.length > 3 && (
+                                      <p className="text-[10px] text-muted">+{cm.activities.length - 3}</p>
+                                    )}
+                                  </div>
+                                ) : (
+                                  <p className="text-[10px] text-muted italic">—</p>
+                                )}
+                              </div>
+                            );
+                          })}
+                        </div>
+
+                        {/* Detailed month view for current month */}
+                        {calendarData[currentMonth - 1]?.activities.length > 0 && (
+                          <div className="rounded-lg border border-border-light p-3 space-y-2">
+                            <p className="text-xs font-semibold">{MONTH_NAMES_DA[currentMonth]} — detaljer</p>
+                            <div className="space-y-1.5">
+                              {calendarData[currentMonth - 1].activities.map((act, i) => (
+                                <div key={i} className={`flex items-start gap-2 text-xs rounded-md px-2 py-1.5 ${ACTIVITY_CONFIG[act.type].bg}`}>
+                                  <span className="text-base mt-0.5">{act.icon}</span>
+                                  <div className="min-w-0 flex-1">
+                                    <p className={`font-medium ${ACTIVITY_CONFIG[act.type].color}`}>{ACTIVITY_CONFIG[act.type].label}</p>
+                                    <p className="text-foreground/70 truncate">{act.plantName}</p>
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                      </>
+                    )}
+                  </div>
+                </div>
+              );
+            })() : null}
 
             {/* ══════════════════════════════════════════════════════════ */}
             {/* ── NOTER SUB-TAB ── collect all notes across the system  */}
@@ -16311,7 +16501,7 @@ export function GardenMapClient({ userId }: { userId: string }) {
                                 autoFocus
                               />
                               <span className="text-[9px] text-foreground/40">z{bm.zoom.toFixed(0)}</span>
-                              <button type="button" className="text-[10px] text-accent" onClick={() => setEditingBookmarkId(null)}>✓</button>
+                              <button type="button" className="text-[10px] text-accent" onClick={() => setEditingBookmarkId(null)} aria-label="Gem bogmærkenavn">✓</button>
                             </>
                           ) : (
                             <>
@@ -16477,7 +16667,7 @@ export function GardenMapClient({ userId }: { userId: string }) {
                                 onKeyDown={(e) => { if (e.key === "Enter") { updateAnchor(anc.id, { name: (e.target as HTMLInputElement).value || anc.name }); setEditingAnchorId(null); } }}
                                 autoFocus
                               />
-                              <button type="button" className="text-[10px] text-orange-600" onClick={() => setEditingAnchorId(null)}>✓</button>
+                              <button type="button" className="text-[10px] text-orange-600" onClick={() => setEditingAnchorId(null)} aria-label="Gem ankernavn">✓</button>
                             </>
                           ) : (
                             <>
@@ -17619,8 +17809,8 @@ export function GardenMapClient({ userId }: { userId: string }) {
                               autoFocus
                               maxLength={40}
                             />
-                            <button type="button" className="text-[10px] text-accent font-medium" onClick={() => handleRename(design.id)}>✓</button>
-                            <button type="button" className="text-[10px] text-foreground/40" onClick={() => setDesignRenamingId(null)}>✕</button>
+                            <button type="button" className="text-[10px] text-accent font-medium" onClick={() => handleRename(design.id)} aria-label="Gem designnavn">✓</button>
+                            <button type="button" className="text-[10px] text-foreground/40" onClick={() => setDesignRenamingId(null)} aria-label="Annullér omdøbning">✕</button>
                           </div>
                         ) : (
                           <span className="text-sm font-semibold text-foreground/80 truncate">{design.name}</span>
@@ -17895,6 +18085,8 @@ export function GardenMapClient({ userId }: { userId: string }) {
       {/* ── Toast Notification ── */}
       {toastMsg && (
         <div
+          role="alert"
+          aria-live="assertive"
           className={`fixed bottom-6 left-1/2 z-[10000] -translate-x-1/2 max-w-[90vw] md:max-w-lg rounded-xl border px-4 py-3 shadow-xl backdrop-blur-sm transition-all animate-in slide-in-from-bottom-4 duration-300 ${
             toastType === "error"   ? "border-red-400/40 bg-red-50/95 text-red-800 dark:bg-red-950/90 dark:text-red-200 dark:border-red-500/30"
           : toastType === "warning" ? "border-amber-400/40 bg-amber-50/95 text-amber-800 dark:bg-amber-950/90 dark:text-amber-200 dark:border-amber-500/30"
@@ -17907,7 +18099,7 @@ export function GardenMapClient({ userId }: { userId: string }) {
               {toastType === "error" ? "🚫" : toastType === "warning" ? "⚠️" : toastType === "success" ? "✅" : "ℹ️"}
             </span>
             <p className="text-xs leading-relaxed whitespace-pre-line flex-1">{toastMsg}</p>
-            <button type="button" onClick={() => setToastMsg(null)} className="text-current/50 hover:text-current ml-1 text-sm leading-none">✕</button>
+            <button type="button" onClick={() => setToastMsg(null)} className="text-current/50 hover:text-current ml-1 text-sm leading-none" aria-label="Luk notifikation">✕</button>
           </div>
         </div>
       )}
@@ -17973,6 +18165,159 @@ export function GardenMapClient({ userId }: { userId: string }) {
           />
         );
       })() : null}
+
+      {/* ── User Settings Modal ── */}
+      {settingsOpen ? (
+        <div className="fixed inset-0 z-[10001] flex items-center justify-center bg-black/40" onClick={() => setSettingsOpen(false)}>
+          <div
+            className="bg-background rounded-2xl shadow-2xl border border-border w-[90vw] max-w-md p-5 space-y-4"
+            onClick={(e) => e.stopPropagation()}
+            role="dialog"
+            aria-modal="true"
+            aria-label="Brugerindstillinger"
+          >
+            <div className="flex items-center justify-between">
+              <h2 className="text-base font-bold text-foreground/80">⚙️ Indstillinger</h2>
+              <button
+                type="button"
+                className="w-7 h-7 rounded-lg hover:bg-foreground/10 flex items-center justify-center text-foreground/40 text-lg"
+                onClick={() => setSettingsOpen(false)}
+                aria-label="Luk indstillinger"
+              >×</button>
+            </div>
+
+            {/* Profile info */}
+            <div className="rounded-lg border border-border bg-foreground/[0.02] p-3 space-y-2">
+              <p className="text-[10px] font-semibold text-foreground/40 uppercase tracking-wide">Profil</p>
+              <div className="text-[11px] text-foreground/60 space-y-1">
+                <p>📧 {sessionData?.user?.email}</p>
+                <p>📅 Oprettet: {sessionData?.user?.id ? "–" : "–"}</p>
+              </div>
+            </div>
+
+            {/* Change name */}
+            <div className="space-y-2">
+              <label className="text-[10px] font-semibold text-foreground/40 uppercase tracking-wide block">Skift navn</label>
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  className="flex-1 rounded-md border border-border bg-background px-2 py-1.5 text-[11px]"
+                  placeholder="Dit navn"
+                  value={settingsName}
+                  onChange={(e) => setSettingsName(e.target.value)}
+                />
+                <button
+                  type="button"
+                  className="rounded-md bg-accent text-white px-3 py-1.5 text-[11px] font-medium hover:bg-accent/90 disabled:opacity-50"
+                  disabled={settingsSaving || !settingsName.trim()}
+                  onClick={async () => {
+                    setSettingsSaving(true);
+                    setSettingsError(null);
+                    setSettingsSuccess(null);
+                    try {
+                      const res = await fetch("/api/user/settings", {
+                        method: "PUT",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ action: "change-name", name: settingsName.trim() }),
+                      });
+                      const data = await res.json();
+                      if (!res.ok) {
+                        setSettingsError(data.error || "Fejl");
+                      } else {
+                        setSettingsSuccess("Navn opdateret ✓");
+                      }
+                    } catch {
+                      setSettingsError("Netværksfejl");
+                    }
+                    setSettingsSaving(false);
+                  }}
+                >
+                  Gem
+                </button>
+              </div>
+            </div>
+
+            {/* Change password */}
+            <div className="space-y-2">
+              <label className="text-[10px] font-semibold text-foreground/40 uppercase tracking-wide block">Skift kodeord</label>
+              <input
+                type="password"
+                className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-[11px]"
+                placeholder="Nuværende kodeord"
+                value={settingsCurrentPw}
+                onChange={(e) => setSettingsCurrentPw(e.target.value)}
+                autoComplete="current-password"
+              />
+              <input
+                type="password"
+                className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-[11px]"
+                placeholder="Nyt kodeord (min. 8 tegn)"
+                value={settingsNewPw}
+                onChange={(e) => setSettingsNewPw(e.target.value)}
+                autoComplete="new-password"
+              />
+              <input
+                type="password"
+                className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-[11px]"
+                placeholder="Gentag nyt kodeord"
+                value={settingsNewPw2}
+                onChange={(e) => setSettingsNewPw2(e.target.value)}
+                autoComplete="new-password"
+              />
+              <button
+                type="button"
+                className="w-full rounded-md bg-accent text-white px-3 py-2 text-[11px] font-medium hover:bg-accent/90 disabled:opacity-50"
+                disabled={settingsSaving || !settingsCurrentPw || !settingsNewPw || settingsNewPw.length < 8 || settingsNewPw !== settingsNewPw2}
+                onClick={async () => {
+                  if (settingsNewPw !== settingsNewPw2) {
+                    setSettingsError("Kodeordene matcher ikke.");
+                    return;
+                  }
+                  setSettingsSaving(true);
+                  setSettingsError(null);
+                  setSettingsSuccess(null);
+                  try {
+                    const res = await fetch("/api/user/settings", {
+                      method: "PUT",
+                      headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify({
+                        action: "change-password",
+                        currentPassword: settingsCurrentPw,
+                        newPassword: settingsNewPw,
+                      }),
+                    });
+                    const data = await res.json();
+                    if (!res.ok) {
+                      setSettingsError(data.error || "Fejl");
+                    } else {
+                      setSettingsSuccess("Kodeord opdateret ✓");
+                      setSettingsCurrentPw("");
+                      setSettingsNewPw("");
+                      setSettingsNewPw2("");
+                    }
+                  } catch {
+                    setSettingsError("Netværksfejl");
+                  }
+                  setSettingsSaving(false);
+                }}
+              >
+                {settingsSaving ? "Gemmer…" : "Opdater kodeord"}
+              </button>
+              {settingsNewPw && settingsNewPw2 && settingsNewPw !== settingsNewPw2 ? (
+                <p className="text-[10px] text-red-500">Kodeordene matcher ikke.</p>
+              ) : null}
+            </div>
+
+            {/* Feedback messages */}
+            {settingsError ? (
+              <div className="rounded-md bg-red-50 border border-red-200 px-3 py-2 text-[11px] text-red-700">{settingsError}</div>
+            ) : null}
+            {settingsSuccess ? (
+              <div className="rounded-md bg-green-50 border border-green-200 px-3 py-2 text-[11px] text-green-700">{settingsSuccess}</div>
+            ) : null}
+          </div>
+        </div>
+      ) : null}
 
       {/* ── Guided Tour ── */}
       <GuidedTour

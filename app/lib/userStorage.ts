@@ -27,6 +27,34 @@
 
 let _userId = "";
 
+// ---------------------------------------------------------------------------
+// Sync status tracking — observable for UI indicator
+// ---------------------------------------------------------------------------
+export type SyncStatus = "idle" | "syncing" | "dirty" | "offline" | "error";
+
+let _syncStatus: SyncStatus = "idle";
+let _lastSyncTime: number | null = null;
+const _syncListeners = new Set<(status: SyncStatus) => void>();
+
+function setSyncStatus(status: SyncStatus): void {
+  if (_syncStatus === status) return;
+  _syncStatus = status;
+  if (status === "idle") _lastSyncTime = Date.now();
+  for (const cb of _syncListeners) cb(status);
+}
+
+/** Subscribe to sync status changes. Returns unsubscribe function. */
+export function onSyncStatusChange(cb: (status: SyncStatus) => void): () => void {
+  _syncListeners.add(cb);
+  return () => { _syncListeners.delete(cb); };
+}
+
+/** Get current sync status. */
+export function getSyncStatus(): SyncStatus { return _syncStatus; }
+
+/** Get timestamp of last successful sync (epoch ms), or null. */
+export function getLastSyncTime(): number | null { return _lastSyncTime; }
+
 /** Set the active user id.  Call once on app mount (before any store reads). */
 export function setCurrentUser(userId: string): void {
   if (_userId === userId) return;         // idempotent
@@ -93,6 +121,7 @@ const MIGRATABLE_KEYS = [
   "gardenos:weather:history:v1",
   "gardenos:soil:profiles:v1",
   "gardenos:soil:log:v1",
+  "gardenos:journal:v1",
 ];
 
 // Keys that are synced to server (subset of MIGRATABLE — excludes ephemeral/device-specific)
@@ -115,6 +144,7 @@ const SYNCABLE_BASE_KEYS = [
   "gardenos:yearwheel:completed:v1",
   "gardenos:soil:profiles:v1",
   "gardenos:soil:log:v1",
+  "gardenos:journal:v1",
 ];
 const SYNCABLE_SHORT_KEYS = new Set(SYNCABLE_BASE_KEYS.map(toSyncKey));
 
@@ -183,6 +213,7 @@ export function pullFromServer(): Promise<void> {
 
   _pullPromise = (async () => {
     try {
+      setSyncStatus("syncing");
       const res = await fetch("/api/sync", { credentials: "include" });
       if (!res.ok) {
         // eslint-disable-next-line no-console
@@ -255,9 +286,12 @@ export function pullFromServer(): Promise<void> {
         // eslint-disable-next-line no-console
         console.log(`[GardenOS] Hentede ${pulled} nøgler fra server`);
       }
+      // Mark sync as idle (unless there are local-dirty keys pending push)
+      if (_dirtyKeys.size === 0) setSyncStatus("idle");
     } catch (err) {
       // eslint-disable-next-line no-console
       console.warn("[GardenOS] Pull fejlede (offline?):", err);
+      setSyncStatus("offline");
     } finally {
       _pullDone = true;
       _pullPromise = null;
@@ -283,6 +317,7 @@ export function markDirty(key: string): void {
   const short = key.startsWith("gardenos:") ? toSyncKey(key) : key;
   if (!SYNCABLE_SHORT_KEYS.has(short)) return; // not a syncable key
   _dirtyKeys.add(short);
+  setSyncStatus("dirty");
   schedulePush();
 }
 
@@ -298,6 +333,8 @@ export async function flushDirty(): Promise<void> {
   if (!_userId) return;
   if (_syncDisabled) { _dirtyKeys.clear(); return; }
 
+  setSyncStatus("syncing");
+
   const entries: Array<{ key: string; value: string }> = [];
   for (const shortKey of _dirtyKeys) {
     const baseKey = SYNCABLE_BASE_KEYS.find((k) => toSyncKey(k) === shortKey);
@@ -309,7 +346,7 @@ export async function flushDirty(): Promise<void> {
   }
   _dirtyKeys.clear();
 
-  if (entries.length === 0) return;
+  if (entries.length === 0) { setSyncStatus("idle"); return; }
 
   try {
     const res = await fetch("/api/sync", {
@@ -324,17 +361,22 @@ export async function flushDirty(): Promise<void> {
       if (res.status >= 500) {
         // Server error — retry later
         for (const e of entries) _dirtyKeys.add(e.key);
+        setSyncStatus("error");
         schedulePush();
       } else {
         // 4xx errors (401, 404) → session is stale, disable sync
         _syncDisabled = true;
+        setSyncStatus("error");
       }
+    } else {
+      setSyncStatus(_dirtyKeys.size > 0 ? "dirty" : "idle");
     }
   } catch {
     // Network error / offline — retry later
     for (const e of entries) _dirtyKeys.add(e.key);
     // eslint-disable-next-line no-console
     console.warn("[GardenOS] Push fejlede (offline?) — prøver igen senere");
+    setSyncStatus("offline");
     schedulePush();
   }
 }

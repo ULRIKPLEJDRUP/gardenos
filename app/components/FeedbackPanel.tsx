@@ -68,6 +68,10 @@ export default function FeedbackPanel({ triggerClassName, triggerContent }: { tr
   const [replyText, setReplyText] = useState("");
   const [replying, setReplying] = useState(false);
 
+  // Unread notification badge
+  const [unreadCount, setUnreadCount] = useState(0);
+  const SEEN_KEY = "gardenos:feedback:lastSeenReplies";
+
   const isAdmin = (session?.user as { role?: string })?.role === "admin";
 
   const fetchItems = useCallback(async () => {
@@ -75,11 +79,17 @@ export default function FeedbackPanel({ triggerClassName, triggerContent }: { tr
     try {
       const res = await fetch("/api/feedback");
       const data = await res.json();
-      if (data.feedback) setItems(data.feedback);
+      if (data.feedback) {
+        setItems(data.feedback);
+        // Calculate unread reply count
+        const totalReplies = (data.feedback as FeedbackItem[]).reduce((s: number, i: FeedbackItem) => s + (i._count?.replies ?? 0), 0);
+        const lastSeen = parseInt(localStorage.getItem(SEEN_KEY) ?? "0", 10);
+        setUnreadCount(Math.max(0, totalReplies - lastSeen));
+      }
       if (typeof data.feedbackEnabled === "boolean") setFeedbackEnabled(data.feedbackEnabled);
     } catch { /* ignore */ }
     setLoading(false);
-  }, []);
+  }, [SEEN_KEY]);
 
   const fetchDetail = useCallback(async (id: string) => {
     setLoading(true);
@@ -95,6 +105,15 @@ export default function FeedbackPanel({ triggerClassName, triggerContent }: { tr
     if (open && view === "list") fetchItems();
   }, [open, view, fetchItems]);
 
+  // Mark replies as seen when user views the list
+  useEffect(() => {
+    if (open && view === "list" && items.length > 0) {
+      const totalReplies = items.reduce((s, i) => s + (i._count?.replies ?? 0), 0);
+      localStorage.setItem(SEEN_KEY, String(totalReplies));
+      setUnreadCount(0);
+    }
+  }, [open, view, items, SEEN_KEY]);
+
   // Check intro seen
   useEffect(() => {
     if (typeof window !== "undefined") {
@@ -102,7 +121,7 @@ export default function FeedbackPanel({ triggerClassName, triggerContent }: { tr
     }
   }, []);
 
-  // Check feedbackEnabled on mount (lightweight)
+  // Check feedbackEnabled on mount + compute unread badge
   useEffect(() => {
     if (!session?.user) return;
     (async () => {
@@ -110,9 +129,15 @@ export default function FeedbackPanel({ triggerClassName, triggerContent }: { tr
         const res = await fetch("/api/feedback");
         const data = await res.json();
         if (typeof data.feedbackEnabled === "boolean") setFeedbackEnabled(data.feedbackEnabled);
+        if (data.feedback) {
+          setItems(data.feedback);
+          const totalReplies = (data.feedback as FeedbackItem[]).reduce((s: number, i: FeedbackItem) => s + (i._count?.replies ?? 0), 0);
+          const lastSeen = parseInt(localStorage.getItem(SEEN_KEY) ?? "0", 10);
+          setUnreadCount(Math.max(0, totalReplies - lastSeen));
+        }
       } catch { /* ignore */ }
     })();
-  }, [session?.user]);
+  }, [session?.user, SEEN_KEY]);
 
   const handleOpen = () => {
     setOpen(true);
@@ -121,6 +146,10 @@ export default function FeedbackPanel({ triggerClassName, triggerContent }: { tr
     } else {
       setView("list");
     }
+    // Mark replies as seen
+    const totalReplies = items.reduce((s, i) => s + (i._count?.replies ?? 0), 0);
+    localStorage.setItem(SEEN_KEY, String(totalReplies));
+    setUnreadCount(0);
   };
 
   const dismissIntro = () => {
@@ -228,9 +257,16 @@ export default function FeedbackPanel({ triggerClassName, triggerContent }: { tr
         className={triggerClassName || "rounded-md px-2 md:px-2.5 py-1.5 text-xs text-foreground/60 hover:bg-foreground/5 transition-colors relative"}
         onClick={handleOpen}
         title="Giv feedback"
+        aria-label={unreadCount > 0 ? `Giv feedback — ${unreadCount} ulæste svar` : "Giv feedback"}
       >
         {triggerContent || (<>💬 <span className="hidden md:inline">Feedback</span></>)}
-        {!triggerContent && items.some((i) => i.status === "fixed") && (
+        {/* Unread reply badge */}
+        {unreadCount > 0 && (
+          <span className="absolute -top-1 -right-1 min-w-[16px] h-[16px] rounded-full bg-red-500 text-white text-[9px] font-bold flex items-center justify-center px-1 leading-none shadow-sm animate-in zoom-in-50 duration-200">
+            {unreadCount > 9 ? "9+" : unreadCount}
+          </span>
+        )}
+        {!triggerContent && items.some((i) => i.status === "fixed") && unreadCount === 0 && (
           <span className="absolute -top-0.5 -right-0.5 w-2 h-2 bg-green-500 rounded-full" />
         )}
       </button>

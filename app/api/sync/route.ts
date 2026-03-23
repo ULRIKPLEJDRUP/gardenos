@@ -27,6 +27,9 @@ const SYNCABLE_KEYS = new Set([
   "tasks:v1",
   "yearwheel:custom:v1",
   "yearwheel:completed:v1",
+  "soil:profiles:v1",
+  "soil:log:v1",
+  "journal:v1",
   // Intentionally excluded:
   //   chat:history:v1, chat:persona:v1  — chat is ephemeral
   //   weather:cache:v1, weather:history:v1  — location-based, re-fetched
