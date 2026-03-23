@@ -13,6 +13,11 @@ export const dynamic = "force-dynamic";
 // ── GET: Fetch all approved icons ──
 export async function GET() {
   try {
+    const session = await auth();
+    if (!session?.user?.id) {
+      return NextResponse.json({ error: "Ikke logget ind." }, { status: 401 });
+    }
+
     const icons = await prisma.iconBank.findMany({
       where: { status: "approved" },
       orderBy: { createdAt: "desc" },

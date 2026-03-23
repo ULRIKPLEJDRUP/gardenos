@@ -60,6 +60,7 @@ import YearWheel from "./YearWheel";
 import TaskList from "./TaskList";
 import FeedbackPanel from "./FeedbackPanel";
 import GuidedTour from "./GuidedTour";
+import ChatPanel from "./ChatPanel";
 import DesignLab from "./DesignLab";
 import type { BedLayout } from "../lib/bedLayoutTypes";
 import { getBedLayout } from "../lib/bedLayoutStore";
@@ -4390,6 +4391,37 @@ export function GardenMapClient({ userId }: { userId: string }) {
     out.sort((a, b) => a.sortCat - b.sortCat || a.sortLabel.localeCompare(b.sortLabel, "da") || a.text.localeCompare(b.text, "da"));
     return out;
   }, [containment.childIdsByContainerId, layoutForContainment, selected]);
+
+  // ── Memoized heavy computations for plan sub-tabs ──
+  const memoCalendar = useMemo(() => buildGardenCalendar(), [plantInstancesVersion, plantDataVersion]);
+  const { rotationPlan: memoRotationPlan, currentYear: memoCurrentYear } = useMemo(() => {
+    const currentYear = getCurrentSeason();
+    return { rotationPlan: buildRotationPlan(layoutForContainment, [currentYear - 3, currentYear + 1]), currentYear };
+  }, [layoutForContainment, plantInstancesVersion]);
+  const memoWateringAdvice = useMemo(() => {
+    const adviceList: BedWateringAdvice[] = [];
+    if (layoutForContainment?.features?.length) {
+      for (const f of layoutForContainment.features) {
+        const props = (f as GardenFeature).properties;
+        const fId = props?.gardenosId;
+        if (!fId) continue;
+        const instances = getInstancesForFeature(fId);
+        if (instances.length === 0) continue;
+        const species = instances
+          .map((inst) => getPlantById(inst.speciesId))
+          .filter(Boolean) as PlantSpecies[];
+        if (species.length === 0) continue;
+        const soilId = props?.soilProfileId as string | undefined;
+        const soilResult = soilId ? getSoilProfileById(soilId) : null;
+        const soil: SoilProfile | null = soilResult ?? null;
+        const bedName = props?.name || props?.kind || "Ukendt";
+        adviceList.push(
+          computeWateringAdvice({ featureId: fId, bedName, weather: weatherData, soilProfile: soil, plantSpecies: species }),
+        );
+      }
+    }
+    return sortByUrgency(adviceList);
+  }, [layoutForContainment, weatherData, plantInstancesVersion, plantDataVersion]);
 
   const applyLayerVisuals = useCallback(
     (layer: L.Layer, selectedId: string | null) => {
@@ -14990,7 +15022,7 @@ export function GardenMapClient({ userId }: { userId: string }) {
 
             {planSubTab === "calendar" ? (() => {
               const currentMonth = new Date().getMonth() + 1;
-              const calendarData = buildGardenCalendar();
+              const calendarData = memoCalendar;
               const upcoming = getUpcomingActivities(calendarData, 2);
               const totalActivities = calendarData.reduce((s, m) => s + m.activities.length, 0);
 
@@ -15237,37 +15269,7 @@ export function GardenMapClient({ userId }: { userId: string }) {
             {/* ── VANDING SUB-TAB ── smart watering advisor              */}
             {/* ══════════════════════════════════════════════════════════ */}
             {planSubTab === "watering" ? (() => {
-              // Build watering advice for all beds/containers with plants
-              const adviceList: BedWateringAdvice[] = [];
-              if (layoutForContainment?.features?.length) {
-                for (const f of layoutForContainment.features) {
-                  const props = (f as GardenFeature).properties;
-                  const fId = props?.gardenosId;
-                  if (!fId) continue;
-                  const instances = getInstancesForFeature(fId);
-                  if (instances.length === 0) continue;
-                  const species = instances
-                    .map((inst) => getPlantById(inst.speciesId))
-                    .filter(Boolean) as PlantSpecies[];
-                  if (species.length === 0) continue;
-
-                  const soilId = props?.soilProfileId as string | undefined;
-                  const soilResult = soilId ? getSoilProfileById(soilId) : null;
-                  const soil: SoilProfile | null = soilResult ?? null;
-                  const bedName = props?.name || props?.kind || "Ukendt";
-
-                  adviceList.push(
-                    computeWateringAdvice({
-                      featureId: fId,
-                      bedName,
-                      weather: weatherData,
-                      soilProfile: soil,
-                      plantSpecies: species,
-                    }),
-                  );
-                }
-              }
-              const sorted = sortByUrgency(adviceList);
+              const sorted = memoWateringAdvice;
               const needsWater = sorted.filter((a) => a.urgency !== "none");
 
               return (
@@ -15364,8 +15366,7 @@ export function GardenMapClient({ userId }: { userId: string }) {
             {/* ── ROTATION SUB-TAB ── multi-year crop rotation planner   */}
             {/* ══════════════════════════════════════════════════════════ */}
             {planSubTab === "rotation" ? (() => {
-              const currentYear = getCurrentSeason();
-              const plan = buildRotationPlan(layoutForContainment, [currentYear - 3, currentYear + 1]);
+              const plan = memoRotationPlan;
 
               return (
                 <div className="space-y-3">
@@ -15389,10 +15390,10 @@ export function GardenMapClient({ userId }: { userId: string }) {
                           <div
                             key={s}
                             className={`flex-1 text-center text-[10px] font-semibold ${
-                              s === currentYear ? "text-accent" : s > currentYear ? "text-foreground/30 italic" : "text-foreground/50"
+                              s === memoCurrentYear ? "text-accent" : s > memoCurrentYear ? "text-foreground/30 italic" : "text-foreground/50"
                             }`}
                           >
-                            {s}{s === currentYear ? " ◀" : ""}
+                            {s}{s === memoCurrentYear ? " ◀" : ""}
                           </div>
                         ))}
                       </div>
@@ -15414,7 +15415,7 @@ export function GardenMapClient({ userId }: { userId: string }) {
                                       ? "border-red-300 bg-red-50"
                                       : cell.families.length > 0
                                         ? "border-border bg-foreground/[0.02]"
-                                        : cell.season > currentYear
+                                        : cell.season > memoCurrentYear
                                           ? "border-dashed border-foreground/10 bg-foreground/[0.01]"
                                           : "border-foreground/5 bg-foreground/[0.01]"
                                   }`}
@@ -15432,7 +15433,7 @@ export function GardenMapClient({ userId }: { userId: string }) {
                                       ))}
                                     </div>
                                   ) : (
-                                    <span className="text-[9px] text-foreground/20">{cell.season > currentYear ? "?" : "–"}</span>
+                                    <span className="text-[9px] text-foreground/20">{cell.season > memoCurrentYear ? "?" : "–"}</span>
                                   )}
                                   {cell.warnings.length > 0 ? (
                                     <span className="text-[8px] text-red-500 block mt-0.5">⚠️</span>
@@ -15782,188 +15783,12 @@ export function GardenMapClient({ userId }: { userId: string }) {
           </div>
         ) : null}
         {sidebarTab === "chat" ? (
-          <div className="mt-3 flex flex-col" style={{ height: "calc(100vh - 220px)" }}>
-
-            {/* Persona selector — 3 dyrkningsfilosofier */}
-            <div className="mb-2" data-tour="chat-personas">
-              <label className="block text-[10px] font-semibold text-foreground/50 uppercase tracking-wide mb-1.5">
-                Dyrkningsfilosofi
-              </label>
-              <div className="space-y-1.5">
-                {[
-                  { id: "conventional", emoji: "🚜", label: "Konventionel", desc: "Fokus på højt udbytte og effektiv drift. Bruger bl.a. kunstgødning (NPK), godkendte sprøjtemidler og klassisk jordbearbejdning. Praktisk og resultat-orienteret." },
-                  { id: "organic", emoji: "🌱", label: "Økolog", desc: "Dyrkning helt uden syntetisk kemi. Bygger på kompost, grøngødning, nyttedyr og sædskifte. Fokus på jordens mikroliv, biodiversitet og lukkede kredsløb." },
-                  { id: "regenerative", emoji: "♻️", label: "Regenerativ", desc: "Går ud over bæredygtighed — haven skal aktivt genopbygge økosystemet. No-dig, permanent jorddække, polykultur, skovhavens 7 lag og kulstoflagring i jorden." },
-                ].map((p) => (
-                  <button
-                    key={p.id}
-                    type="button"
-                    className={`w-full text-left rounded-lg border px-2.5 py-1.5 transition-all ${
-                      chatPersona === p.id
-                        ? "border-accent/40 bg-accent-light text-accent-dark shadow-sm ring-1 ring-accent/20"
-                        : "border-border bg-background hover:bg-foreground/5 text-foreground/60"
-                    }`}
-                    onClick={() => setChatPersona(p.id)}
-                  >
-                    <div className="flex items-center gap-1.5">
-                      <span className="text-sm">{p.emoji}</span>
-                      <span className="text-[11px] font-semibold">{p.label}</span>
-                    </div>
-                    <div className={`text-[9px] mt-0.5 leading-tight ${
-                      chatPersona === p.id ? "text-accent-dark/60" : "text-foreground/35"
-                    }`}>{p.desc}</div>
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            {/* Chat messages area */}
-            <div className="flex-1 overflow-y-auto rounded-lg border border-border-light bg-white/60 p-2 space-y-2 mb-2 sidebar-scroll" style={{ minHeight: 120 }}>
-              {chatMessages.length === 0 ? (
-                <div className="flex flex-col items-center justify-center h-full text-center py-8">
-                  <div className="text-3xl mb-2">💬</div>
-                  <p className="text-[12px] font-medium text-foreground/60">Spørg din haverådgiver</p>
-                  <p className="text-[10px] text-foreground/40 mt-1 max-w-[200px]">
-                    Stil spørgsmål om dine bede, planter, afstande, såtider – AI&apos;en kender din have!
-                  </p>
-                  <div className="mt-3 space-y-1">
-                    {[
-                      "Hvornår skal jeg så tomater?",
-                      "Hvor tæt kan jeg plante jordbær?",
-                      "Hvad passer godt sammen med gulerødder?",
-                    ].map((q) => (
-                      <button
-                        key={q}
-                        type="button"
-                        className="block w-full text-left text-[10px] text-accent hover:text-accent-dark bg-accent-light/50 hover:bg-accent-light rounded px-2 py-1 transition-colors"
-                        onClick={() => { setChatInput(q); chatInputRef.current?.focus(); }}
-                      >
-                        💡 {q}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              ) : (
-                chatMessages.map((msg, i) => (
-                  <div
-                    key={`${msg.ts}-${i}`}
-                    className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}
-                  >
-                    <div className="max-w-[85%]">
-                      <div
-                        className={`rounded-xl px-3 py-2 text-[12px] leading-relaxed ${
-                          msg.role === "user"
-                            ? "bg-accent text-white rounded-br-sm"
-                            : "bg-foreground/5 text-foreground rounded-bl-sm"
-                        }`}
-                      >
-                        {msg.role === "assistant" ? (
-                          <div className="whitespace-pre-wrap break-words">
-                            {msg.content || (
-                              <span className="inline-flex items-center gap-1 text-foreground/40">
-                                <span className="animate-pulse">●</span>
-                                <span className="animate-pulse" style={{ animationDelay: "0.2s" }}>●</span>
-                                <span className="animate-pulse" style={{ animationDelay: "0.4s" }}>●</span>
-                              </span>
-                            )}
-                          </div>
-                        ) : (
-                          <div className="whitespace-pre-wrap break-words">{msg.content}</div>
-                        )}
-                      </div>
-                      {/* Save assistant message as task */}
-                      {msg.role === "assistant" && msg.content && !chatLoading && (
-                        <button
-                          type="button"
-                          data-tour="chat-save-task"
-                          className="mt-1 flex items-center gap-1.5 rounded-lg border border-violet-200/60 bg-violet-50/60 px-2.5 py-1.5 text-[10px] font-medium text-violet-600 hover:bg-violet-100 hover:border-violet-300 transition-all group"
-                          onClick={() => {
-                            // Parse AI response → clean title (first line), stripped description, auto-extracted month
-                            const parsed = parseAiResponse(msg.content);
-                            createTask({
-                              title: parsed.title,
-                              description: parsed.description,
-                              month: parsed.month,
-                              source: "ai-advisor",
-                            });
-                            setTaskVersion((v) => v + 1);
-                            const mNames = ["","jan","feb","mar","apr","maj","jun","jul","aug","sep","okt","nov","dec"];
-                            const flashMsg = parsed.month
-                              ? `✅ Gemt! «${parsed.title.slice(0, 40)}» → 📅 ${mNames[parsed.month]}`
-                              : `✅ Gemt! «${parsed.title.slice(0, 50)}»`;
-                            setTaskSavedFlash(flashMsg);
-                            setTimeout(() => setTaskSavedFlash(false), 3000);
-                          }}
-                          title="Opret som opgave i Planlæg"
-                        >
-                          <span className="text-xs group-hover:scale-110 transition-transform">📋</span>
-                          <span>Gem som opgave</span>
-                        </button>
-                      )}
-                    </div>
-                  </div>
-                ))
-              )}
-              {chatLoading && chatMessages[chatMessages.length - 1]?.role !== "assistant" && (
-                <div className="flex justify-start">
-                  <div className="bg-foreground/5 rounded-xl px-3 py-2 text-[12px] text-foreground/40">
-                    <span className="animate-pulse">●</span>
-                    <span className="animate-pulse" style={{ animationDelay: "0.2s" }}>●</span>
-                    <span className="animate-pulse" style={{ animationDelay: "0.4s" }}>●</span>
-                  </div>
-                </div>
-              )}
-              <div ref={chatEndRef} />
-            </div>
-
-            {/* Input area */}
-            <div className="flex gap-1 items-end">
-              <textarea
-                ref={chatInputRef}
-                className="flex-1 rounded-lg border border-border-light bg-white px-3 py-2 text-[12px] resize-none focus:outline-none focus:ring-2 focus:ring-accent/30 focus:border-accent transition-all"
-                rows={2}
-                placeholder="Skriv dit spørgsmål..."
-                value={chatInput}
-                onChange={(e) => setChatInput(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter" && !e.shiftKey) {
-                    e.preventDefault();
-                    sendChatMessage();
-                  }
-                }}
-                disabled={chatLoading}
-              />
-              <button
-                type="button"
-                className="rounded-lg bg-accent text-white px-3 py-2 text-[12px] font-medium hover:bg-accent-dark transition-colors disabled:opacity-40"
-                onClick={sendChatMessage}
-                disabled={chatLoading || !chatInput.trim()}
-                title="Send besked"
-              >
-                ➤
-              </button>
-            </div>
-
-            {/* Clear history button */}
-            {chatMessages.length > 0 && (
-              <div className="mt-2 flex items-center justify-center gap-3">
-                <button
-                  type="button"
-                  className="text-[10px] text-foreground/40 hover:text-red-500 transition-colors"
-                  onClick={clearChatHistory}
-                >
-                  🗑 Ryd samtalehistorik
-                </button>
-              </div>
-            )}
-
-            {/* Task saved flash */}
-            {taskSavedFlash && (
-              <div className="mt-1 rounded-lg bg-violet-100 border border-violet-200 px-3 py-1.5 text-[11px] text-violet-700 font-medium text-center animate-pulse">
-                {taskSavedFlash} — Se 📋 Opgaver
-              </div>
-            )}
-          </div>
+          <ChatPanel
+            weatherData={weatherData}
+            weatherStats={weatherStats}
+            weatherStatRange={weatherStatRange}
+            onTaskCreated={() => setTaskVersion((v) => v + 1)}
+          />
         ) : null}
 
         {/* ── Klima Tab ── */}

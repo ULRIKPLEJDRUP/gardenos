@@ -5,6 +5,7 @@
 // extended set of ~600 relevant emoji directly to avoid dependencies.
 // ---------------------------------------------------------------------------
 import { NextRequest, NextResponse } from "next/server";
+import { auth } from "@/auth";
 
 // ---------------------------------------------------------------------------
 // Extended emoji catalogue – ~600 emoji with search keywords
@@ -55,6 +56,11 @@ const SEARCH_INDEX = EXTENDED_EMOJI.map((e) => ({
 }));
 
 export async function GET(request: NextRequest) {
+  const session = await auth();
+  if (!session?.user?.id) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
   const { searchParams } = new URL(request.url);
   const query = searchParams.get("q")?.trim();
 
