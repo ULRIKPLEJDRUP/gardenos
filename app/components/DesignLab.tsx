@@ -18,7 +18,8 @@ import {
 } from "../lib/seasonColors";
 import type { PhaseColors } from "../lib/bedLayoutTypes";
 import { getAllPlants, getPlantById } from "../lib/plantStore";
-import type { PlantSpecies } from "../lib/plantTypes";
+import type { PlantSpecies, PlantFamily } from "../lib/plantTypes";
+import { PLANT_FAMILY_LABELS, PLANT_CATEGORY_LABELS } from "../lib/plantTypes";
 import SeasonTimeline from "./designlab/SeasonTimeline";
 import SuccessionView from "./designlab/SuccessionView";
 import BedGeneratorDialog from "./designlab/BedGeneratorDialog";
@@ -435,6 +436,7 @@ function DesignLabInner({
   // ── Core state ──
   const [month, setMonth] = useState(() => new Date().getMonth() + 1);
   const [viewMode, setViewMode] = useState<"color" | "icon" | "both">("both");
+  const [colorBy, setColorBy] = useState<"season" | "family" | "category" | "harvest">("season");
   const [tool, setTool] = useState<LabTool>("select");
   const [selectedElementId, setSelectedElementId] = useState<string | null>(null);
   const [zoom, setZoom] = useState(1);
@@ -1031,7 +1033,7 @@ function DesignLabInner({
 
   // ── Plant calendar data ──
   const plantCalendars = useMemo(() => {
-    const map = new Map<string, { cal: PlantCalendar; shape: PlantShapeType; category: string }>();
+    const map = new Map<string, { cal: PlantCalendar; shape: PlantShapeType; category: string; family?: PlantFamily; harvestStart?: number; harvestEnd?: number; name: string }>();
     for (const p of plants) {
       // Try to get real species data for better calendar
       const sp = getPlantById(p.speciesId);
@@ -1049,6 +1051,10 @@ function DesignLabInner({
         cal,
         shape: guessPlantShape(sp ?? p),
         category: p.category ?? sp?.category ?? "vegetable",
+        family: sp?.family,
+        harvestStart: sp?.harvest?.from ?? p.harvestStart ?? undefined,
+        harvestEnd: sp?.harvest?.to ?? p.harvestEnd ?? undefined,
+        name: sp?.name ?? p.name,
       });
     }
     // Resolve placed species not already from props
@@ -1060,12 +1066,159 @@ function DesignLabInner({
             cal: calendarFromSpecies(sp),
             shape: guessPlantShape(sp),
             category: sp.category ?? "vegetable",
+            family: sp.family,
+            harvestStart: sp.harvest?.from,
+            harvestEnd: sp.harvest?.to,
+            name: sp.name,
           });
         }
       }
     }
     return map;
   }, [plants, layout.elements, calendarFromSpecies]);
+
+  // ── Color-by helper: compute override colors for non-season modes ──
+  const FAMILY_HEX: Record<string, string> = {
+    solanaceae: "#ef4444", brassicaceae: "#22c55e", fabaceae: "#a855f7",
+    cucurbitaceae: "#f59e0b", apiaceae: "#06b6d4", asteraceae: "#ec4899",
+    amaryllidaceae: "#8b5cf6", poaceae: "#84cc16", lamiaceae: "#14b8a6",
+    rosaceae: "#f43f5e", ranunculaceae: "#60a5fa", saxifragaceae: "#fb923c",
+    paeoniaceae: "#e879f9", iridaceae: "#38bdf8", geraniaceae: "#f472b6",
+    asparagaceae: "#34d399", boraginaceae: "#818cf8", caprifoliaceae: "#fbbf24",
+    vitaceae: "#a78bfa", fagaceae: "#92400e", betulaceae: "#65a30d",
+    other: "#94a3b8",
+  };
+  const CATEGORY_HEX: Record<string, string> = {
+    vegetable: "#22c55e", fruit: "#f59e0b", herb: "#14b8a6",
+    flower: "#ec4899", tree: "#92400e", bush: "#65a30d",
+    perennial: "#8b5cf6", grass: "#84cc16", climber: "#06b6d4",
+    "cover-crop": "#a3e635", "soil-amendment": "#78716c",
+  };
+  const HARVEST_MONTH_HEX: Record<number, string> = {
+    1: "#93c5fd", 2: "#93c5fd", 3: "#86efac", 4: "#86efac",
+    5: "#4ade80", 6: "#22c55e", 7: "#f59e0b", 8: "#f97316",
+    9: "#ef4444", 10: "#dc2626", 11: "#a855f7", 12: "#6366f1",
+  };
+
+  function uniformPhaseColors(hex: string): PhaseColors {
+    return { foliage: hex, stem: hex, accent: null, ground: hex };
+  }
+
+  /** Get PhaseColors for an element, respecting the current colorBy mode. */
+  function getElementColors(speciesId: string | undefined, phase: GrowthPhase, category: string): PhaseColors {
+    if (colorBy === "season" || !speciesId) {
+      return getSeasonColors(phase, undefined, category);
+    }
+    const calEntry = speciesId ? plantCalendars.get(speciesId) : null;
+    if (colorBy === "family") {
+      const fam = calEntry?.family ?? "other";
+      return uniformPhaseColors(FAMILY_HEX[fam] ?? FAMILY_HEX.other);
+    }
+    if (colorBy === "category") {
+      const cat = calEntry?.category ?? category;
+      return uniformPhaseColors(CATEGORY_HEX[cat] ?? "#94a3b8");
+    }
+    if (colorBy === "harvest") {
+      const hStart = calEntry?.harvestStart;
+      if (hStart) return uniformPhaseColors(HARVEST_MONTH_HEX[hStart] ?? "#94a3b8");
+      return uniformPhaseColors("#d4d4d8");
+    }
+    return getSeasonColors(phase, undefined, category);
+  }
+
+  /** Build legend entries for current colorBy mode. */
+  const colorByLegend = useMemo(() => {
+    if (colorBy === "season") return null;
+    const used = new Map<string, { label: string; hex: string }>();
+    for (const el of layout.elements) {
+      if (el.type !== "plant" || !el.speciesId) continue;
+      const calEntry = plantCalendars.get(el.speciesId);
+      if (!calEntry) continue;
+      if (colorBy === "family") {
+        const fam = calEntry.family ?? "other";
+        if (!used.has(fam)) used.set(fam, {
+          label: PLANT_FAMILY_LABELS[fam as PlantFamily] ?? fam,
+          hex: FAMILY_HEX[fam] ?? FAMILY_HEX.other,
+        });
+      } else if (colorBy === "category") {
+        const cat = calEntry.category;
+        if (!used.has(cat)) used.set(cat, {
+          label: PLANT_CATEGORY_LABELS[cat as keyof typeof PLANT_CATEGORY_LABELS] ?? cat,
+          hex: CATEGORY_HEX[cat] ?? "#94a3b8",
+        });
+      } else if (colorBy === "harvest") {
+        const h = calEntry.harvestStart;
+        const key = h ? `month-${h}` : "none";
+        if (!used.has(key)) used.set(key, {
+          label: h ? MONTH_NAMES_DA[h] : "Ingen høst",
+          hex: h ? (HARVEST_MONTH_HEX[h] ?? "#94a3b8") : "#d4d4d8",
+        });
+      }
+    }
+    return [...used.values()].sort((a, b) => a.label.localeCompare(b.label, "da"));
+  }, [colorBy, layout.elements, plantCalendars]);
+
+  // ── Export SVG → PNG ──
+  const handleExportPng = useCallback(() => {
+    const svg = svgRef.current;
+    if (!svg) return;
+    const clone = svg.cloneNode(true) as SVGSVGElement;
+    // Set explicit size for rendering
+    clone.setAttribute("width", String(layout.widthCm * 4));
+    clone.setAttribute("height", String(layout.lengthCm * 4));
+    // Remove transform (zoom/pan) from the clone
+    const mainG = clone.querySelector("g");
+    if (mainG) mainG.removeAttribute("transform");
+    const svgData = new XMLSerializer().serializeToString(clone);
+    const blob = new Blob([svgData], { type: "image/svg+xml;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const img = new Image();
+    img.onload = () => {
+      const canvas = document.createElement("canvas");
+      canvas.width = layout.widthCm * 4;
+      canvas.height = layout.lengthCm * 4;
+      const ctx = canvas.getContext("2d");
+      if (!ctx) return;
+      ctx.fillStyle = "#fff";
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      ctx.drawImage(img, 0, 0);
+      URL.revokeObjectURL(url);
+      canvas.toBlob((pngBlob) => {
+        if (!pngBlob) return;
+        const a = document.createElement("a");
+        a.href = URL.createObjectURL(pngBlob);
+        a.download = `${featureName.replace(/\s+/g, "_")}_${MONTH_NAMES_DA[month]}.png`;
+        a.click();
+        URL.revokeObjectURL(a.href);
+      }, "image/png");
+    };
+    img.src = url;
+  }, [layout, month, featureName]);
+
+  /** Export a text plant list */
+  const handleExportPlantList = useCallback(() => {
+    const lines: string[] = [`Bed-plan: ${featureName}`, `Størrelse: ${(layout.widthCm / 100).toFixed(1)}m × ${(layout.lengthCm / 100).toFixed(1)}m`, ""];
+    const counts = new Map<string, { name: string; count: number; category: string }>();
+    for (const el of layout.elements) {
+      if (el.type !== "plant" || !el.speciesId) continue;
+      const existing = counts.get(el.speciesId);
+      if (existing) { existing.count++; continue; }
+      const calEntry = plantCalendars.get(el.speciesId);
+      counts.set(el.speciesId, { name: calEntry?.name ?? el.speciesId, count: 1, category: calEntry?.category ?? "?" });
+    }
+    lines.push("Planteliste:");
+    for (const [, v] of [...counts.entries()].sort((a, b) => a[1].name.localeCompare(b[1].name, "da"))) {
+      const catLabel = PLANT_CATEGORY_LABELS[v.category as keyof typeof PLANT_CATEGORY_LABELS] ?? v.category;
+      lines.push(`  ${v.name} — ${v.count} stk (${catLabel})`);
+    }
+    lines.push("", `Genereret: ${new Date().toLocaleDateString("da-DK")}`);
+    const blob = new Blob([lines.join("\n")], { type: "text/plain;charset=utf-8" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = `${featureName.replace(/\s+/g, "_")}_planteliste.txt`;
+    a.click();
+    URL.revokeObjectURL(a.href);
+  }, [layout, featureName, plantCalendars]);
 
   // ── Dimension display ──
   const bedWidthM = (layout.widthCm / 100).toFixed(1);
@@ -1152,6 +1305,46 @@ function DesignLabInner({
               {mode === "color" ? "🎨 Farve" : mode === "icon" ? "😀 Ikoner" : "🎨+😀 Begge"}
             </button>
           ))}
+        </div>
+
+        {/* Color-by mode selector */}
+        <div className="flex items-center gap-1.5">
+          <select
+            value={colorBy}
+            onChange={(e) => setColorBy(e.target.value as typeof colorBy)}
+            className="text-[11px] px-2 py-1 rounded-lg border cursor-pointer"
+            style={{
+              borderColor: colorBy !== "season" ? "var(--accent)" : "var(--border)",
+              background: colorBy !== "season" ? "var(--accent-light)" : "var(--toolbar-bg)",
+              color: colorBy !== "season" ? "var(--accent)" : "var(--foreground)",
+            }}
+            title="Vælg farvning"
+          >
+            <option value="season">🕐 Sæson</option>
+            <option value="family">🧬 Familie</option>
+            <option value="category">📂 Kategori</option>
+            <option value="harvest">🌾 Høsttid</option>
+          </select>
+        </div>
+
+        {/* Export buttons */}
+        <div className="flex gap-1">
+          <button
+            onClick={handleExportPng}
+            className="px-2 py-1 text-[11px] rounded-lg border transition-colors hover:bg-[var(--accent-light)]"
+            style={{ borderColor: "var(--border)", color: "var(--foreground)" }}
+            title="Download bed-plan som PNG-billede"
+          >
+            📷 Eksportér
+          </button>
+          <button
+            onClick={handleExportPlantList}
+            className="px-2 py-1 text-[11px] rounded-lg border transition-colors hover:bg-[var(--accent-light)]"
+            style={{ borderColor: "var(--border)", color: "var(--foreground)" }}
+            title="Download planteliste som tekstfil"
+          >
+            📋 Planteliste
+          </button>
         </div>
 
         {/* Compass / Rotation */}
@@ -1448,7 +1641,7 @@ function DesignLabInner({
                   const cal = el.speciesId ? plantCalendars.get(el.speciesId) : null;
                   const phase = cal ? getPhase(cal.cal, month) : "growing";
                   const scale = getPhaseScale(phase);
-                  const colors = getSeasonColors(phase, undefined, cal?.category ?? "vegetable");
+                  const colors = getElementColors(el.speciesId, phase, cal?.category ?? "vegetable");
                   const shape = cal?.shape ?? "leafy";
 
                   return (
@@ -2120,6 +2313,25 @@ function DesignLabInner({
                 </div>
               ))}
             </div>
+            {/* Color-by legend */}
+            {colorByLegend && colorByLegend.length > 0 && (
+              <div className="mt-3 pt-2 border-t" style={{ borderColor: "var(--border)" }}>
+                <h4 className="text-xs font-semibold mb-1.5" style={{ color: "var(--accent)" }}>
+                  {colorBy === "family" ? "🧬 Familier" : colorBy === "category" ? "📂 Kategorier" : "🌾 Høsttid"}
+                </h4>
+                <div className="space-y-0.5">
+                  {colorByLegend.map((entry) => (
+                    <div key={entry.label} className="flex items-center gap-1.5">
+                      <span
+                        className="inline-block w-2.5 h-2.5 rounded-full flex-shrink-0"
+                        style={{ background: entry.hex }}
+                      />
+                      <span style={{ color: "var(--foreground)" }}>{entry.label}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
         </div>
       </div>
