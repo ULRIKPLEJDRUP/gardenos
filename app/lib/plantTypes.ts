@@ -366,6 +366,44 @@ export const DIFFICULTY_LABELS: Record<Difficulty, string> = {
 };
 
 // ---------------------------------------------------------------------------
+// Flower Color Families – for color-themed bed generation
+// ---------------------------------------------------------------------------
+export type PlantColorFamily =
+  | "red"
+  | "orange"
+  | "yellow"
+  | "pink"
+  | "purple"
+  | "blue"
+  | "white"
+  | "green"
+  | "multi";
+
+export const COLOR_FAMILY_LABELS: Record<PlantColorFamily, string> = {
+  red: "🔴 Rød",
+  orange: "🟠 Orange",
+  yellow: "🟡 Gul",
+  pink: "🩷 Pink/Rosa",
+  purple: "🟣 Lilla",
+  blue: "🔵 Blå",
+  white: "⚪ Hvid",
+  green: "🟢 Grøn",
+  multi: "🌈 Flere farver",
+};
+
+export const COLOR_FAMILY_HEX: Record<PlantColorFamily, string> = {
+  red: "#dc2626",
+  orange: "#ea580c",
+  yellow: "#eab308",
+  pink: "#ec4899",
+  purple: "#9333ea",
+  blue: "#2563eb",
+  white: "#f5f5f4",
+  green: "#16a34a",
+  multi: "#a855f7",
+};
+
+// ---------------------------------------------------------------------------
 // Plant Species – the "knowledge record"
 // ---------------------------------------------------------------------------
 export type PlantSpecies = {
@@ -505,6 +543,24 @@ export type PlantSpecies = {
    * that happen to be edible.
    */
   edible?: boolean;
+
+  // ── Visual / bloom properties ──
+  /**
+   * Primary flower/bloom color as a CSS color string (hex or named).
+   * Used for color-themed bed generation ("rødt bed", "lilla have", etc.)
+   * and enhanced visual rendering in Design Lab.
+   */
+  flowerColor?: string;
+  /**
+   * Color family for filtering. Normalised to one of the predefined
+   * color families so users can search by colour theme.
+   */
+  colorFamily?: PlantColorFamily;
+  /**
+   * Bloom months (when the plant has visible flowers / ornamental value).
+   * Used for "flowers all year" bed generation.
+   */
+  bloomMonths?: MonthRange;
 };
 
 /**

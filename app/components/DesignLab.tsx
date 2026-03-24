@@ -19,6 +19,10 @@ import {
 import type { PhaseColors } from "../lib/bedLayoutTypes";
 import { getAllPlants, getPlantById } from "../lib/plantStore";
 import type { PlantSpecies } from "../lib/plantTypes";
+import SeasonTimeline from "./designlab/SeasonTimeline";
+import SuccessionView from "./designlab/SuccessionView";
+import BedGeneratorDialog from "./designlab/BedGeneratorDialog";
+import { autoFillBed } from "../lib/smartAutoFill";
 
 // ---------------------------------------------------------------------------
 // Props
@@ -247,15 +251,139 @@ function PlantShape({
             </>
           )}
 
-          {(shape === "tree-canopy" || shape === "ground-cover" || shape === "climber" ||
-            shape === "bulb" || shape === "grass" || shape === "root-clump") && (
+          {shape === "tree-canopy" && (
             <>
-              <circle cx={0} cy={0} r={r * 0.8} fill={fc} opacity={0.45} />
-              <circle cx={0} cy={0} r={r * 0.5} fill={lightenColor(fc, 15)} opacity={0.5} />
-              <circle cx={0} cy={0} r={r * 0.25} fill={sc} opacity={0.7} />
+              {/* Trunk */}
+              <rect x={-r * 0.08} y={r * 0.15} width={r * 0.16} height={r * 0.55} rx={r * 0.04} fill={sc} opacity={0.8} />
+              {/* Crown layers */}
+              <ellipse cx={0} cy={-r * 0.15} rx={r * 0.85} ry={r * 0.7} fill={fc} opacity={0.4} />
+              <ellipse cx={-r * 0.15} cy={-r * 0.1} rx={r * 0.55} ry={r * 0.5} fill={lightenColor(fc, 10)} opacity={0.5} />
+              <ellipse cx={r * 0.15} cy={-r * 0.2} rx={r * 0.5} ry={r * 0.45} fill={lightenColor(fc, 20)} opacity={0.5} />
+              <ellipse cx={0} cy={-r * 0.25} rx={r * 0.35} ry={r * 0.3} fill={lightenColor(fc, 30)} opacity={0.6} />
+              {phase === "flowering" && ac &&
+                [30, 150, 270].map((angle, i) => {
+                  const rad = (angle * Math.PI) / 180;
+                  return <circle key={`tf${i}`} cx={Math.cos(rad) * r * 0.4} cy={-r * 0.15 + Math.sin(rad) * r * 0.3} r={r * 0.1} fill={ac} opacity={0.85} />;
+                })}
+              {(phase === "fruiting" || phase === "harvesting") && ac &&
+                [45, 135, 225, 315].map((angle, i) => {
+                  const rad = (angle * Math.PI) / 180;
+                  return <circle key={`tp${i}`} cx={Math.cos(rad) * r * 0.35} cy={-r * 0.1 + Math.sin(rad) * r * 0.25} r={r * 0.08} fill={ac} opacity={0.9} />;
+                })}
+            </>
+          )}
+
+          {shape === "ground-cover" && (
+            <>
+              {/* Flat, spreading rosettes */}
+              <ellipse cx={0} cy={0} rx={r * 0.9} ry={r * 0.6} fill={fc} opacity={0.35} />
+              {[0, 60, 120, 180, 240, 300].map((angle, i) => {
+                const rad = (angle * Math.PI) / 180;
+                const d = r * 0.4;
+                return (
+                  <ellipse key={i} cx={Math.cos(rad) * d} cy={Math.sin(rad) * d * 0.65}
+                    rx={r * 0.3} ry={r * 0.22} fill={lightenColor(fc, i * 5)} opacity={0.6}
+                    transform={`rotate(${angle * 0.5} ${Math.cos(rad) * d} ${Math.sin(rad) * d * 0.65})`} />
+                );
+              })}
+              {phase === "flowering" && ac &&
+                [0, 120, 240].map((angle, i) => {
+                  const rad = (angle * Math.PI) / 180;
+                  return <circle key={`gf${i}`} cx={Math.cos(rad) * r * 0.3} cy={Math.sin(rad) * r * 0.2} r={r * 0.08} fill={ac} opacity={0.85} />;
+                })}
+            </>
+          )}
+
+          {shape === "climber" && (
+            <>
+              {/* Central stem */}
+              <line x1={0} y1={r * 0.5} x2={0} y2={-r * 0.6} stroke={sc} strokeWidth={r * 0.06} opacity={0.7} />
+              {/* Vine tendrils + leaves */}
+              {[-1, 1].map((side) => (
+                <g key={side}>
+                  <path d={`M0,${r * 0.1} Q${side * r * 0.5},${-r * 0.1} ${side * r * 0.3},${-r * 0.35}`}
+                    stroke={fc} strokeWidth={r * 0.04} fill="none" opacity={0.7} />
+                  <ellipse cx={side * r * 0.35} cy={r * 0.15} rx={r * 0.2} ry={r * 0.3}
+                    fill={fc} opacity={0.55} transform={`rotate(${side * 25} ${side * r * 0.35} ${r * 0.15})`} />
+                  <ellipse cx={side * r * 0.25} cy={-r * 0.25} rx={r * 0.18} ry={r * 0.25}
+                    fill={lightenColor(fc, 15)} opacity={0.6} transform={`rotate(${side * -15} ${side * r * 0.25} ${-r * 0.25})`} />
+                </g>
+              ))}
+              {/* Curl tendrils */}
+              <path d={`M${r * 0.3},${-r * 0.35} Q${r * 0.55},${-r * 0.5} ${r * 0.4},${-r * 0.6}`}
+                stroke={sc} strokeWidth={r * 0.025} fill="none" opacity={0.5} />
+              {phase === "flowering" && ac &&
+                <circle cx={0} cy={-r * 0.5} r={r * 0.12} fill={ac} opacity={0.85} />}
+            </>
+          )}
+
+          {shape === "bulb" && (
+            <>
+              {/* Underground bulb hint */}
+              <ellipse cx={0} cy={r * 0.35} rx={r * 0.25} ry={r * 0.18} fill={sc} opacity={0.3} />
+              {/* Pointed leaves emerging from center */}
+              {[0, 45, 90, 135, 180, 225, 270, 315].map((angle, i) => {
+                const rad = ((angle - 90) * Math.PI) / 180;
+                const tipX = Math.cos(rad) * r * 0.15;
+                const tipY = Math.sin(rad) * r * 0.15;
+                return (
+                  <ellipse key={i} cx={tipX} cy={tipY - r * 0.15}
+                    rx={r * 0.06} ry={r * 0.45} fill={fc} opacity={0.6}
+                    transform={`rotate(${angle} ${tipX} ${tipY - r * 0.15})`} />
+                );
+              })}
+              <circle cx={0} cy={0} r={r * 0.12} fill={sc} opacity={0.7} />
+              {/* Flower on top */}
               {phase === "flowering" && ac && (
-                <circle cx={r * 0.3} cy={-r * 0.3} r={r * 0.15} fill={ac} opacity={0.85} />
+                <>
+                  {[0, 72, 144, 216, 288].map((angle, i) => {
+                    const rad = (angle * Math.PI) / 180;
+                    return <ellipse key={`bf${i}`} cx={Math.cos(rad) * r * 0.12} cy={-r * 0.4 + Math.sin(rad) * r * 0.12}
+                      rx={r * 0.08} ry={r * 0.14} fill={ac} opacity={0.85}
+                      transform={`rotate(${angle} ${Math.cos(rad) * r * 0.12} ${-r * 0.4 + Math.sin(rad) * r * 0.12})`} />;
+                  })}
+                  <circle cx={0} cy={-r * 0.4} r={r * 0.06} fill="#FFD700" opacity={0.9} />
+                </>
               )}
+            </>
+          )}
+
+          {shape === "grass" && (
+            <>
+              {/* Blade-like vertical leaves */}
+              {[-3, -2, -1, 0, 1, 2, 3].map((i) => {
+                const sway = i * 6 + Math.sin(i * 2.5) * 8;
+                return (
+                  <ellipse key={i} cx={i * r * 0.1} cy={-r * 0.1}
+                    rx={r * 0.04} ry={r * 0.6}
+                    fill={i % 2 === 0 ? fc : lightenColor(fc, 15)} opacity={0.7}
+                    transform={`rotate(${sway} ${i * r * 0.1} ${-r * 0.1})`} />
+                );
+              })}
+              {/* Base tuft */}
+              <ellipse cx={0} cy={r * 0.35} rx={r * 0.35} ry={r * 0.12} fill={sc} opacity={0.4} />
+              {phase === "flowering" && ac &&
+                [-1, 0, 1].map((i) => (
+                  <circle key={`grf${i}`} cx={i * r * 0.15} cy={-r * 0.55} r={r * 0.05} fill={ac} opacity={0.8} />
+                ))}
+            </>
+          )}
+
+          {shape === "root-clump" && (
+            <>
+              {/* Leafy top */}
+              {[0, 60, 120, 180, 240, 300].map((angle, i) => {
+                const rad = (angle * Math.PI) / 180;
+                return (
+                  <ellipse key={i} cx={Math.cos(rad) * r * 0.2} cy={Math.sin(rad) * r * 0.2 - r * 0.15}
+                    rx={r * 0.12} ry={r * 0.35} fill={fc} opacity={0.6}
+                    transform={`rotate(${angle * 0.8 - 10} ${Math.cos(rad) * r * 0.2} ${Math.sin(rad) * r * 0.2 - r * 0.15})`} />
+                );
+              })}
+              <circle cx={0} cy={-r * 0.15} r={r * 0.15} fill={lightenColor(fc, 25)} opacity={0.7} />
+              {/* Root body visible below */}
+              <ellipse cx={0} cy={r * 0.25} rx={r * 0.2} ry={r * 0.35} fill={ac ?? sc} opacity={0.6} />
+              <ellipse cx={0} cy={r * 0.2} rx={r * 0.15} ry={r * 0.25} fill={lightenColor(ac ?? sc, 15)} opacity={0.5} />
             </>
           )}
         </>
@@ -322,7 +450,7 @@ function DesignLabInner({
   const [placingInfraKind, setPlacingInfraKind] = useState<string | null>(null);
   const [ghostPos, setGhostPos] = useState<BedLocalCoord | null>(null);
   const [paletteSearch, setPaletteSearch] = useState("");
-  const [sidebarTab, setSidebarTab] = useState<"palette" | "info" | "ai">("palette");
+  const [sidebarTab, setSidebarTab] = useState<"palette" | "info" | "timeline" | "rotation" | "ai">("palette");
   const [paletteCategory, setPaletteCategory] = useState<string>("all");
 
   // ── Drag state ──
@@ -348,6 +476,9 @@ function DesignLabInner({
   const [aiLoading, setAiLoading] = useState(false);
   const [aiPersona, setAiPersona] = useState<string>("organic");
   const aiScrollRef = useRef<HTMLDivElement>(null);
+
+  // ── Bed Generator dialog ──
+  const [showBedGenerator, setShowBedGenerator] = useState(false);
 
   // ── Layout ──
   const [layout, setLayout] = useState<BedLayout>(() => {
@@ -1172,8 +1303,47 @@ function DesignLabInner({
           max={12}
           value={month}
           onChange={(e) => setMonth(Number(e.target.value))}
-          className="w-40 accent-[var(--accent)]"
+          className="w-32 accent-[var(--accent)]"
         />
+
+        <div className="mx-1 h-5 w-px" style={{ background: "var(--border)" }} />
+
+        {/* Bed generator */}
+        <button
+          onClick={() => setShowBedGenerator(true)}
+          className="px-2.5 py-1 text-[11px] rounded-lg border transition-colors hover:shadow-sm"
+          style={{ borderColor: "var(--accent)", background: "var(--accent-light)", color: "var(--accent)" }}
+          title="Generér et komplet bed med AI"
+        >
+          🪄 Generér bed
+        </button>
+
+        {/* Smart auto-fill with selected species */}
+        <button
+          onClick={() => {
+            const speciesInBed = [...new Set(layout.elements.filter((e) => e.speciesId).map((e) => e.speciesId!))];
+            const species = speciesInBed.map((id) => getPlantById(id)).filter((s): s is PlantSpecies => s != null);
+            if (species.length === 0) {
+              alert("Tilføj mindst én plante til paletten først.");
+              return;
+            }
+            const result = autoFillBed(species, layout.widthCm, layout.lengthCm, layout.outlineCm, layout.elements);
+            if (result.elements.length > 0) {
+              const updated: BedLayout = {
+                ...layout,
+                elements: [...layout.elements, ...result.elements],
+                version: layout.version + 1,
+              };
+              persistLayout(updated);
+            }
+            if (result.warnings.length > 0) alert(result.warnings.join("\n"));
+          }}
+          className="px-2.5 py-1 text-[11px] rounded-lg border transition-colors hover:shadow-sm"
+          style={{ borderColor: "var(--border)", color: "var(--foreground)" }}
+          title="Auto-udfyld bed med eksisterende arter"
+        >
+          📐 Auto-fyld
+        </button>
       </div>
 
       {/* ── Main area: Canvas + Sidebar ── */}
@@ -1466,14 +1636,16 @@ function DesignLabInner({
           style={{ borderColor: "var(--border)", background: "var(--sidebar-bg)" }}
         >
           {/* Sidebar tabs */}
-          <div className="flex border-b" style={{ borderColor: "var(--border)" }}>
+          <div className="flex border-b overflow-x-auto" style={{ borderColor: "var(--border)" }}>
             {([
-              { id: "palette" as const, label: "🌱 Palette" },
+              { id: "palette" as const, label: "🌱 Planter" },
               { id: "info" as const, label: "📊 Info" },
+              { id: "timeline" as const, label: "📅 Tidslinje" },
+              { id: "rotation" as const, label: "🔄 Rotation" },
               { id: "ai" as const, label: "🤖 AI" },
             ]).map((tab) => (
               <button key={tab.id} onClick={() => setSidebarTab(tab.id)}
-                className="flex-1 px-2 py-2 text-[11px] font-medium transition-colors"
+                className="flex-1 px-1.5 py-2 text-[10px] font-medium transition-colors whitespace-nowrap"
                 style={{
                   color: sidebarTab === tab.id ? "var(--accent)" : "var(--muted)",
                   borderBottom: sidebarTab === tab.id ? "2px solid var(--accent)" : "2px solid transparent",
@@ -1787,6 +1959,35 @@ function DesignLabInner({
             </div>
           )}
 
+          {/* ── Timeline tab ── */}
+          {sidebarTab === "timeline" && (
+            <div className="flex-1 overflow-y-auto sidebar-scroll p-3">
+              <h3 className="text-xs font-semibold mb-2" style={{ color: "var(--accent)" }}>
+                📅 Sæsontidslinje
+              </h3>
+              <p className="text-[9px] mb-3" style={{ color: "var(--muted)" }}>
+                Klik på en måned for at ændre sæsonvisningen.
+              </p>
+              <SeasonTimeline
+                elements={layout.elements}
+                plants={plants}
+                currentMonth={month}
+                onMonthChange={setMonth}
+                calendarFromSpecies={calendarFromSpecies}
+              />
+            </div>
+          )}
+
+          {/* ── Rotation tab ── */}
+          {sidebarTab === "rotation" && (
+            <div className="flex-1 overflow-y-auto sidebar-scroll p-3">
+              <SuccessionView
+                elements={layout.elements}
+                featureName={featureName}
+              />
+            </div>
+          )}
+
           {/* ── AI tab ── */}
           {sidebarTab === "ai" && (
             <div className="flex-1 flex flex-col overflow-hidden">
@@ -1922,6 +2123,26 @@ function DesignLabInner({
           </div>
         </div>
       </div>
+
+      {/* ── Bed Generator Dialog ── */}
+      {showBedGenerator && (
+        <BedGeneratorDialog
+          bedWidthCm={layout.widthCm}
+          bedLengthCm={layout.lengthCm}
+          outlineCm={layout.outlineCm}
+          existingElements={layout.elements}
+          onApply={(newElements, description) => {
+            const updated: BedLayout = {
+              ...layout,
+              elements: [...layout.elements, ...newElements],
+              version: layout.version + 1,
+            };
+            persistLayout(updated);
+            setShowBedGenerator(false);
+          }}
+          onClose={() => setShowBedGenerator(false)}
+        />
+      )}
     </div>
   );
 }
