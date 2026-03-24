@@ -796,11 +796,23 @@ function DesignLabInner({
 
   // ── SVG sizing ──
   const svgPadding = 20;
-  const viewBox = useMemo(
-    () =>
-      `${-svgPadding} ${-svgPadding} ${layout.widthCm + svgPadding * 2} ${layout.lengthCm + svgPadding * 2}`,
-    [layout.widthCm, layout.lengthCm]
-  );
+  const viewBox = useMemo(() => {
+    // Include element positions so elements outside the bed outline stay visible
+    let minEX = 0, minEY = 0, maxEX = layout.widthCm, maxEY = layout.lengthCm;
+    for (const el of layout.elements) {
+      const hw = (el.width ?? 10) / 2;
+      const hh = (el.length ?? 10) / 2;
+      if (el.position.x - hw < minEX) minEX = el.position.x - hw;
+      if (el.position.y - hh < minEY) minEY = el.position.y - hh;
+      if (el.position.x + hw > maxEX) maxEX = el.position.x + hw;
+      if (el.position.y + hh > maxEY) maxEY = el.position.y + hh;
+    }
+    const x0 = minEX - svgPadding;
+    const y0 = minEY - svgPadding;
+    const w = maxEX - minEX + svgPadding * 2;
+    const h = maxEY - minEY + svgPadding * 2;
+    return `${x0} ${y0} ${w} ${h}`;
+  }, [layout.widthCm, layout.lengthCm, layout.elements]);
 
   // ── Sun angle (D2) – approximate for Denmark (lat ~56°) ──
   const sunAngle = useMemo(() => {
@@ -1427,12 +1439,12 @@ function DesignLabInner({
         }));
         const newW = Math.max(20, Math.max(...normalizedOutline.map((p) => p.x)));
         const newH = Math.max(20, Math.max(...normalizedOutline.map((p) => p.y)));
-        // Also shift elements to match
+        // Shift elements by the same offset (but do NOT clamp to new bounds)
         const newElements = layout.elements.map((el) => ({
           ...el,
           position: {
-            x: Math.max(2, Math.min(el.position.x - minX, newW - 2)),
-            y: Math.max(2, Math.min(el.position.y - minY, newH - 2)),
+            x: el.position.x - minX,
+            y: el.position.y - minY,
           },
         }));
         const updated: BedLayout = {
@@ -1616,12 +1628,8 @@ function DesignLabInner({
       y: p.y * scaleY,
     }));
 
-    // Optionally reposition elements that fall outside new bounds
-    const newElements = layout.elements.map((el) => {
-      const newX = Math.min(el.position.x, newWidthCm - 5);
-      const newY = Math.min(el.position.y, newLengthCm - 5);
-      return { ...el, position: { x: Math.max(5, newX), y: Math.max(5, newY) } };
-    });
+    // Keep elements at their positions — do NOT force them inside new bounds
+    const newElements = layout.elements;
 
     const updated: BedLayout = {
       ...layout,
