@@ -111,7 +111,8 @@ export type LabTool =
   | "pan"          // drag canvas
   | "place"        // placing a new element
   | "row"          // auto-fill a row
-  | "delete";      // click to remove
+  | "delete"       // click to remove
+  | "ruler";       // click two points → measure distance
 
 /** Snap guide for visual feedback */
 export type SnapGuide = {

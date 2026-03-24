@@ -535,7 +535,7 @@ Klar til at starte implementation? 🚀
 | A3 | **Sæson-transitions (animerede)** | CSS/SVG transitions når man skifter måned — smooth fade/grow/wilt | ✅ |
 | A4 | **Bedre jordtextur** | SVG turbulence-filter for synlig muldjord i stedet for usynlig 8×8 pattern | ✅ |
 | A5 | **Infrastruktur-illustrationer** | Drypslange → bølget linje, trædesten → cirkler, trækant → grain-mønster | ✅ |
-| A6 | **Perspektivisk skygge** | Høje planter kaster større skygger — giver dybdefornemmelse | ⬜ |
+| A6 | **Perspektivisk skygge** | Høje planter kaster større skygger — giver dybdefornemmelse | ✅ |
 | A7 | **Sæsonambience** | Snefnug i vinter, gule blade i efterår, sommerlys i juni | ⬜ |
 
 ### ✏️ B. Bedre redigering
@@ -545,10 +545,10 @@ Klar til at starte implementation? 🚀
 | B1 | **Multi-select + bulk move** | Lasso-selection eller Shift+klik — flyt/slet/kopiér mange på én gang | ✅ |
 | B2 | **Copy/Paste + Duplikér** | ⌘C/⌘V + Alt+drag for hurtig klon | ✅ |
 | B3 | **Drag-from-palette** | Træk plante direkte fra sidebar ind på canvas | ⬜ |
-| B4 | **Afstandsmåler** | Ruler-tool: klik to punkter → viser cm-afstand + companion-status | ⬜ |
+| B4 | **Afstandsmåler** | Ruler-tool: klik to punkter → viser cm-afstand + companion-status | ✅ |
 | B5 | **Element-rotation handles** | Visuelle drag-handles til rotation + resize pr. element | ✅ |
 | B6 | **Højreklik-kontekstmenu** | Kopiér / Slet / Dupliker række / Vis info | ✅ |
-| B7 | **Snap on/off toggle** | Knap til at slå snap-to-grid fra (friplacement) | ⬜ |
+| B7 | **Snap on/off toggle** | Knap til at slå snap-to-grid fra (friplacement) | ✅ |
 | B8 | **Align & distribute** | Justér valgte planter: venstre/center/højre/jævn fordeling | ✅ |
 
 ### 🖥️ C. UI-forbedringer
@@ -556,7 +556,7 @@ Klar til at starte implementation? 🚀
 | # | Feature | Beskrivelse | Status |
 |---|---------|------------|--------|
 | C1 | **Måneds-slider med labels** | "Jan Feb Mar…" under slider + auto-play ▶️ | ✅ |
-| C2 | **Minimap** | Lille overview-kort i hjørnet ved zoom | ⬜ |
+| C2 | **Minimap** | Lille overview-kort i hjørnet ved zoom | ✅ |
 | C3 | **Scale bar** | Målestok-bar (10cm/50cm/1m) der opdaterer ved zoom | ✅ |
 | C4 | **Floating toolbar** | Toolbar svæver over canvas → mere plads | ⬜ |
 | C5 | **Keyboard shortcuts legend** | Tooltip eller ?-dialog med alle shortcuts | ✅ |

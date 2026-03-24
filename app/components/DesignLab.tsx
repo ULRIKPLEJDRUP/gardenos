@@ -19,7 +19,7 @@ import {
 import type { PhaseColors } from "../lib/bedLayoutTypes";
 import { getAllPlants, getPlantById } from "../lib/plantStore";
 import type { PlantSpecies, PlantFamily } from "../lib/plantTypes";
-import { PLANT_FAMILY_LABELS, PLANT_CATEGORY_LABELS } from "../lib/plantTypes";
+import { PLANT_FAMILY_LABELS, PLANT_CATEGORY_LABELS, estimateHeightM } from "../lib/plantTypes";
 import SeasonTimeline from "./designlab/SeasonTimeline";
 import SuccessionView from "./designlab/SuccessionView";
 import BedGeneratorDialog from "./designlab/BedGeneratorDialog";
@@ -614,6 +614,13 @@ function DesignLabInner({
   // ── Companion lines toggle ──
   const [showCompanionLines, setShowCompanionLines] = useState(false);
 
+  // ── Ruler tool state ──
+  const [rulerStart, setRulerStart] = useState<BedLocalCoord | null>(null);
+  const [rulerEnd, setRulerEnd] = useState<BedLocalCoord | null>(null);
+
+  // ── Snap toggle ──
+  const [snapEnabled, setSnapEnabled] = useState(true);
+
   // ── Row tool state ──
   const [rowStart, setRowStart] = useState<BedLocalCoord | null>(null);
 
@@ -923,6 +930,7 @@ function DesignLabInner({
           if (showShortcuts) { setShowShortcuts(false); break; }
           if (contextMenu) { setContextMenu(null); break; }
           if (placingSpeciesId || placingInfraKind) { setPlacingSpeciesId(null); setPlacingInfraKind(null); setTool("select"); setGhostPos(null); setRowStart(null); }
+          else if (rulerStart || rulerEnd) { setRulerStart(null); setRulerEnd(null); if (tool === "ruler") setTool("select"); }
           else if (selectedIds.size > 0) clearSelection();
           else onClose();
           break;
@@ -946,6 +954,8 @@ function DesignLabInner({
           if (placingSpeciesId) { setTool("row"); setRowStart(null); }
           break;
         case "d": case "D": setTool("delete"); break;
+        case "m": case "M": setTool("ruler"); setRulerStart(null); setRulerEnd(null); break;
+        case "g": case "G": setSnapEnabled((v) => !v); break;
         case "?": setShowShortcuts((v) => !v); break;
       }
     }
@@ -1015,7 +1025,7 @@ function DesignLabInner({
         const startSvg = startPt.matrixTransform(ctm.inverse());
         const newX = dragStartRef.current.elemX + (pos.x - startSvg.x);
         const newY = dragStartRef.current.elemY + (pos.y - startSvg.y);
-        const snapped = snapToGrid({ x: newX, y: newY }, 5, layout.outlineCm);
+        const snapped = snapEnabled ? snapToGrid({ x: newX, y: newY }, 5, layout.outlineCm) : { snappedPosition: { x: newX, y: newY }, guides: [] };
         setActiveGuides(snapped.guides.map((g) => ({ x1: g.x1, y1: g.y1, x2: g.x2, y2: g.y2 })));
         setLayout((prev) => ({
           ...prev,
@@ -1048,12 +1058,12 @@ function DesignLabInner({
         return;
       }
       // Ghost preview for placement
-      if ((tool === "place" || tool === "row") && (placingSpeciesId || placingInfraKind)) {
+      if ((tool === "place" || tool === "row" || tool === "ruler") && (placingSpeciesId || placingInfraKind || tool === "ruler")) {
         const pos = svgPointFromEvent(e);
         if (pos) setGhostPos(pos);
       }
     },
-    [isPanning, draggingElementId, rotatingElementId, tool, placingSpeciesId, placingInfraKind, svgPointFromEvent, layout.outlineCm, layout.elements]
+    [isPanning, draggingElementId, rotatingElementId, tool, placingSpeciesId, placingInfraKind, svgPointFromEvent, layout.outlineCm, layout.elements, snapEnabled]
   );
 
   const handlePointerUp = useCallback(
@@ -1116,12 +1126,12 @@ function DesignLabInner({
     const pos = svgPointFromEvent(e);
     if (!pos) return;
     if (tool === "place" && placingSpecies) {
-      const snapped = snapToGrid(pos, 5, layout.outlineCm);
+      const snapped = snapEnabled ? snapToGrid(pos, 5, layout.outlineCm) : { snappedPosition: pos, guides: [] };
       placeElementAt(snapped.snappedPosition, placingSpecies);
       return;
     }
     if (tool === "place" && placingInfraKind) {
-      const snapped = snapToGrid(pos, 5, layout.outlineCm);
+      const snapped = snapEnabled ? snapToGrid(pos, 5, layout.outlineCm) : { snappedPosition: pos, guides: [] };
       if (!pointInBedOutline(snapped.snappedPosition, layout.outlineCm)) return;
       const INFRA_DEFS: Record<string, { type: BedElement["type"]; icon: string; label: string; w: number; l: number }> = {
         "drip-line":   { type: "water",    icon: "💧", label: "Drypslange", w: 100, l: 5 },
@@ -1152,7 +1162,7 @@ function DesignLabInner({
       return;
     }
     if (tool === "row" && placingSpecies) {
-      const snapped = snapToGrid(pos, 5, layout.outlineCm);
+      const snapped = snapEnabled ? snapToGrid(pos, 5, layout.outlineCm) : { snappedPosition: pos, guides: [] };
       if (!rowStart) {
         setRowStart(snapped.snappedPosition);
       } else {
@@ -1165,7 +1175,15 @@ function DesignLabInner({
       clearSelection();
       setContextMenu(null);
     }
-  }, [tool, placingSpecies, placingInfraKind, rowStart, svgPointFromEvent, placeElementAt, placeRow, layout.outlineCm, featureId, persistLayout]);
+    if (tool === "ruler") {
+      if (!rulerStart) {
+        setRulerStart(pos);
+        setRulerEnd(null);
+      } else {
+        setRulerEnd(pos);
+      }
+    }
+  }, [tool, placingSpecies, placingInfraKind, rowStart, rulerStart, svgPointFromEvent, placeElementAt, placeRow, layout.outlineCm, featureId, persistLayout, snapEnabled]);
 
   // ── Element pointer down (select or start drag) ──
   const handleElementPointerDown = useCallback((e: React.PointerEvent, el: BedElement) => {
@@ -1703,6 +1721,7 @@ function DesignLabInner({
             { id: "row" as LabTool, label: "🌾 Række", shortcut: "R" },
             { id: "pan" as LabTool, label: "✋ Panorér", shortcut: "H" },
             { id: "delete" as LabTool, label: "🗑 Slet", shortcut: "D" },
+            { id: "ruler" as LabTool, label: "📏 Mål", shortcut: "M" },
           ]
         ).map((t) => (
           <button
@@ -1711,6 +1730,7 @@ function DesignLabInner({
               setTool(t.id);
               if (t.id === "place" || t.id === "row") setSidebarTab("palette");
               if (t.id !== "place" && t.id !== "row") { setPlacingSpeciesId(null); setGhostPos(null); setRowStart(null); }
+              if (t.id !== "ruler") { setRulerStart(null); setRulerEnd(null); }
             }}
             className={`px-2.5 py-1 text-[11px] rounded-lg border transition-colors ${
               tool === t.id ? "text-white shadow-sm" : ""
@@ -1900,6 +1920,20 @@ function DesignLabInner({
           🤝 Companion
         </button>
 
+        {/* Snap toggle (B7) */}
+        <button
+          onClick={() => setSnapEnabled((v) => !v)}
+          className={`px-2.5 py-1 text-[11px] rounded-lg border transition-colors hover:shadow-sm ${snapEnabled ? "shadow-sm" : ""}`}
+          style={{
+            borderColor: snapEnabled ? "var(--accent)" : "var(--border)",
+            background: snapEnabled ? "var(--accent)" : "transparent",
+            color: snapEnabled ? "#fff" : "var(--foreground)",
+          }}
+          title="Grid-snap til/fra (G)"
+        >
+          🧲 Snap
+        </button>
+
         {/* Align & distribute (only when multi-selected) */}
         {selectedIds.size >= 2 && (
           <>
@@ -2002,7 +2036,7 @@ function DesignLabInner({
       <div className="flex flex-1 overflow-hidden">
         {/* Canvas */}
         <div
-          className="flex-1 flex items-center justify-center overflow-hidden"
+          className="flex-1 relative flex items-center justify-center overflow-hidden"
           style={{ background: "var(--background)", cursor: canvasCursor }}
           onWheel={handleWheel}
           onPointerDown={handlePointerDown}
@@ -2105,6 +2139,39 @@ function DesignLabInner({
                     rx={3}
                     fill={colors.ground}
                     opacity={0.12}
+                  />
+                );
+              })}
+            </g>
+
+            {/* Perspectival shadows (A6) – rendered below plants */}
+            <g>
+              {sortedPlantElements.map((el) => {
+                if (!el.speciesId) return null;
+                const sp = getPlantById(el.speciesId);
+                if (!sp) return null;
+                const heightM = estimateHeightM(sp);
+                if (!heightM || heightM < 0.5) return null; // only show shadow for plants ≥ 0.5m
+                const cal = plantCalendars.get(el.speciesId);
+                const phase = cal ? getPhase(cal.cal, month) : "growing";
+                if (phase === "dormant") return null;
+                const scale = getPhaseScale(phase);
+                const spreadCm = el.width || sp.spreadDiameterCm || sp.spacingCm || 10;
+                const r = (spreadCm / 2) * scale;
+                // Shadow size proportional to plant height: taller = larger shadow
+                const shadowScale = Math.min(heightM / 2, 3); // cap at 3× for very tall trees
+                const shadowRx = r * (1 + shadowScale * 0.4);
+                const shadowRy = r * (0.3 + shadowScale * 0.15);
+                // Shadow offset (light from upper-left → shadow to lower-right)
+                const shadowOffX = heightM * 1.5;
+                const shadowOffY = heightM * 2;
+                return (
+                  <ellipse key={`shadow-${el.id}`}
+                    cx={el.position.x + shadowOffX}
+                    cy={el.position.y + shadowOffY}
+                    rx={shadowRx} ry={shadowRy}
+                    fill="#1a1a1a" opacity={0.08 + Math.min(heightM * 0.02, 0.07)}
+                    transform={el.rotation ? `rotate(${el.rotation} ${el.position.x} ${el.position.y})` : undefined}
                   />
                 );
               })}
@@ -2427,6 +2494,55 @@ function DesignLabInner({
               </g>
             )}
 
+            {/* Ruler tool (B4) */}
+            {tool === "ruler" && (() => {
+              const rEnd = rulerEnd ?? ghostPos;
+              if (!rulerStart || !rEnd) return null;
+              const dx = rEnd.x - rulerStart.x;
+              const dy = rEnd.y - rulerStart.y;
+              const distCm = Math.sqrt(dx * dx + dy * dy);
+              const distLabel = distCm >= 100 ? `${(distCm / 100).toFixed(2)} m` : `${distCm.toFixed(1)} cm`;
+              const mx = (rulerStart.x + rEnd.x) / 2;
+              const my = (rulerStart.y + rEnd.y) / 2;
+              // Perpendicular offset for label
+              const len = Math.max(distCm, 0.01);
+              const nx = -dy / len * 4;
+              const ny = dx / len * 4;
+              // Tick end marks perpendicular to the line
+              const tickLen = 3;
+              const tx = -dy / len * tickLen;
+              const ty = dx / len * tickLen;
+              return (
+                <g>
+                  {/* Measurement line */}
+                  <line x1={rulerStart.x} y1={rulerStart.y} x2={rEnd.x} y2={rEnd.y}
+                    stroke="#f59e0b" strokeWidth={0.8} strokeDasharray="4 2" opacity={0.9} />
+                  {/* Start point */}
+                  <circle cx={rulerStart.x} cy={rulerStart.y} r={1.5} fill="#f59e0b" opacity={0.9} />
+                  {/* End point */}
+                  <circle cx={rEnd.x} cy={rEnd.y} r={1.5} fill="#f59e0b" opacity={0.9} />
+                  {/* Start tick */}
+                  <line x1={rulerStart.x - tx} y1={rulerStart.y - ty}
+                    x2={rulerStart.x + tx} y2={rulerStart.y + ty}
+                    stroke="#f59e0b" strokeWidth={0.6} opacity={0.8} />
+                  {/* End tick */}
+                  <line x1={rEnd.x - tx} y1={rEnd.y - ty}
+                    x2={rEnd.x + tx} y2={rEnd.y + ty}
+                    stroke="#f59e0b" strokeWidth={0.6} opacity={0.8} />
+                  {/* Distance label background */}
+                  <rect x={mx + nx - distLabel.length * 1.3} y={my + ny - 3}
+                    width={distLabel.length * 2.6} height={6}
+                    rx={1.5} fill="rgba(0,0,0,0.7)" />
+                  {/* Distance label */}
+                  <text x={mx + nx} y={my + ny + 1}
+                    textAnchor="middle" dominantBaseline="central"
+                    fontSize="3.5" fontWeight="600" fill="#f59e0b">
+                    {distLabel}
+                  </text>
+                </g>
+              );
+            })()}
+
             {/* Ghost preview for single placement */}
             {tool === "place" && ghostPos && placingSpecies && pointInBedOutline(ghostPos, layout.outlineCm) && (
               <PlantShape shape={guessPlantShape(placingSpecies)} x={ghostPos.x} y={ghostPos.y}
@@ -2512,6 +2628,59 @@ function DesignLabInner({
               );
             })()}
           </svg>
+
+          {/* Minimap overview (C2) – shown when zoomed in */}
+          {zoom > 1.2 && (() => {
+            const mmW = 140;
+            const aspect = layout.lengthCm / layout.widthCm;
+            const mmH = mmW * aspect;
+            // Viewport rectangle in minimap coordinates
+            const vbParts = viewBox.split(" ").map(Number);
+            const [vbX, vbY, vbW, vbH] = vbParts;
+            const scaleX = mmW / layout.widthCm;
+            const scaleY = mmH / layout.lengthCm;
+            const vpX = (vbX + 15) * scaleX; // offset by margin
+            const vpY = (vbY + 15) * scaleY;
+            const vpW = vbW * scaleX;
+            const vpH = vbH * scaleY;
+            return (
+              <div className="absolute bottom-3 left-3 rounded-lg shadow-lg border overflow-hidden"
+                style={{
+                  width: mmW, height: Math.min(mmH, 120),
+                  background: "var(--sidebar-bg, #fff)",
+                  borderColor: "var(--border)",
+                  opacity: 0.85,
+                  pointerEvents: "none",
+                }}>
+                <svg viewBox={`0 0 ${layout.widthCm} ${layout.lengthCm}`}
+                  width={mmW} height={Math.min(mmH, 120)}
+                  preserveAspectRatio="xMidYMid meet">
+                  {/* Bed outline */}
+                  <polygon
+                    points={layout.outlineCm.map((p) => `${p.x},${p.y}`).join(" ")}
+                    fill={GROUND_COLORS[month] ?? "#8B7355"}
+                    stroke="var(--border)" strokeWidth={2}
+                  />
+                  {/* Plant dots */}
+                  {sortedPlantElements.map((el) => (
+                    <circle key={`mm-${el.id}`}
+                      cx={el.position.x} cy={el.position.y}
+                      r={Math.max(2, (el.width || 10) / 4)}
+                      fill="var(--accent, #2d7a3a)" opacity={0.6}
+                    />
+                  ))}
+                  {/* Viewport rectangle */}
+                  <rect
+                    x={vpX / scaleX} y={vpY / scaleY}
+                    width={vpW / scaleX} height={vpH / scaleY}
+                    fill="var(--accent)" fillOpacity={0.1}
+                    stroke="var(--accent)" strokeWidth={2}
+                    strokeDasharray="4 3"
+                  />
+                </svg>
+              </div>
+            );
+          })()}
 
           {/* Context menu (floating) */}
           {contextMenu && (
@@ -3204,6 +3373,8 @@ function DesignLabInner({
                 ["R", "Række-værktøj"],
                 ["H", "Panorér (hånd)"],
                 ["D", "Slet-værktøj"],
+                ["M", "Mål-værktøj (lineal)"],
+                ["G", "Grid snap til/fra"],
                 ["Esc", "Annullér / Luk"],
                 ["⌘A", "Vælg alle"],
                 ["⌘C", "Kopiér"],
