@@ -3,6 +3,7 @@
   "short_name": "GardenOS",
   "description": "Interaktivt havekort til bede, træer, buske og noter.",
   "start_url": "/",
+  "scope": "/",
   "display": "standalone",
   "orientation": "any",
   "background_color": "#f8faf6",
@@ -19,6 +20,29 @@
       "sizes": "512x512",
       "type": "image/svg+xml",
       "purpose": "any maskable"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "Min Have",
+      "short_name": "Dashboard",
+      "description": "Statistik, sundhed og overblik",
+      "url": "/?tab=dashboard",
+      "icons": [{ "src": "/icons/icon-192.svg", "sizes": "192x192" }]
+    },
+    {
+      "name": "Ny opgave",
+      "short_name": "Opgave",
+      "description": "Opret en ny haveopgave",
+      "url": "/?tab=tasks",
+      "icons": [{ "src": "/icons/icon-192.svg", "sizes": "192x192" }]
+    },
+    {
+      "name": "Scan plante",
+      "short_name": "Scan",
+      "description": "Identificér en plante med AI",
+      "url": "/?tab=scan",
+      "icons": [{ "src": "/icons/icon-192.svg", "sizes": "192x192" }]
     }
   ],
   "categories": ["lifestyle", "utilities"],

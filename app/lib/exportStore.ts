@@ -1,10 +1,12 @@
 /**
  * exportStore.ts – Export & Share utilities for GardenOS
- * Supports GeoJSON, CSV plant inventory, and print/PDF generation.
+ * Supports GeoJSON, CSV plant inventory, print/PDF, full backup/restore,
+ * and iCalendar (.ics) export.
  */
 
 /* ─────────────────────── Types ─────────────────────── */
 import type { FeatureCollection, Geometry } from "geojson";
+import type { CalendarMonth } from "./gardenCalendar";
 
 export interface ExportPlantRow {
   bed: string;
@@ -212,4 +214,176 @@ function esc(s: string): string {
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;");
+}
+
+/* ─────────────────────── Full Backup / Restore ─────────────────────── */
+
+/** All localStorage base-keys that constitute a full user backup. */
+const BACKUP_KEYS = [
+  "gardenos:layout:v1",
+  "gardenos:view:v1",
+  "gardenos:kinds:v1",
+  "gardenos:groups:v1",
+  "gardenos:hiddenKinds:v1",
+  "gardenos:hiddenVisKinds:v1",
+  "gardenos:bookmarks:v1",
+  "gardenos:anchors:v1",
+  "gardenos:scanHistory:v1",
+  "gardenos:kindIcons:v1",
+  "gardenos:conflicts:resolved:v1",
+  "gardenos:mobile:pinnedTabs:v1",
+  "gardenos:sidebar:pinnedTabs:v2",
+  "gardenos:chat:history:v1",
+  "gardenos:chat:persona:v1",
+  "gardenos:plants:custom:v1",
+  "gardenos:plants:instances:v1",
+  "gardenos:tasks:v1",
+  "gardenos:yearwheel:custom:v1",
+  "gardenos:yearwheel:completed:v1",
+  "gardenos:weather:cache:v1",
+  "gardenos:weather:history:v1",
+  "gardenos:soil:profiles:v1",
+  "gardenos:soil:log:v1",
+  "gardenos:journal:v1",
+  "gardenos:dismissed-announcements:v1",
+  "gardenos:tour",
+];
+
+export interface GardenBackup {
+  _format: "gardenos-backup";
+  _version: 1;
+  _createdAt: string;
+  data: Record<string, string>;
+}
+
+/**
+ * Export a full backup of all user data from localStorage.
+ * @param userKeyFn – the `userKey()` function from userStorage to scope keys.
+ */
+export function exportFullBackup(
+  userKeyFn: (base: string) => string,
+  gardenName?: string,
+): void {
+  const data: Record<string, string> = {};
+  for (const base of BACKUP_KEYS) {
+    const scoped = userKeyFn(base);
+    const raw = localStorage.getItem(scoped);
+    if (raw !== null) data[base] = raw;
+  }
+
+  const backup: GardenBackup = {
+    _format: "gardenos-backup",
+    _version: 1,
+    _createdAt: new Date().toISOString(),
+    data,
+  };
+
+  const blob = new Blob([JSON.stringify(backup, null, 2)], {
+    type: "application/json",
+  });
+  const name = gardenName?.trim() || "gardenos";
+  downloadBlob(blob, `${name}-backup-${todayStamp()}.json`);
+}
+
+/**
+ * Import a full backup from a JSON file.
+ * @returns number of keys restored, or throws on invalid format.
+ */
+export async function importFullBackup(
+  file: File,
+  userKeyFn: (base: string) => string,
+): Promise<number> {
+  const text = await file.text();
+  const parsed = JSON.parse(text) as unknown;
+
+  if (
+    !parsed ||
+    typeof parsed !== "object" ||
+    (parsed as GardenBackup)._format !== "gardenos-backup"
+  ) {
+    throw new Error("Ugyldigt backup-format – filen er ikke en GardenOS backup.");
+  }
+
+  const backup = parsed as GardenBackup;
+  const data = backup.data;
+  if (!data || typeof data !== "object") {
+    throw new Error("Backup-filen mangler data-sektion.");
+  }
+
+  let count = 0;
+  for (const [base, value] of Object.entries(data)) {
+    if (typeof value === "string") {
+      const scoped = userKeyFn(base);
+      localStorage.setItem(scoped, value);
+      count++;
+    }
+  }
+  return count;
+}
+
+/* ─────────────────────── iCalendar (.ics) Export ─────────────────────── */
+
+function icsEscape(s: string): string {
+  return s.replace(/\\/g, "\\\\").replace(/;/g, "\\;").replace(/,/g, "\\,").replace(/\n/g, "\\n");
+}
+
+function icsDateStr(year: number, month: number, day: number): string {
+  const mm = String(month).padStart(2, "0");
+  const dd = String(day).padStart(2, "0");
+  return `${year}${mm}${dd}`;
+}
+
+/**
+ * Export the garden calendar as an iCalendar (.ics) file.
+ * Each activity becomes an all-day event on the 1st of its month.
+ */
+export function exportICalendar(
+  calendar: CalendarMonth[],
+  gardenName?: string,
+): void {
+  const now = new Date();
+  const year = now.getFullYear();
+  const stamp = now.toISOString().replace(/[-:]/g, "").replace(/\.\d{3}/, "");
+  const name = gardenName?.trim() || "GardenOS";
+
+  const events: string[] = [];
+  for (const cm of calendar) {
+    for (const act of cm.activities) {
+      const uid = `${act.plantId}-${act.featureId}-${act.type}-m${act.month}@gardenos`;
+      const dtStart = icsDateStr(year, act.month, 1);
+      // Last day of month
+      const lastDay = new Date(year, act.month, 0).getDate();
+      const dtEnd = icsDateStr(year, act.month, lastDay);
+
+      events.push(
+        [
+          "BEGIN:VEVENT",
+          `UID:${uid}`,
+          `DTSTAMP:${stamp}`,
+          `DTSTART;VALUE=DATE:${dtStart}`,
+          `DTEND;VALUE=DATE:${dtEnd}`,
+          `SUMMARY:${icsEscape(`${act.icon} ${act.label}: ${act.plantName}`)}`,
+          `DESCRIPTION:${icsEscape(`Bed: ${act.bedName}\\nAktivitet: ${act.label}\\nPlante: ${act.plantName}`)}`,
+          `CATEGORIES:${icsEscape(act.type)}`,
+          "STATUS:CONFIRMED",
+          "TRANSP:TRANSPARENT",
+          "END:VEVENT",
+        ].join("\r\n"),
+      );
+    }
+  }
+
+  const ics = [
+    "BEGIN:VCALENDAR",
+    "VERSION:2.0",
+    `PRODID:-//GardenOS//HaveKalender//DA`,
+    `X-WR-CALNAME:${icsEscape(name)} – Havekalender`,
+    "CALSCALE:GREGORIAN",
+    "METHOD:PUBLISH",
+    ...events,
+    "END:VCALENDAR",
+  ].join("\r\n");
+
+  const blob = new Blob([ics], { type: "text/calendar;charset=utf-8" });
+  downloadBlob(blob, `${name.toLowerCase()}-kalender-${year}.ics`);
 }

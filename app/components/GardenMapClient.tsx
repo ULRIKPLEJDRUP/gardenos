@@ -80,6 +80,12 @@ import type { CreateSelectionInfo } from "./CreateTab";
 import { ContentTab } from "./ContentTab";
 import type { ContentTabHelpers } from "./ContentTab";
 import ViewTab from "./ViewTab";
+import ToastNotification from "./ToastNotification";
+import AnnouncementBanner from "./AnnouncementBanner";
+import { useToast } from "../hooks/useToast";
+import { useAnnouncements } from "../hooks/useAnnouncements";
+import { usePwaInstall } from "../hooks/usePwaInstall";
+import { useOfflineIndicator } from "../hooks/useOfflineIndicator";
 import type { BedLayout } from "../lib/bedLayoutTypes";
 import { checkUrlForSharedBed, saveTemplate } from "../lib/templateStore";
 import { getBedLayout } from "../lib/bedLayoutStore";
@@ -3112,18 +3118,16 @@ export function GardenMapClient({ userId }: { userId: string }) {
   // ── Dashboard (F1) ──
   const [showDashboard, setShowDashboard] = useState(false);
 
-  // ── Announcements (F6) ──
-  const [announcements, setAnnouncements] = useState<{ id: string; message: string; type: string }[]>([]);
-  const [dismissedAnnouncements, setDismissedAnnouncements] = useState<Set<string>>(() => {
-    try {
-      const raw = localStorage.getItem(userKey("gardenos:dismissed-announcements:v1"));
-      return raw ? new Set(JSON.parse(raw) as string[]) : new Set();
-    } catch { return new Set(); }
-  });
+  // ── Announcements (F6) – extracted hook ──
+  const { visible: visibleAnnouncements, dismiss: dismissAnnouncement } = useAnnouncements();
 
-  // ── PWA install prompt (F5) ──
-  const deferredPromptRef = useRef<{ prompt: () => Promise<void>; userChoice: Promise<{ outcome: string }> } | null>(null);
-  const [showInstallBtn, setShowInstallBtn] = useState(false);
+  // ── PWA install prompt (F5) – extracted hook ──
+  const { showInstallBtn, install: handleInstallClick } = usePwaInstall(
+    () => showToast("✅ GardenOS installeret!", "success"),
+  );
+
+  // ── Offline indicator ──
+  const { isOffline, pendingSyncs } = useOfflineIndicator();
 
   // ── Saved Designs state ──
   const [savedDesigns, setSavedDesigns] = useState<SavedDesign[]>([]);
@@ -3281,16 +3285,8 @@ export function GardenMapClient({ userId }: { userId: string }) {
   }, []);
   const [forceStartTour, setForceStartTour] = useState(false);
 
-  // ── Toast notification state (replaces alert()) ──
-  const [toastMsg, setToastMsg] = useState<string | null>(null);
-  const [toastType, setToastType] = useState<"success" | "error" | "warning" | "info">("info");
-  const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const showToast = useCallback((msg: string, type: "success" | "error" | "warning" | "info" = "info") => {
-    if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
-    setToastMsg(msg);
-    setToastType(type);
-    toastTimerRef.current = setTimeout(() => setToastMsg(null), 6000);
-  }, []);
+  // ── Toast notification – extracted hook ──
+  const { toastMsg, toastType, showToast, clearToast } = useToast();
 
   // ── Guide overlay state (floating ❓ on map) ──
   const [guidePopoverOpen, setGuidePopoverOpen] = useState(false);
@@ -3388,9 +3384,9 @@ export function GardenMapClient({ userId }: { userId: string }) {
       url.searchParams.delete("bedshare");
       window.history.replaceState({}, "", url.toString());
       // Notify
-      alert(`🌱 Bed-plan "${shared.name}" er gemt som skabelon!\nÅbn et bed → Design Lab → 📂 Skabeloner for at anvende den.`);
+      showToast(`🌱 Bed-plan "${shared.name}" er gemt som skabelon!\nÅbn et bed → Design Lab → 📂 Skabeloner for at anvende den.`, "success");
     }
-  }, []);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Keyboard shortcuts: ⌘1-⌘9 for sidebar tabs (all tabs, in order)
   useEffect(() => {
@@ -3866,46 +3862,7 @@ export function GardenMapClient({ userId }: { userId: string }) {
     return sortByUrgency(adviceList);
   }, [layoutForContainment, weatherData, plantInstancesVersion, plantDataVersion]);
 
-  // ── F6: Fetch active announcements ──
-  useEffect(() => {
-    let cancelled = false;
-    fetch("/api/admin/announcements").then((r) => r.ok ? r.json() : []).then((data) => {
-      if (!cancelled && Array.isArray(data)) setAnnouncements(data);
-    }).catch(() => {});
-    return () => { cancelled = true; };
-  }, []);
-
-  const dismissAnnouncement = useCallback((id: string) => {
-    setDismissedAnnouncements((prev) => {
-      const next = new Set(prev);
-      next.add(id);
-      try { localStorage.setItem(userKey("gardenos:dismissed-announcements:v1"), JSON.stringify([...next])); } catch {}
-      return next;
-    });
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
-
-  // ── F5: PWA install prompt ──
-  useEffect(() => {
-    const handler = (e: Event) => {
-      e.preventDefault();
-      deferredPromptRef.current = e as unknown as typeof deferredPromptRef.current;
-      setShowInstallBtn(true);
-    };
-    window.addEventListener("beforeinstallprompt", handler);
-    return () => window.removeEventListener("beforeinstallprompt", handler);
-  }, []);
-
-  const handleInstallClick = useCallback(async () => {
-    const prompt = deferredPromptRef.current;
-    if (!prompt) return;
-    await prompt.prompt();
-    const choice = await prompt.userChoice;
-    if (choice.outcome === "accepted") {
-      setShowInstallBtn(false);
-      showToast("✅ GardenOS installeret!", "success");
-    }
-    deferredPromptRef.current = null;
-  }, [showToast]);
+  // ── F5: PWA install prompt (now handled by usePwaInstall hook) ──
 
   // ── F1: Dashboard data (computed from layout + plant instances) ──
   const dashboardData = useMemo((): DashboardData => {
@@ -8841,27 +8798,8 @@ export function GardenMapClient({ userId }: { userId: string }) {
         </div>
       ) : null}
 
-      {/* ── Toast Notification ── */}
-      {toastMsg && (
-        <div
-          role="alert"
-          aria-live="assertive"
-          className={`fixed bottom-6 left-1/2 z-[10000] -translate-x-1/2 max-w-[90vw] md:max-w-lg rounded-xl border px-4 py-3 shadow-xl backdrop-blur-sm transition-all animate-in slide-in-from-bottom-4 duration-300 ${
-            toastType === "error"   ? "border-red-400/40 bg-red-50/95 text-red-800 dark:bg-red-950/90 dark:text-red-200 dark:border-red-500/30"
-          : toastType === "warning" ? "border-amber-400/40 bg-amber-50/95 text-amber-800 dark:bg-amber-950/90 dark:text-amber-200 dark:border-amber-500/30"
-          : toastType === "success" ? "border-green-400/40 bg-green-50/95 text-green-800 dark:bg-green-950/90 dark:text-green-200 dark:border-green-500/30"
-          :                          "border-blue-400/40 bg-blue-50/95 text-blue-800 dark:bg-blue-950/90 dark:text-blue-200 dark:border-blue-500/30"
-          }`}
-        >
-          <div className="flex items-start gap-2">
-            <span className="text-base leading-none mt-0.5">
-              {toastType === "error" ? "🚫" : toastType === "warning" ? "⚠️" : toastType === "success" ? "✅" : "ℹ️"}
-            </span>
-            <p className="text-xs leading-relaxed whitespace-pre-line flex-1">{toastMsg}</p>
-            <button type="button" onClick={() => setToastMsg(null)} className="text-current/50 hover:text-current ml-1 text-sm leading-none" aria-label="Luk notifikation">✕</button>
-          </div>
-        </div>
-      )}
+      {/* ── Toast Notification (extracted component) ── */}
+      <ToastNotification message={toastMsg} type={toastType} onClose={clearToast} />
 
       {/* ── Design Lab Overlay ── */}
       {showDesignLab && selected && selected.feature.geometry.type === "Polygon" ? (() => {
@@ -8926,29 +8864,21 @@ export function GardenMapClient({ userId }: { userId: string }) {
         );
       })() : null}
 
-      {/* ── F6: Announcement banner ── */}
-      {announcements.filter((a) => !dismissedAnnouncements.has(a.id)).length > 0 && (
-        <div className="fixed top-0 left-0 right-0 z-[9600] flex flex-col">
-          {announcements.filter((a) => !dismissedAnnouncements.has(a.id)).map((a) => (
-            <div
-              key={a.id}
-              className={`flex items-center justify-between px-4 py-2 text-xs font-medium shadow-sm ${
-                a.type === "warning" ? "bg-amber-100 text-amber-900 dark:bg-amber-900/80 dark:text-amber-100" :
-                a.type === "success" ? "bg-green-100 text-green-900 dark:bg-green-900/80 dark:text-green-100" :
-                "bg-blue-100 text-blue-900 dark:bg-blue-900/80 dark:text-blue-100"
-              }`}
-            >
-              <span>{a.type === "warning" ? "⚠️" : a.type === "success" ? "✅" : "ℹ️"} {a.message}</span>
-              <button
-                type="button"
-                className="ml-3 rounded px-1.5 py-0.5 hover:bg-black/10 transition-colors"
-                onClick={() => dismissAnnouncement(a.id)}
-                aria-label="Luk"
-              >✕</button>
-            </div>
-          ))}
+      {/* ── Offline indicator ── */}
+      {(isOffline || pendingSyncs > 0) && (
+        <div className="fixed bottom-16 left-1/2 z-[9500] -translate-x-1/2 rounded-full border border-amber-300/60 bg-amber-50/95 px-3 py-1.5 shadow-lg backdrop-blur-sm dark:bg-amber-950/90 dark:border-amber-600/40 dark:text-amber-200">
+          <div className="flex items-center gap-1.5 text-[10px] font-medium text-amber-800 dark:text-amber-200">
+            <span className="relative flex h-2 w-2">
+              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-amber-400 opacity-75" />
+              <span className="relative inline-flex h-2 w-2 rounded-full bg-amber-500" />
+            </span>
+            {isOffline ? "Offline – ændringer gemmes lokalt" : `${pendingSyncs} ændring${pendingSyncs > 1 ? "er" : ""} venter på sync`}
+          </div>
         </div>
       )}
+
+      {/* ── F6: Announcement banner (extracted component) ── */}
+      <AnnouncementBanner announcements={visibleAnnouncements} onDismiss={dismissAnnouncement} />
 
       {/* ── F1: Dashboard overlay ── */}
       {showDashboard && (

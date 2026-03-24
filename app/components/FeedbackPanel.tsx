@@ -7,6 +7,9 @@
 // ---------------------------------------------------------------------------
 import { useSession } from "next-auth/react";
 import { type ReactNode, useCallback, useEffect, useRef, useState } from "react";
+import { useFocusTrap } from "../hooks/useFocusTrap";
+import { useToast } from "../hooks/useToast";
+import ToastNotification from "./ToastNotification";
 
 type FeedbackType = "bug" | "idea" | "question" | "other";
 
@@ -49,6 +52,8 @@ const STATUS_META: Record<string, { emoji: string; label: string; color: string 
 export default function FeedbackPanel({ triggerClassName, triggerContent }: { triggerClassName?: string; triggerContent?: ReactNode } = {}) {
   const { data: session } = useSession();
   const [open, setOpen] = useState(false);
+  const trapRef = useFocusTrap<HTMLDivElement>(open);
+  const { toastMsg, toastType, showToast, clearToast } = useToast();
   const [view, setView] = useState<"intro" | "list" | "new" | "detail">("intro");
   const [items, setItems] = useState<FeedbackItem[]>([]);
   const [detail, setDetail] = useState<FeedbackDetail | null>(null);
@@ -162,7 +167,7 @@ export default function FeedbackPanel({ triggerClassName, triggerContent }: { tr
     const file = e.target.files?.[0];
     if (!file) return;
     if (file.size > 2 * 1024 * 1024) {
-      alert("Billedet er for stort – max 2MB");
+      showToast("Billedet er for stort – max 2MB", "warning");
       return;
     }
     const reader = new FileReader();
@@ -186,7 +191,7 @@ export default function FeedbackPanel({ triggerClassName, triggerContent }: { tr
 
   const submitFeedback = async () => {
     if (!fbTitle.trim() || !fbDesc.trim()) {
-      alert("Titel og beskrivelse er påkrævet.");
+      showToast("Titel og beskrivelse er påkrævet.", "warning");
       return;
     }
     setSubmitting(true);
@@ -211,10 +216,10 @@ export default function FeedbackPanel({ triggerClassName, triggerContent }: { tr
         fetchItems();
       } else {
         const data = await res.json();
-        alert(data.error || "Kunne ikke oprette feedback");
+        showToast(data.error || "Kunne ikke oprette feedback", "error");
       }
     } catch {
-      alert("Netværksfejl – prøv igen");
+      showToast("Netværksfejl – prøv igen", "error");
     }
     setSubmitting(false);
   };
@@ -236,10 +241,10 @@ export default function FeedbackPanel({ triggerClassName, triggerContent }: { tr
         fetchDetail(detail.id);
       } else {
         const data = await res.json();
-        alert(data.error || "Kunne ikke sende svar");
+        showToast(data.error || "Kunne ikke sende svar", "error");
       }
     } catch {
-      alert("Netværksfejl");
+      showToast("Netværksfejl", "error");
     }
     setReplying(false);
   };
@@ -281,7 +286,7 @@ export default function FeedbackPanel({ triggerClassName, triggerContent }: { tr
           />
 
           {/* Panel */}
-          <div className="relative z-10 w-full max-w-lg mx-2 mb-2 md:mb-0 max-h-[85vh] flex flex-col bg-white rounded-2xl shadow-2xl overflow-hidden">
+          <div ref={trapRef} className="relative z-10 w-full max-w-lg mx-2 mb-2 md:mb-0 max-h-[85vh] flex flex-col bg-white rounded-2xl shadow-2xl overflow-hidden" role="dialog" aria-modal="true" aria-label="Feedback panel">
             {/* Header */}
             <div className="flex items-center justify-between px-4 py-3 border-b border-gray-100 bg-gray-50/80">
               <div className="flex items-center gap-2">
@@ -667,6 +672,7 @@ export default function FeedbackPanel({ triggerClassName, triggerContent }: { tr
           </div>
         </div>
       )}
+      <ToastNotification message={toastMsg} type={toastType} onClose={clearToast} />
     </>
   );
 }

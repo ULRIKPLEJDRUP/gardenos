@@ -9,6 +9,8 @@
 import React, { useState, useCallback, useRef, useEffect, useMemo, useId, memo, lazy } from "react";
 import { Suspense } from "react";
 const ThreeDPreview = lazy(() => import("./designlab/ThreeDPreview"));
+import { useToast } from "../hooks/useToast";
+import ToastNotification from "./ToastNotification";
 import type { BedLayout, BedElement, BedLocalCoord, LabTool, PlantShapeType, GrowthPhase } from "../lib/bedLayoutTypes";
 import { geoPolygonToBedLayout, pointInBedOutline, snapToGrid, generateRowPositions } from "../lib/bedGeometry";
 import { getBedLayout, createBedLayout, saveBedLayout, removeElement, addElement, updateElement } from "../lib/bedLayoutStore";
@@ -632,6 +634,9 @@ function DesignLabInner({
   soilProfileId: initialSoilProfileId,
   onSoilProfileChange,
 }: DesignLabProps) {
+  // ── Toast ──
+  const { toastMsg, toastType, showToast, clearToast } = useToast();
+
   // ── Core state ──
   const [month, setMonth] = useState(() => new Date().getMonth() + 1);
   const [autoPlay, setAutoPlay] = useState(false);
@@ -2496,7 +2501,7 @@ function DesignLabInner({
             const speciesInBed = [...new Set(layout.elements.filter((e) => e.speciesId).map((e) => e.speciesId!))];
             const species = speciesInBed.map((id) => getPlantById(id)).filter((s): s is PlantSpecies => s != null);
             if (species.length === 0) {
-              alert("Tilføj mindst én plante til paletten først.");
+              showToast("Tilføj mindst én plante til paletten først.", "warning");
               return;
             }
             const result = autoFillBed(species, layout.widthCm, layout.lengthCm, layout.outlineCm, layout.elements);
@@ -2508,7 +2513,7 @@ function DesignLabInner({
               };
               persistLayout(updated);
             }
-            if (result.warnings.length > 0) alert(result.warnings.join("\n"));
+            if (result.warnings.length > 0) showToast(result.warnings.join("\n"), "warning");
           }}
           className="px-2.5 py-1 text-[11px] rounded-lg border transition-colors hover:shadow-sm"
           style={{ borderColor: "var(--border)", color: "var(--foreground)" }}
@@ -4969,6 +4974,7 @@ function DesignLabInner({
           />
         </Suspense>
       )}
+      <ToastNotification message={toastMsg} type={toastType} onClose={clearToast} />
     </div>
   );
 }

@@ -1,5 +1,6 @@
 "use client";
 import React, { useState, useEffect, useCallback, memo } from "react";
+import { useFocusTrap } from "../hooks/useFocusTrap";
 
 /* ─────────── Theme helpers ─────────── */
 export type ThemeMode = "system" | "light" | "dark";
@@ -58,6 +59,9 @@ export interface SettingsModalProps {
 /* ─────────── Component ─────────── */
 
 function SettingsModalInner({ open, onClose, userEmail, initialName = "" }: SettingsModalProps) {
+  // ── Focus trap ──
+  const trapRef = useFocusTrap<HTMLDivElement>(open);
+
   // ── Internal form state ──
   const [settingsCurrentPw, setSettingsCurrentPw] = useState("");
   const [settingsNewPw, setSettingsNewPw] = useState("");
@@ -115,6 +119,7 @@ function SettingsModalInner({ open, onClose, userEmail, initialName = "" }: Sett
   return (
     <div className="fixed inset-0 z-[10001] flex items-center justify-center bg-black/40 backdrop-blur-sm" onClick={onClose}>
       <div
+        ref={trapRef}
         className="bg-[var(--background)] rounded-2xl shadow-2xl border border-border w-[90vw] max-w-md max-h-[85dvh] overflow-y-auto"
         onClick={(e) => e.stopPropagation()}
         role="dialog"

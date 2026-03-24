@@ -1,5 +1,6 @@
 "use client";
 import React, { useMemo, memo } from "react";
+import { useFocusTrap } from "../hooks/useFocusTrap";
 
 /* ─────────────────────────────────────────────────────────────────────────── */
 /*  F1 — "Min Have" Stats Dashboard                                          */
@@ -67,6 +68,7 @@ function healthScore(d: DashboardData): { score: number; label: string; color: s
 }
 
 function GardenDashboardInner({ data, onClose }: Props) {
+  const trapRef = useFocusTrap<HTMLDivElement>(true);
   const health = useMemo(() => healthScore(data), [data]);
   const currentMonth = new Date().getMonth() + 1;
   const thisMonthHarvests = useMemo(
@@ -84,7 +86,7 @@ function GardenDashboardInner({ data, onClose }: Props) {
 
   return (
     <div className="fixed inset-0 z-[9500] flex items-center justify-center bg-black/40 backdrop-blur-sm">
-      <div className="relative w-full max-w-lg max-h-[90dvh] overflow-y-auto rounded-2xl border border-border bg-[var(--background)] shadow-2xl mx-3">
+      <div ref={trapRef} className="relative w-full max-w-lg max-h-[90dvh] overflow-y-auto rounded-2xl border border-border bg-[var(--background)] shadow-2xl mx-3" role="dialog" aria-modal="true" aria-label="Min Have dashboard">
         {/* Header */}
         <div className="sticky top-0 z-10 flex items-center justify-between px-5 py-4 border-b border-border bg-[var(--background)]/95 backdrop-blur rounded-t-2xl">
           <h2 className="text-lg font-bold text-foreground flex items-center gap-2">🏡 Min Have</h2>

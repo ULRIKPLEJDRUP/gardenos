@@ -5,6 +5,8 @@
 import { useSession } from "next-auth/react";
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
+import { useToast } from "../hooks/useToast";
+import ToastNotification from "../components/ToastNotification";
 
 type InviteCode = {
   id: string;
@@ -47,6 +49,7 @@ type ActivityLogEntry = {
 
 export default function AdminPage() {
   const { data: session, status } = useSession();
+  const { toastMsg, toastType, showToast, clearToast } = useToast();
   const [codes, setCodes] = useState<InviteCode[]>([]);
   const [users, setUsers] = useState<AdminUser[]>([]);
   const [loading, setLoading] = useState(true);
@@ -280,10 +283,10 @@ export default function AdminPage() {
         setInviteName("");
         await fetchUsers();
       } else {
-        alert(data.error || "Kunne ikke oprette brugeren");
+        showToast(data.error || "Kunne ikke oprette brugeren", "error");
       }
     } catch {
-      alert("Netværksfejl – prøv igen");
+      showToast("Netværksfejl – prøv igen", "error");
     }
     setInviting(false);
   };
@@ -311,10 +314,10 @@ export default function AdminPage() {
         await Promise.all([fetchUsers(), fetchCodes()]);
       } else {
         const data = await res.json();
-        alert(data.error || "Kunne ikke slette brugeren");
+        showToast(data.error || "Kunne ikke slette brugeren", "error");
       }
     } catch {
-      alert("Netværksfejl – prøv igen");
+      showToast("Netværksfejl – prøv igen", "error");
     }
     setBusyUserId(null);
   };
@@ -335,17 +338,17 @@ export default function AdminPage() {
         await fetchUsers();
       } else {
         const data = await res.json();
-        alert(data.error || "Kunne ikke nulstille brugeren");
+        showToast(data.error || "Kunne ikke nulstille brugeren", "error");
       }
     } catch {
-      alert("Netværksfejl – prøv igen");
+      showToast("Netværksfejl – prøv igen", "error");
     }
     setBusyUserId(null);
   };
 
   const changePassword = async (user: AdminUser) => {
     if (!newPassword || newPassword.length < 8) {
-      alert("Adgangskoden skal være mindst 8 tegn.");
+      showToast("Adgangskoden skal være mindst 8 tegn.", "warning");
       return;
     }
     setBusyUserId(user.id);
@@ -358,13 +361,13 @@ export default function AdminPage() {
       if (res.ok) {
         setPasswordEditId(null);
         setNewPassword("");
-        alert(`Adgangskode ændret for ${user.name || user.email}`);
+        showToast(`Adgangskode ændret for ${user.name || user.email}`, "success");
       } else {
         const data = await res.json();
-        alert(data.error || "Kunne ikke ændre adgangskoden");
+        showToast(data.error || "Kunne ikke ændre adgangskoden", "error");
       }
     } catch {
-      alert("Netværksfejl – prøv igen");
+      showToast("Netværksfejl – prøv igen", "error");
     }
     setBusyUserId(null);
   };
@@ -1486,6 +1489,7 @@ export default function AdminPage() {
           })()}
         </div>
       </div>
+      <ToastNotification message={toastMsg} type={toastType} onClose={clearToast} />
     </div>
   );
 }

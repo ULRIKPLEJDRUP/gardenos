@@ -8,6 +8,7 @@
 // ---------------------------------------------------------------------------
 
 import React, { useState, useEffect, useCallback } from "react";
+import { useFocusTrap } from "../hooks/useFocusTrap";
 
 // ── Types ──
 interface ForumUser {
@@ -80,6 +81,7 @@ function timeAgo(dateStr: string): string {
 // ForumPanel
 // ═══════════════════════════════════════════════════════════════════════════
 export default function ForumPanel({ userId, onClose }: { userId: string; onClose: () => void }) {
+  const trapRef = useFocusTrap<HTMLDivElement>(true);
   const [threads, setThreads] = useState<ForumThread[]>([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
@@ -199,7 +201,7 @@ export default function ForumPanel({ userId, onClose }: { userId: string; onClos
   // Render
   // ═════════════════════════════════════════════════════════════════════
   return (
-    <div className="fixed inset-0 z-[9000] flex flex-col" style={{ background: "var(--background)", color: "var(--foreground)" }}>
+    <div ref={trapRef} className="fixed inset-0 z-[9000] flex flex-col" role="dialog" aria-modal="true" aria-label="Haveforum" style={{ background: "var(--background)", color: "var(--foreground)" }}>
       {/* ── Header ── */}
       <header className="flex items-center gap-3 px-4 py-3 border-b" style={{ borderColor: "var(--border)" }}>
         <button onClick={onClose} className="text-lg hover:opacity-70" title="Luk forum">✕</button>

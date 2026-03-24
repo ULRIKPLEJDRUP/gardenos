@@ -1,18 +1,22 @@
 "use client";
 
-import React, { useState, useCallback } from "react";
+import React, { useState, useCallback, useRef, useMemo } from "react";
 import L from "leaflet";
 import {
   exportGeoJSON,
   exportPlantCSV,
   copyShareLink,
   printGardenSummary,
+  exportFullBackup,
+  importFullBackup,
+  exportICalendar,
   type ExportPlantRow,
 } from "../lib/exportStore";
 import {
   getPlantById,
   getInstancesForFeature,
 } from "../lib/plantStore";
+import { buildGardenCalendar, type CalendarMonth } from "../lib/gardenCalendar";
 import { sunHoursToColor } from "../lib/sunAnalysis";
 import type { WeatherData } from "../lib/weatherStore";
 
@@ -1224,6 +1228,81 @@ export default function ViewTab(props: ViewTabProps) {
                 </div>
                 <span className="text-amber-400 group-hover:text-amber-600 transition-colors text-xs">📋</span>
               </button>
+
+              {/* iCal export */}
+              <button
+                type="button"
+                className="w-full flex items-center gap-3 rounded-lg border border-teal-200 bg-teal-50 px-3 py-2.5 hover:bg-teal-100 hover:border-teal-300 transition-all group dark:bg-teal-950/30 dark:border-teal-800 dark:hover:bg-teal-900/40"
+                onClick={() => {
+                  const bedNames = new Map<string, string>();
+                  if (layoutForContainment?.features) {
+                    for (const f of layoutForContainment.features) {
+                      const p = (f as GardenFeature).properties;
+                      if (p?.gardenosId && p?.name) bedNames.set(p.gardenosId, p.name as string);
+                    }
+                  }
+                  const cal = buildGardenCalendar(bedNames);
+                  const totalActivities = cal.reduce((s, m) => s + m.activities.length, 0);
+                  if (totalActivities === 0) {
+                    showToast("📅 Ingen kalenderaktiviteter – tilføj planter først", "warning");
+                    return;
+                  }
+                  exportICalendar(cal, "gardenos-have");
+                  showToast(`📅 Kalender eksporteret med ${totalActivities} aktiviteter`, "success");
+                }}
+              >
+                <span className="text-xl">📅</span>
+                <div className="flex-1 text-left">
+                  <div className="text-xs font-semibold text-teal-800 dark:text-teal-200">iCal Havekalender</div>
+                  <div className="text-[10px] text-teal-600/70 dark:text-teal-400/60">Eksportér aktiviteter til Apple/Google Calendar (.ics)</div>
+                </div>
+                <span className="text-teal-400 group-hover:text-teal-600 transition-colors text-xs">↓</span>
+              </button>
+
+              {/* Full backup */}
+              <button
+                type="button"
+                className="w-full flex items-center gap-3 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5 hover:bg-slate-100 hover:border-slate-300 transition-all group dark:bg-slate-800/30 dark:border-slate-700 dark:hover:bg-slate-700/40"
+                onClick={() => {
+                  exportFullBackup(userKey, "gardenos-have");
+                  showToast("💾 Fuld backup downloadet!", "success");
+                }}
+              >
+                <span className="text-xl">💾</span>
+                <div className="flex-1 text-left">
+                  <div className="text-xs font-semibold text-slate-800 dark:text-slate-200">Fuld backup</div>
+                  <div className="text-[10px] text-slate-600/70 dark:text-slate-400/60">Download alle data: kort, planter, opgaver, jord, journal…</div>
+                </div>
+                <span className="text-slate-400 group-hover:text-slate-600 transition-colors text-xs">↓</span>
+              </button>
+
+              {/* Restore backup */}
+              <label
+                className="w-full flex items-center gap-3 rounded-lg border border-orange-200 bg-orange-50 px-3 py-2.5 hover:bg-orange-100 hover:border-orange-300 transition-all group cursor-pointer dark:bg-orange-950/30 dark:border-orange-800 dark:hover:bg-orange-900/40"
+              >
+                <span className="text-xl">📥</span>
+                <div className="flex-1 text-left">
+                  <div className="text-xs font-semibold text-orange-800 dark:text-orange-200">Gendan backup</div>
+                  <div className="text-[10px] text-orange-600/70 dark:text-orange-400/60">Indlæs en GardenOS backup-fil (.json)</div>
+                </div>
+                <span className="text-orange-400 group-hover:text-orange-600 transition-colors text-xs">↑</span>
+                <input
+                  type="file"
+                  accept=".json,application/json"
+                  className="hidden"
+                  onChange={async (e) => {
+                    const file = e.target.files?.[0];
+                    if (!file) return;
+                    try {
+                      const count = await importFullBackup(file, userKey);
+                      showToast(`✅ Backup gendannet – ${count} datanøgler indlæst.\nGenindlæs siden for at se ændringer.`, "success");
+                    } catch (err) {
+                      showToast(`❌ ${err instanceof Error ? err.message : "Kunne ikke gendanne backup"}`, "error");
+                    }
+                    e.target.value = "";
+                  }}
+                />
+              </label>
             </div>
 
             <p className="text-[9px] text-foreground/30 text-center leading-relaxed">
