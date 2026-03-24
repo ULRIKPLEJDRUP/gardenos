@@ -25,6 +25,36 @@ import SuccessionView from "./designlab/SuccessionView";
 import BedGeneratorDialog from "./designlab/BedGeneratorDialog";
 import { autoFillBed } from "../lib/smartAutoFill";
 import { getPlantSvgIcon } from "../lib/plantIcons";
+import {
+  getSoilProfileById,
+  addOrUpdateSoilProfile,
+  createProfileFromType,
+  createBlankSoilProfile,
+  applyPresetDefaults,
+} from "../lib/soilStore";
+import type { SoilProfile, SoilBaseType } from "../lib/soilTypes";
+import {
+  getAllTemplates,
+  saveTemplate,
+  deleteTemplate,
+  applyTemplateToBed,
+  encodeSharePayload,
+  generateShareUrl,
+  type BedTemplate,
+} from "../lib/templateStore";
+import {
+  SOIL_BASE_TYPE_LABELS,
+  SOIL_BASE_TYPE_DESC,
+  SOIL_TYPE_ICONS,
+  SOIL_COLOR_LABELS,
+  DRAINAGE_LABELS,
+  MOISTURE_LABELS,
+  EARTHWORM_LABELS,
+  ORGANIC_LABELS,
+  COMPOST_TYPE_LABELS,
+  COMPOST_MATURITY_LABELS,
+  computeSoilRecommendations,
+} from "../lib/soilTypes";
 
 // ---------------------------------------------------------------------------
 // Palette icon helper — renders SVG icon if available, else emoji
@@ -73,6 +103,10 @@ export type DesignLabProps = {
   onClose: () => void;
   /** Callback when layout changes (for syncing back to map) */
   onLayoutChange?: (layout: BedLayout) => void;
+  /** Soil profile ID linked to this bed (from map feature) */
+  soilProfileId?: string;
+  /** Callback when soil profile changes */
+  onSoilProfileChange?: (profileId: string) => void;
 };
 
 // ---------------------------------------------------------------------------
@@ -592,6 +626,8 @@ function DesignLabInner({
   plants,
   onClose,
   onLayoutChange,
+  soilProfileId: initialSoilProfileId,
+  onSoilProfileChange,
 }: DesignLabProps) {
   // ── Core state ──
   const [month, setMonth] = useState(() => new Date().getMonth() + 1);
@@ -659,6 +695,9 @@ function DesignLabInner({
   // ── Companion lines toggle ──
   const [showCompanionLines, setShowCompanionLines] = useState(false);
 
+  // ── Conflict overlay toggle ──
+  const [showConflicts, setShowConflicts] = useState(false);
+
   // ── Ruler tool state ──
   const [rulerStart, setRulerStart] = useState<BedLocalCoord | null>(null);
   const [rulerEnd, setRulerEnd] = useState<BedLocalCoord | null>(null);
@@ -686,8 +725,41 @@ function DesignLabInner({
   const [undoStack, setUndoStack] = useState<BedLayout[]>([]);
   const [redoStack, setRedoStack] = useState<BedLayout[]>([]);
 
+  // ── Soil profile state ──
+  const [soilProfile, setSoilProfile] = useState<SoilProfile | null>(() =>
+    initialSoilProfileId ? (getSoilProfileById(initialSoilProfileId) ?? null) : null
+  );
+
+  const updateSoilField = useCallback(<K extends keyof SoilProfile>(key: K, value: SoilProfile[K]) => {
+    setSoilProfile((prev) => {
+      if (!prev) {
+        // Create a new profile for this bed
+        const newProfile = createBlankSoilProfile(`Jord – ${featureName}`);
+        const updated = { ...newProfile, [key]: value, updatedAt: new Date().toISOString() };
+        addOrUpdateSoilProfile(updated);
+        onSoilProfileChange?.(updated.id);
+        return updated;
+      }
+      const updated = { ...prev, [key]: value, updatedAt: new Date().toISOString() };
+      addOrUpdateSoilProfile(updated);
+      return updated;
+    });
+  }, [featureName, onSoilProfileChange]);
+
   // ── Snap guides ──
   const [activeGuides, setActiveGuides] = useState<{ x1: number; y1: number; x2: number; y2: number }[]>([]);
+
+  // ── Template dialog state (D1) ──
+  const [showSaveTemplate, setShowSaveTemplate] = useState(false);
+  const [showTemplateGallery, setShowTemplateGallery] = useState(false);
+  const [templateName, setTemplateName] = useState("");
+  const [templateDesc, setTemplateDesc] = useState("");
+  const [templateTags, setTemplateTags] = useState("");
+
+  // ── Share dialog state (E1) ──
+  const [showShareDialog, setShowShareDialog] = useState(false);
+  const [shareUrl, setShareUrl] = useState("");
+  const [shareCopied, setShareCopied] = useState(false);
 
   // ── SVG ref for coordinate conversion ──
   const svgRef = useRef<SVGSVGElement>(null);
@@ -1753,6 +1825,86 @@ function DesignLabInner({
   const bedWidthM = (layout.widthCm / 100).toFixed(1);
   const bedLengthM = (layout.lengthCm / 100).toFixed(1);
 
+  // ── D1: Save current bed as template ──
+  const handleSaveTemplate = useCallback(() => {
+    if (!templateName.trim()) return;
+    const tags = templateTags
+      .split(",")
+      .map((t) => t.trim())
+      .filter(Boolean);
+    saveTemplate(
+      templateName.trim(),
+      templateDesc.trim(),
+      layout.outlineCm,
+      layout.widthCm,
+      layout.lengthCm,
+      layout.elements,
+      tags,
+    );
+    setShowSaveTemplate(false);
+    setTemplateName("");
+    setTemplateDesc("");
+    setTemplateTags("");
+  }, [templateName, templateDesc, templateTags, layout]);
+
+  // ── D1: Apply a template to current bed ──
+  const handleApplyTemplate = useCallback((template: BedTemplate) => {
+    const newElements = applyTemplateToBed(template, layout.widthCm, layout.lengthCm);
+    // Push undo
+    setUndoStack((prev) => [...prev.slice(-29), { ...layout }]);
+    setRedoStack([]);
+    const updated: BedLayout = {
+      ...layout,
+      elements: [...layout.elements, ...newElements],
+      version: layout.version + 1,
+      updatedAt: new Date().toISOString(),
+    };
+    setLayout(updated);
+    saveBedLayout(updated);
+    onLayoutChange?.(updated);
+    setShowTemplateGallery(false);
+  }, [layout, onLayoutChange]);
+
+  // ── E1: Generate share URL ──
+  const handleShare = useCallback(() => {
+    // Create a temporary template from current bed
+    const tempTemplate: BedTemplate = {
+      id: crypto.randomUUID(),
+      name: featureName,
+      description: "",
+      outlineCm: layout.outlineCm,
+      widthCm: layout.widthCm,
+      lengthCm: layout.lengthCm,
+      elements: layout.elements,
+      tags: [],
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+    const url = generateShareUrl(tempTemplate);
+    setShareUrl(url);
+    setShareCopied(false);
+    setShowShareDialog(true);
+  }, [layout, featureName]);
+
+  // ── E1: Copy share URL to clipboard ──
+  const handleCopyShareUrl = useCallback(async () => {
+    try {
+      await navigator.clipboard.writeText(shareUrl);
+      setShareCopied(true);
+      setTimeout(() => setShareCopied(false), 2000);
+    } catch {
+      // Fallback
+      const ta = document.createElement("textarea");
+      ta.value = shareUrl;
+      document.body.appendChild(ta);
+      ta.select();
+      document.execCommand("copy");
+      document.body.removeChild(ta);
+      setShareCopied(true);
+      setTimeout(() => setShareCopied(false), 2000);
+    }
+  }, [shareUrl]);
+
   // ── Count stats ──
   const plantElements = layout.elements.filter((e) => e.type === "plant");
   const uniqueSpecies = new Set(plantElements.map((e) => e.speciesId).filter(Boolean));
@@ -1777,6 +1929,90 @@ function DesignLabInner({
     const elems = layout.elements.filter((e) => e.type === "plant");
     return elems.sort((a, b) => (a.zIndex ?? 0) - (b.zIndex ?? 0));
   }, [layout.elements]);
+
+  // ── Bed-local conflict detection ──
+  type BedConflict = {
+    type: "spacing" | "bad-companion" | "layer-competition";
+    severity: "warning" | "error";
+    elementIdA: string;
+    elementIdB: string;
+    message: string;
+  };
+  const bedConflicts = useMemo<BedConflict[]>(() => {
+    if (!showConflicts) return [];
+    const plantEls = layout.elements.filter((e) => e.type === "plant" && e.speciesId);
+    const conflicts: BedConflict[] = [];
+    for (let i = 0; i < plantEls.length; i++) {
+      const a = plantEls[i];
+      const spA = a.speciesId ? getPlantById(a.speciesId) : null;
+      if (!spA) continue;
+      for (let j = i + 1; j < plantEls.length; j++) {
+        const b = plantEls[j];
+        const spB = b.speciesId ? getPlantById(b.speciesId) : null;
+        if (!spB) continue;
+        const dx = b.position.x - a.position.x;
+        const dy = b.position.y - a.position.y;
+        const distCm = Math.sqrt(dx * dx + dy * dy);
+
+        // Spacing conflict: overlap if distance < required spacing
+        if (a.speciesId !== b.speciesId || distCm < 3) {
+          const requiredCm = Math.max(
+            (spA.spacingCm ?? 10) / 2 + (spB.spacingCm ?? 10) / 2,
+            ((spA.spreadDiameterCm ?? 10) + (spB.spreadDiameterCm ?? 10)) / 2 * 0.7
+          );
+          if (distCm < requiredCm * 0.5) {
+            conflicts.push({
+              type: "spacing",
+              severity: "error",
+              elementIdA: a.id,
+              elementIdB: b.id,
+              message: `${spA.name} og ${spB.name}: for tæt (${Math.round(distCm)}cm, min ${Math.round(requiredCm)}cm)`,
+            });
+          } else if (distCm < requiredCm * 0.85) {
+            conflicts.push({
+              type: "spacing",
+              severity: "warning",
+              elementIdA: a.id,
+              elementIdB: b.id,
+              message: `${spA.name} og ${spB.name}: tæt placering (${Math.round(distCm)}cm, anbefalet ${Math.round(requiredCm)}cm)`,
+            });
+          }
+        }
+
+        // Bad companion conflict
+        if (a.speciesId !== b.speciesId) {
+          const isBad = spA.badCompanions?.includes(spB.id) || spB.badCompanions?.includes(spA.id);
+          if (isBad) {
+            const influenceRange = Math.max(spA.spacingCm ?? 30, spB.spacingCm ?? 30) * 3;
+            if (distCm < influenceRange) {
+              conflicts.push({
+                type: "bad-companion",
+                severity: "error",
+                elementIdA: a.id,
+                elementIdB: b.id,
+                message: `${spA.name} og ${spB.name}: dårlige naboer!`,
+              });
+            }
+          }
+        }
+
+        // Layer competition (same forest garden layer, too close)
+        if (a.speciesId !== b.speciesId && spA.forestGardenLayer && spA.forestGardenLayer === spB.forestGardenLayer) {
+          const layerMinDist = spA.forestGardenLayer === "canopy" ? 200 : spA.forestGardenLayer === "sub-canopy" ? 100 : 40;
+          if (distCm < layerMinDist) {
+            conflicts.push({
+              type: "layer-competition",
+              severity: "warning",
+              elementIdA: a.id,
+              elementIdB: b.id,
+              message: `${spA.name} og ${spB.name}: konkurrerer i samme lag (${spA.forestGardenLayer})`,
+            });
+          }
+        }
+      }
+    }
+    return conflicts;
+  }, [showConflicts, layout.elements]);
 
   return (
     <div
@@ -1873,6 +2109,35 @@ function DesignLabInner({
             title="Download planteliste som tekstfil"
           >
             📋 Planteliste
+          </button>
+          <button
+            onClick={() => {
+              setTemplateName(featureName);
+              setTemplateDesc("");
+              setTemplateTags("");
+              setShowSaveTemplate(true);
+            }}
+            className="px-2 py-1 text-[11px] rounded-lg border transition-colors hover:bg-[var(--accent-light)]"
+            style={{ borderColor: "var(--border)", color: "var(--foreground)" }}
+            title="Gem dette bed som skabelon til genbrug"
+          >
+            💾 Skabelon
+          </button>
+          <button
+            onClick={() => setShowTemplateGallery(true)}
+            className="px-2 py-1 text-[11px] rounded-lg border transition-colors hover:bg-[var(--accent-light)]"
+            style={{ borderColor: "var(--border)", color: "var(--foreground)" }}
+            title="Anvend en gemt skabelon i dette bed"
+          >
+            📂 Skabeloner
+          </button>
+          <button
+            onClick={handleShare}
+            className="px-2 py-1 text-[11px] rounded-lg border transition-colors hover:bg-[var(--accent-light)]"
+            style={{ borderColor: "var(--border)", color: "var(--foreground)" }}
+            title="Del denne bed-plan via link"
+          >
+            🔗 Del
           </button>
         </div>
 
@@ -2148,6 +2413,20 @@ function DesignLabInner({
           title="Vis companion-linjer (grøn = god, rød = dårlig)"
         >
           🤝 Companion
+        </button>
+
+        {/* Conflict detection toggle */}
+        <button
+          onClick={() => setShowConflicts((v) => !v)}
+          className={`px-2.5 py-1 text-[11px] rounded-lg border transition-colors hover:shadow-sm ${showConflicts ? "shadow-sm" : ""}`}
+          style={{
+            borderColor: showConflicts ? (bedConflicts.length > 0 ? "#ef4444" : "var(--accent)") : "var(--border)",
+            background: showConflicts ? (bedConflicts.length > 0 ? "#ef4444" : "var(--accent)") : "transparent",
+            color: showConflicts ? "#fff" : "var(--foreground)",
+          }}
+          title="Vis konflikter (afstand, companion, lag-konkurrence)"
+        >
+          ⚠️ Konflikter{showConflicts && bedConflicts.length > 0 ? ` (${bedConflicts.length})` : ""}
         </button>
 
         {/* Snap toggle (B7) */}
@@ -2749,6 +3028,47 @@ function DesignLabInner({
               }
               return lines.length > 0 ? <g>{lines}</g> : null;
             })()}
+
+            {/* Conflict overlay visuals */}
+            {showConflicts && bedConflicts.length > 0 && (
+              <g>
+                {bedConflicts.map((c, i) => {
+                  const elA = layout.elements.find((e) => e.id === c.elementIdA);
+                  const elB = layout.elements.find((e) => e.id === c.elementIdB);
+                  if (!elA || !elB) return null;
+                  const color = c.severity === "error" ? "#ef4444" : "#f59e0b";
+                  return (
+                    <g key={`conflict-${i}`}>
+                      {/* Line between conflicting elements */}
+                      <line
+                        x1={elA.position.x} y1={elA.position.y}
+                        x2={elB.position.x} y2={elB.position.y}
+                        stroke={color} strokeWidth={Math.max(1, minPlantRadius * 0.15)}
+                        strokeDasharray="2 2" opacity={0.7}
+                      />
+                      {/* Warning icon at midpoint */}
+                      <text
+                        x={(elA.position.x + elB.position.x) / 2}
+                        y={(elA.position.y + elB.position.y) / 2 - 2}
+                        textAnchor="middle" fontSize={Math.max(4, minPlantRadius * 0.5)}
+                        fill={color}
+                      >
+                        {c.type === "bad-companion" ? "💔" : c.type === "spacing" ? "📏" : "⚔️"}
+                      </text>
+                      {/* Highlight rings on conflicting elements */}
+                      <circle cx={elA.position.x} cy={elA.position.y}
+                        r={(elA.width || 10) / 2 + 2}
+                        fill="none" stroke={color} strokeWidth={0.8}
+                        strokeDasharray="3 2" opacity={0.6} />
+                      <circle cx={elB.position.x} cy={elB.position.y}
+                        r={(elB.width || 10) / 2 + 2}
+                        fill="none" stroke={color} strokeWidth={0.8}
+                        strokeDasharray="3 2" opacity={0.6} />
+                    </g>
+                  );
+                })}
+              </g>
+            )}
 
             {/* Snap guides */}
             {activeGuides.length > 0 && (
@@ -3519,6 +3839,185 @@ function DesignLabInner({
                 </button>
               </div>
 
+              {/* ── Soil profile editing ── */}
+              <div className="mb-3 p-2.5 rounded-lg border" style={{ borderColor: "var(--border)", background: "var(--toolbar-bg)" }}>
+                <h4 className="text-xs font-semibold mb-2" style={{ color: "var(--accent)" }}>
+                  🪨 Jordprofil
+                </h4>
+
+                {/* Base type selector */}
+                <div className="mb-2">
+                  <label className="text-[10px] block mb-1" style={{ color: "var(--muted)" }}>Jordtype:</label>
+                  <div className="grid grid-cols-3 gap-1">
+                    {(Object.entries(SOIL_BASE_TYPE_LABELS) as [SoilBaseType, string][]).map(([type, label]) => (
+                      <button
+                        key={type}
+                        onClick={() => {
+                          if (!soilProfile) {
+                            const newProfile = createProfileFromType(type, `Jord – ${featureName}`);
+                            addOrUpdateSoilProfile(newProfile);
+                            setSoilProfile(newProfile);
+                            onSoilProfileChange?.(newProfile.id);
+                          } else {
+                            const updated = applyPresetDefaults({ ...soilProfile, baseType: type }, type);
+                            addOrUpdateSoilProfile(updated);
+                            setSoilProfile(updated);
+                          }
+                        }}
+                        className={`px-1 py-1 text-[9px] rounded border transition-colors ${soilProfile?.baseType === type ? "shadow-sm" : ""}`}
+                        style={{
+                          borderColor: soilProfile?.baseType === type ? "var(--accent)" : "var(--border)",
+                          background: soilProfile?.baseType === type ? "var(--accent)" : "transparent",
+                          color: soilProfile?.baseType === type ? "#fff" : "var(--foreground)",
+                        }}
+                        title={SOIL_BASE_TYPE_DESC[type]}
+                      >
+                        {SOIL_TYPE_ICONS[type]} {label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {soilProfile && (
+                  <>
+                    {/* Drainage */}
+                    <div className="mb-2">
+                      <label className="text-[10px] block mb-1" style={{ color: "var(--muted)" }}>Dræning:</label>
+                      <div className="flex gap-1">
+                        {(Object.entries(DRAINAGE_LABELS) as [string, string][]).map(([k, label]) => (
+                          <button key={k}
+                            onClick={() => updateSoilField("drainage", k as SoilProfile["drainage"])}
+                            className={`flex-1 px-1 py-0.5 text-[8px] rounded border transition-colors ${soilProfile.drainage === k ? "shadow-sm" : ""}`}
+                            style={{
+                              borderColor: soilProfile.drainage === k ? "var(--accent)" : "var(--border)",
+                              background: soilProfile.drainage === k ? "var(--accent)" : "transparent",
+                              color: soilProfile.drainage === k ? "#fff" : "var(--foreground)",
+                            }}>
+                            {label}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* Moisture */}
+                    <div className="mb-2">
+                      <label className="text-[10px] block mb-1" style={{ color: "var(--muted)" }}>Fugt:</label>
+                      <div className="flex gap-1">
+                        {(Object.entries(MOISTURE_LABELS) as [string, string][]).map(([k, label]) => (
+                          <button key={k}
+                            onClick={() => updateSoilField("moisture", k as SoilProfile["moisture"])}
+                            className={`flex-1 px-1 py-0.5 text-[8px] rounded border transition-colors ${soilProfile.moisture === k ? "shadow-sm" : ""}`}
+                            style={{
+                              borderColor: soilProfile.moisture === k ? "var(--accent)" : "var(--border)",
+                              background: soilProfile.moisture === k ? "var(--accent)" : "transparent",
+                              color: soilProfile.moisture === k ? "#fff" : "var(--foreground)",
+                            }}>
+                            {label}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* Soil color */}
+                    <div className="mb-2">
+                      <label className="text-[10px] block mb-1" style={{ color: "var(--muted)" }}>Farve:</label>
+                      <div className="flex gap-1">
+                        {(Object.entries(SOIL_COLOR_LABELS) as [string, string][]).map(([k, label]) => (
+                          <button key={k}
+                            onClick={() => updateSoilField("color", k as SoilProfile["color"])}
+                            className={`flex-1 px-1 py-0.5 text-[8px] rounded border transition-colors ${soilProfile.color === k ? "shadow-sm" : ""}`}
+                            style={{
+                              borderColor: soilProfile.color === k ? "var(--accent)" : "var(--border)",
+                              background: soilProfile.color === k ? "var(--accent)" : "transparent",
+                              color: soilProfile.color === k ? "#fff" : "var(--foreground)",
+                            }}>
+                            {label}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* Earthworms */}
+                    <div className="mb-2">
+                      <label className="text-[10px] block mb-1" style={{ color: "var(--muted)" }}>Regnorme:</label>
+                      <div className="flex gap-1">
+                        {(Object.entries(EARTHWORM_LABELS) as [string, string][]).map(([k, label]) => (
+                          <button key={k}
+                            onClick={() => updateSoilField("earthworms", k as SoilProfile["earthworms"])}
+                            className={`flex-1 px-1 py-0.5 text-[8px] rounded border transition-colors ${soilProfile.earthworms === k ? "shadow-sm" : ""}`}
+                            style={{
+                              borderColor: soilProfile.earthworms === k ? "var(--accent)" : "var(--border)",
+                              background: soilProfile.earthworms === k ? "var(--accent)" : "transparent",
+                              color: soilProfile.earthworms === k ? "#fff" : "var(--foreground)",
+                            }}>
+                            {label}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* Organic content */}
+                    <div className="mb-2">
+                      <label className="text-[10px] block mb-1" style={{ color: "var(--muted)" }}>Organisk indhold:</label>
+                      <div className="flex gap-1">
+                        {(Object.entries(ORGANIC_LABELS) as [string, string][]).map(([k, label]) => (
+                          <button key={k}
+                            onClick={() => updateSoilField("organicVisual", k as SoilProfile["organicVisual"])}
+                            className={`flex-1 px-1 py-0.5 text-[8px] rounded border transition-colors ${soilProfile.organicVisual === k ? "shadow-sm" : ""}`}
+                            style={{
+                              borderColor: soilProfile.organicVisual === k ? "var(--accent)" : "var(--border)",
+                              background: soilProfile.organicVisual === k ? "var(--accent)" : "transparent",
+                              color: soilProfile.organicVisual === k ? "#fff" : "var(--foreground)",
+                            }}>
+                            {label}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* pH */}
+                    <div className="mb-2">
+                      <label className="text-[10px] block mb-1" style={{ color: "var(--muted)" }}>
+                        pH-værdi: {soilProfile.phMeasured?.toFixed(1) ?? "–"}
+                      </label>
+                      <input
+                        type="range" min={4} max={8.5} step={0.1}
+                        value={soilProfile.phMeasured ?? 6.5}
+                        onChange={(e) => updateSoilField("phMeasured", Number(e.target.value))}
+                        className="w-full accent-[var(--accent)]"
+                      />
+                      <div className="flex justify-between text-[8px] -mt-0.5" style={{ color: "var(--muted)" }}>
+                        <span>4.0 sur</span><span>6.5 neutral</span><span>8.5 basisk</span>
+                      </div>
+                    </div>
+
+                    {/* Recommendations */}
+                    {(() => {
+                      const recs = computeSoilRecommendations(soilProfile);
+                      if (recs.length === 0) return null;
+                      return (
+                        <div className="mt-2 p-2 rounded-lg" style={{ background: "var(--accent-light)" }}>
+                          <h5 className="text-[10px] font-semibold mb-1" style={{ color: "var(--accent)" }}>💡 Anbefalinger</h5>
+                          <ul className="space-y-0.5">
+                            {recs.slice(0, 4).map((r, i) => (
+                              <li key={i} className="text-[9px]" style={{ color: "var(--foreground)" }}>
+                                {r.priority === "warning" ? "🔴" : r.priority === "suggestion" ? "🟡" : "🟢"} {r.label}
+                              </li>
+                            ))}
+                          </ul>
+                        </div>
+                      );
+                    })()}
+                  </>
+                )}
+
+                {!soilProfile && (
+                  <p className="text-[9px]" style={{ color: "var(--muted)" }}>
+                    Vælg en jordtype ovenfor for at oprette en jordprofil til dette bed.
+                  </p>
+                )}
+              </div>
+
               {/* Selected element details */}
               {selectedIds.size > 1 && (
                 <div className="mb-3 p-2.5 rounded-lg border" style={{ borderColor: "var(--accent)", background: "var(--accent-light)" }}>
@@ -3658,6 +4157,38 @@ function DesignLabInner({
                 <p className="text-xs py-4 text-center" style={{ color: "var(--muted)" }}>
                   Ingen planter endnu. Brug paletten til at tilføje.
                 </p>
+              )}
+
+              {/* Conflict list */}
+              {showConflicts && bedConflicts.length > 0 && (
+                <div className="mt-3 p-2.5 rounded-lg border" style={{ borderColor: "#ef4444", background: "color-mix(in srgb, #ef4444 8%, transparent)" }}>
+                  <h4 className="text-xs font-semibold mb-2" style={{ color: "#ef4444" }}>
+                    ⚠️ {bedConflicts.length} konflikter fundet
+                  </h4>
+                  <ul className="space-y-1.5 max-h-[200px] overflow-y-auto">
+                    {bedConflicts.map((c, i) => (
+                      <li key={i}
+                        className="text-[9px] p-1.5 rounded cursor-pointer hover:bg-[var(--accent-light)] transition-colors"
+                        style={{ color: "var(--foreground)", borderLeft: `3px solid ${c.severity === "error" ? "#ef4444" : "#f59e0b"}` }}
+                        onClick={() => {
+                          // Select both conflicting elements
+                          setSelectedIds(new Set([c.elementIdA, c.elementIdB]));
+                          setSelectedElementId(null);
+                        }}
+                      >
+                        {c.type === "bad-companion" ? "💔" : c.type === "spacing" ? "📏" : "⚔️"}{" "}
+                        {c.message}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+              {showConflicts && bedConflicts.length === 0 && layout.elements.filter((e) => e.type === "plant").length >= 2 && (
+                <div className="mt-3 p-2.5 rounded-lg border" style={{ borderColor: "#22c55e", background: "color-mix(in srgb, #22c55e 8%, transparent)" }}>
+                  <p className="text-[10px] font-medium" style={{ color: "#22c55e" }}>
+                    ✅ Ingen konflikter fundet – alt ser godt ud!
+                  </p>
+                </div>
               )}
             </div>
           )}
@@ -3918,6 +4449,296 @@ function DesignLabInner({
           }}
           onClose={() => setShowBedGenerator(false)}
         />
+      )}
+
+      {/* ── D1: Save as Template Dialog ── */}
+      {showSaveTemplate && (
+        <div className="absolute inset-0 z-[60] flex items-center justify-center" style={{ background: "rgba(0,0,0,0.5)" }}>
+          <div
+            className="rounded-2xl shadow-2xl p-6 w-[420px] max-w-[95vw]"
+            style={{ background: "var(--toolbar-bg)", border: "1px solid var(--border)" }}
+          >
+            <h3 className="text-lg font-semibold mb-4" style={{ color: "var(--foreground)" }}>
+              💾 Gem som skabelon
+            </h3>
+            <p className="text-xs mb-3" style={{ color: "var(--muted)" }}>
+              Gem dette bed-design som en genanvendelig skabelon. Skabelonen kan anvendes i andre bede — planter skaleres automatisk.
+            </p>
+            <div className="space-y-3">
+              <div>
+                <label className="text-xs font-medium block mb-1" style={{ color: "var(--foreground)" }}>Navn</label>
+                <input
+                  type="text"
+                  value={templateName}
+                  onChange={(e) => setTemplateName(e.target.value)}
+                  placeholder="F.eks. Tre-søstre bed"
+                  className="w-full px-3 py-2 text-sm rounded-lg border"
+                  style={{ borderColor: "var(--border)", background: "var(--background)", color: "var(--foreground)" }}
+                  autoFocus
+                />
+              </div>
+              <div>
+                <label className="text-xs font-medium block mb-1" style={{ color: "var(--foreground)" }}>Beskrivelse</label>
+                <textarea
+                  value={templateDesc}
+                  onChange={(e) => setTemplateDesc(e.target.value)}
+                  placeholder="Kort beskrivelse af layoutet..."
+                  rows={2}
+                  className="w-full px-3 py-2 text-sm rounded-lg border resize-none"
+                  style={{ borderColor: "var(--border)", background: "var(--background)", color: "var(--foreground)" }}
+                />
+              </div>
+              <div>
+                <label className="text-xs font-medium block mb-1" style={{ color: "var(--foreground)" }}>Tags (kommasepareret)</label>
+                <input
+                  type="text"
+                  value={templateTags}
+                  onChange={(e) => setTemplateTags(e.target.value)}
+                  placeholder="companion, grøntsag, nybegynder"
+                  className="w-full px-3 py-2 text-sm rounded-lg border"
+                  style={{ borderColor: "var(--border)", background: "var(--background)", color: "var(--foreground)" }}
+                />
+              </div>
+              <div className="text-xs" style={{ color: "var(--muted)" }}>
+                📐 {layout.elements.filter((e) => e.type === "plant").length} planter · {(layout.widthCm / 100).toFixed(1)}m × {(layout.lengthCm / 100).toFixed(1)}m
+              </div>
+            </div>
+            <div className="flex justify-end gap-2 mt-5">
+              <button
+                onClick={() => setShowSaveTemplate(false)}
+                className="px-4 py-2 text-sm rounded-lg border"
+                style={{ borderColor: "var(--border)", color: "var(--foreground)" }}
+              >
+                Annullér
+              </button>
+              <button
+                onClick={handleSaveTemplate}
+                disabled={!templateName.trim()}
+                className="px-4 py-2 text-sm rounded-lg font-medium transition-colors"
+                style={{
+                  background: templateName.trim() ? "var(--accent)" : "var(--border)",
+                  color: templateName.trim() ? "#fff" : "var(--muted)",
+                  cursor: templateName.trim() ? "pointer" : "not-allowed",
+                }}
+              >
+                💾 Gem skabelon
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── D1: Template Gallery Dialog ── */}
+      {showTemplateGallery && (() => {
+        const templates = getAllTemplates();
+        return (
+          <div className="absolute inset-0 z-[60] flex items-center justify-center" style={{ background: "rgba(0,0,0,0.5)" }}>
+            <div
+              className="rounded-2xl shadow-2xl p-6 w-[560px] max-w-[95vw] max-h-[80vh] overflow-y-auto"
+              style={{ background: "var(--toolbar-bg)", border: "1px solid var(--border)" }}
+            >
+              <div className="flex items-center justify-between mb-4">
+                <h3 className="text-lg font-semibold" style={{ color: "var(--foreground)" }}>
+                  📂 Skabeloner
+                </h3>
+                <button
+                  onClick={() => setShowTemplateGallery(false)}
+                  className="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-[var(--accent-light)] transition-colors"
+                  style={{ color: "var(--foreground)" }}
+                >
+                  ✕
+                </button>
+              </div>
+              {templates.length === 0 ? (
+                <div className="text-center py-12" style={{ color: "var(--muted)" }}>
+                  <div className="text-3xl mb-3">📁</div>
+                  <p className="text-sm">Ingen skabeloner endnu</p>
+                  <p className="text-xs mt-1">Gem dit nuværende bed som skabelon med 💾-knappen</p>
+                </div>
+              ) : (
+                <div className="grid gap-3">
+                  {templates.map((t) => {
+                    const plantCount = t.elements.filter((e) => e.type === "plant").length;
+                    const speciesSet = new Set(t.elements.filter((e) => e.speciesId).map((e) => e.speciesId));
+                    return (
+                      <div
+                        key={t.id}
+                        className="rounded-xl p-4 border transition-colors hover:border-[var(--accent)]"
+                        style={{ borderColor: "var(--border)", background: "var(--background)" }}
+                      >
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="flex-1 min-w-0">
+                            <h4 className="text-sm font-semibold truncate" style={{ color: "var(--foreground)" }}>
+                              {t.name}
+                            </h4>
+                            {t.description && (
+                              <p className="text-xs mt-0.5 line-clamp-2" style={{ color: "var(--muted)" }}>{t.description}</p>
+                            )}
+                            <div className="flex gap-2 mt-2 text-[10px]" style={{ color: "var(--muted)" }}>
+                              <span>🌱 {plantCount} planter</span>
+                              <span>🧬 {speciesSet.size} arter</span>
+                              <span>📐 {(t.widthCm / 100).toFixed(1)}m × {(t.lengthCm / 100).toFixed(1)}m</span>
+                            </div>
+                            {t.tags.length > 0 && (
+                              <div className="flex flex-wrap gap-1 mt-2">
+                                {t.tags.map((tag) => (
+                                  <span
+                                    key={tag}
+                                    className="px-1.5 py-0.5 rounded text-[9px]"
+                                    style={{ background: "var(--accent-light)", color: "var(--accent)" }}
+                                  >
+                                    {tag}
+                                  </span>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                          <div className="flex flex-col gap-1.5">
+                            <button
+                              onClick={() => handleApplyTemplate(t)}
+                              className="px-3 py-1.5 text-xs rounded-lg font-medium transition-colors"
+                              style={{ background: "var(--accent)", color: "#fff" }}
+                              title="Tilføj skabelonens planter til dette bed"
+                            >
+                              ✅ Anvend
+                            </button>
+                            <button
+                              onClick={() => {
+                                // Share this template
+                                const url = generateShareUrl(t);
+                                setShareUrl(url);
+                                setShareCopied(false);
+                                setShowShareDialog(true);
+                              }}
+                              className="px-3 py-1.5 text-xs rounded-lg border transition-colors hover:bg-[var(--accent-light)]"
+                              style={{ borderColor: "var(--border)", color: "var(--foreground)" }}
+                              title="Del denne skabelon"
+                            >
+                              🔗 Del
+                            </button>
+                            <button
+                              onClick={() => {
+                                if (confirm(`Slet skabelon "${t.name}"?`)) {
+                                  deleteTemplate(t.id);
+                                  // Force re-render
+                                  setShowTemplateGallery(false);
+                                  setTimeout(() => setShowTemplateGallery(true), 0);
+                                }
+                              }}
+                              className="px-3 py-1.5 text-xs rounded-lg border transition-colors hover:bg-red-50"
+                              style={{ borderColor: "var(--border)", color: "#dc2626" }}
+                              title="Slet denne skabelon"
+                            >
+                              🗑️
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* ── E1: Share Dialog ── */}
+      {showShareDialog && (
+        <div className="absolute inset-0 z-[60] flex items-center justify-center" style={{ background: "rgba(0,0,0,0.5)" }}>
+          <div
+            className="rounded-2xl shadow-2xl p-6 w-[480px] max-w-[95vw]"
+            style={{ background: "var(--toolbar-bg)", border: "1px solid var(--border)" }}
+          >
+            <h3 className="text-lg font-semibold mb-2" style={{ color: "var(--foreground)" }}>
+              🔗 Del bed-plan
+            </h3>
+            <p className="text-xs mb-4" style={{ color: "var(--muted)" }}>
+              Kopiér linket og del det med andre GardenOS-brugere. De kan importere planen som skabelon.
+            </p>
+            <div className="space-y-3">
+              <div
+                className="flex items-center gap-2 p-3 rounded-lg border"
+                style={{ borderColor: "var(--border)", background: "var(--background)" }}
+              >
+                <input
+                  type="text"
+                  value={shareUrl}
+                  readOnly
+                  className="flex-1 text-xs bg-transparent outline-none font-mono"
+                  style={{ color: "var(--foreground)" }}
+                  onClick={(e) => (e.target as HTMLInputElement).select()}
+                />
+                <button
+                  onClick={handleCopyShareUrl}
+                  className="px-3 py-1.5 text-xs rounded-lg font-medium transition-colors whitespace-nowrap"
+                  style={{ background: shareCopied ? "#22c55e" : "var(--accent)", color: "#fff" }}
+                >
+                  {shareCopied ? "✅ Kopieret!" : "📋 Kopiér"}
+                </button>
+              </div>
+              <div className="flex gap-2 text-xs" style={{ color: "var(--muted)" }}>
+                <span>🌱 {layout.elements.filter((e) => e.type === "plant").length} planter</span>
+                <span>📐 {bedWidthM}m × {bedLengthM}m</span>
+              </div>
+              {/* QR Code placeholder — simple SVG based */}
+              <div className="flex justify-center py-3">
+                <div
+                  className="p-4 rounded-xl border"
+                  style={{ borderColor: "var(--border)", background: "#fff" }}
+                >
+                  <svg viewBox="0 0 120 120" width="120" height="120">
+                    {/* Simple QR-like pattern as visual indicator */}
+                    <rect x="10" y="10" width="30" height="30" rx="4" fill="#1a1a2e" />
+                    <rect x="15" y="15" width="20" height="20" rx="2" fill="#fff" />
+                    <rect x="20" y="20" width="10" height="10" rx="1" fill="#1a1a2e" />
+                    <rect x="80" y="10" width="30" height="30" rx="4" fill="#1a1a2e" />
+                    <rect x="85" y="15" width="20" height="20" rx="2" fill="#fff" />
+                    <rect x="90" y="20" width="10" height="10" rx="1" fill="#1a1a2e" />
+                    <rect x="10" y="80" width="30" height="30" rx="4" fill="#1a1a2e" />
+                    <rect x="15" y="85" width="20" height="20" rx="2" fill="#fff" />
+                    <rect x="20" y="90" width="10" height="10" rx="1" fill="#1a1a2e" />
+                    {/* Data dots */}
+                    {Array.from({ length: 8 }, (_, r) =>
+                      Array.from({ length: 8 }, (__, c) => {
+                        const idx = r * 8 + c;
+                        const charCode = shareUrl.charCodeAt(idx % shareUrl.length) || 0;
+                        if (charCode % 3 === 0) return null;
+                        return (
+                          <rect
+                            key={`${r}-${c}`}
+                            x={48 + c * 4}
+                            y={48 + r * 4}
+                            width="3"
+                            height="3"
+                            rx="0.5"
+                            fill="#1a1a2e"
+                            opacity={0.7}
+                          />
+                        );
+                      })
+                    )}
+                    <text x="60" y="116" textAnchor="middle" fontSize="7" fill="#666">
+                      GardenOS
+                    </text>
+                  </svg>
+                </div>
+              </div>
+              <p className="text-[10px] text-center" style={{ color: "var(--muted)" }}>
+                💡 Tip: Gem også som skabelon (💾) for at beholde den lokalt
+              </p>
+            </div>
+            <div className="flex justify-end gap-2 mt-5">
+              <button
+                onClick={() => setShowShareDialog(false)}
+                className="px-4 py-2 text-sm rounded-lg border"
+                style={{ borderColor: "var(--border)", color: "var(--foreground)" }}
+              >
+                Luk
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

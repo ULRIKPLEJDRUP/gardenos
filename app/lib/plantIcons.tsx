@@ -2196,6 +2196,29 @@ export function getPlantSvgIcon(plantId: string): PlantSvgIcon | null {
 }
 
 /**
+ * Render a plant SVG icon to an HTML string for use in Leaflet DivIcon etc.
+ * Returns null if no custom icon exists for the given plant id.
+ */
+export function getPlantSvgIconHtml(plantId: string, size = 24): string | null {
+  const IconFn = icons[plantId];
+  if (!IconFn) return null;
+  // Use React.createElement + renderToStaticMarkup at runtime
+  // Since this is client-side code, we build the SVG string manually
+  // by rendering the icon to a temporary container
+  try {
+    const ReactDOMServer = require("react-dom/server");
+    const element = React.createElement(
+      "svg",
+      { width: size, height: size, viewBox: "0 0 32 32", xmlns: "http://www.w3.org/2000/svg" },
+      React.createElement(IconFn)
+    );
+    return ReactDOMServer.renderToStaticMarkup(element);
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Check if a plant id has a custom SVG icon
  */
 export function hasPlantSvgIcon(plantId: string): boolean {

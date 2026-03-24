@@ -65,6 +65,7 @@ import ClimateTab from "./ClimateTab";
 import PlanTab from "./PlanTab";
 import ScanTab from "./ScanTab";
 import DesignLab from "./DesignLab";
+import { getPlantSvgIconHtml, hasPlantSvgIcon } from "../lib/plantIcons";
 import JournalTab from "./JournalTab";
 import ConflictsTab from "./ConflictsTab";
 import GroupsTab from "./GroupsTab";
@@ -77,6 +78,7 @@ import { ContentTab } from "./ContentTab";
 import type { ContentTabHelpers } from "./ContentTab";
 import ViewTab from "./ViewTab";
 import type { BedLayout } from "../lib/bedLayoutTypes";
+import { checkUrlForSharedBed, saveTemplate } from "../lib/templateStore";
 import { getBedLayout } from "../lib/bedLayoutStore";
 import { bedLocalToGeo } from "../lib/bedGeometry";
 import { createTask, parseAiResponse, loadTasks, PRIORITY_ICONS } from "../lib/taskStore";
@@ -2241,9 +2243,24 @@ function resolveFeatureIcon(props: GardenFeatureProperties | undefined): string 
 }
 
 // ---------------------------------------------------------------------------
-// Marker icon – supports optional emoji rendering + custom image icons
+// Marker icon – supports SVG plant icons, emoji rendering + custom image icons
 // ---------------------------------------------------------------------------
-function markerIcon(kind: GardenFeatureKind | undefined, selected: boolean, groupHighlight?: boolean, emoji?: string): L.DivIcon {
+function markerIcon(kind: GardenFeatureKind | undefined, selected: boolean, groupHighlight?: boolean, emoji?: string, speciesId?: string): L.DivIcon {
+  // Try SVG plant icon first (from plantIcons.tsx)
+  if (speciesId) {
+    const svgHtml = getPlantSvgIconHtml(speciesId, selected ? 28 : 22);
+    if (svgHtml) {
+      const size = selected ? 36 : 30;
+      const selectedClass = selected ? "gardenos-emoji-marker--selected" : "";
+      const groupClass = groupHighlight ? "gardenos-emoji-marker--group" : "";
+      return L.divIcon({
+        className: `gardenos-emoji-marker ${selectedClass} ${groupClass}`.trim(),
+        html: `<div style="display:flex;align-items:center;justify-content:center;width:100%;height:100%">${svgHtml}</div>`,
+        iconSize: [size, size],
+        iconAnchor: [size / 2, size / 2],
+      });
+    }
+  }
   // If there's an emoji or custom icon, render it as an HTML div icon
   if (emoji) {
     const isImageIcon = emoji.startsWith("data:image/");
@@ -3332,6 +3349,29 @@ export function GardenMapClient({ userId }: { userId: string }) {
     return () => { cancelled = true; };
   }, []);
 
+  // ── E1: Check URL for shared bed template ──
+  useEffect(() => {
+    const shared = checkUrlForSharedBed();
+    if (shared) {
+      // Save it as a template and notify user
+      saveTemplate(
+        shared.name,
+        shared.description || "Importeret bed-plan",
+        shared.outlineCm,
+        shared.widthCm,
+        shared.lengthCm,
+        shared.elements,
+        shared.tags,
+      );
+      // Clean up URL
+      const url = new URL(window.location.href);
+      url.searchParams.delete("bedshare");
+      window.history.replaceState({}, "", url.toString());
+      // Notify
+      alert(`🌱 Bed-plan "${shared.name}" er gemt som skabelon!\nÅbn et bed → Design Lab → 📂 Skabeloner for at anvende den.`);
+    }
+  }, []);
+
   // Keyboard shortcuts: ⌘1-⌘9 for sidebar tabs (all tabs, in order)
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
@@ -3928,7 +3968,8 @@ export function GardenMapClient({ userId }: { userId: string }) {
 
       if (layer instanceof L.Marker) {
         const emoji = resolveFeatureIcon(feature?.properties);
-        layer.setIcon(markerIcon(kind, isSelected, false, emoji));
+        const speciesId = feature?.properties?.speciesId as string | undefined;
+        layer.setIcon(markerIcon(kind, isSelected, false, emoji, speciesId));
         return;
       }
 
@@ -4239,8 +4280,9 @@ export function GardenMapClient({ userId }: { userId: string }) {
 
       // Resolve emoji icon: check feature prop, then PlantInstances
       let rowIcon = f.properties?.customIcon;
-      if (!rowIcon && f.properties?.speciesId) {
-        const sp = getPlantById(f.properties.speciesId);
+      let rowSpeciesId = f.properties?.speciesId as string | undefined;
+      if (!rowIcon && rowSpeciesId) {
+        const sp = getPlantById(rowSpeciesId);
         if (sp?.icon) rowIcon = sp.icon;
       }
       if (!rowIcon) {
@@ -4250,18 +4292,28 @@ export function GardenMapClient({ userId }: { userId: string }) {
           if (instances.length > 0) {
             const sp = getPlantById(instances[0].speciesId);
             if (sp?.icon) rowIcon = sp.icon;
+            if (!rowSpeciesId) rowSpeciesId = instances[0].speciesId;
           }
         }
       }
       if (!rowIcon) rowIcon = "🌱";
 
+      // Try SVG plant icon first, then fall back to emoji/image
+      let iconHtml: string;
+      const svgHtml = rowSpeciesId ? getPlantSvgIconHtml(rowSpeciesId, 20) : null;
+      if (svgHtml) {
+        iconHtml = svgHtml;
+      } else {
+        const isImg = rowIcon.startsWith("data:image/");
+        iconHtml = isImg
+          ? `<img src="${rowIcon}" alt="" style="width:20px;height:20px;object-fit:contain;border-radius:3px;" />`
+          : `<span>${rowIcon}</span>`;
+      }
+
       // Create marker — identical pattern to edge labels (iconSize [0,0], anchor [0,0])
-      const isImg = rowIcon.startsWith("data:image/");
       const icon = L.divIcon({
         className: "gardenos-row-emoji-overlay",
-        html: isImg
-          ? `<img src="${rowIcon}" alt="" style="width:20px;height:20px;object-fit:contain;border-radius:3px;" />`
-          : `<span>${rowIcon}</span>`,
+        html: iconHtml,
         iconSize: [0, 0],
         iconAnchor: [0, 0],
       });
@@ -8640,6 +8692,8 @@ export function GardenMapClient({ userId }: { userId: string }) {
             plants={designLabPlants}
             onClose={() => setShowDesignLab(false)}
             onLayoutChange={(layout) => designLabLayoutChangeRef.current?.(layout)}
+            soilProfileId={selected.feature.properties?.soilProfileId}
+            onSoilProfileChange={(profileId) => updateSelectedProperty({ soilProfileId: profileId })}
           />
         );
       })() : null}

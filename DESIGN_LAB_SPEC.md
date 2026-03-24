@@ -567,7 +567,7 @@ Klar til at starte implementation? 🚀
 
 | # | Feature | Beskrivelse | Status |
 |---|---------|------------|--------|
-| D1 | **Bruger-definerede templates** | "Gem dette bed som skabelon" → genbruges i andre bede | ⬜ |
+| D1 | **Bruger-definerede templates** | "Gem dette bed som skabelon" → genbruges i andre bede. templateStore.ts med CRUD, save/apply/delete, skalering til målbed, gallery-dialog i DesignLab header | ✅ |
 | D2 | **Skygge-overlay** | Sun-angle beregning (lat 56°N), sæson-afhængig skyggretning + længde, toggle-knap, shade-zone overlay med radial gradient | ✅ |
 | D3 | **Side-by-side sæson-sammenligning** | Split-view med uafhængig månedsvalg, compare-toggle i toolbar, full bed rendering i begge paneler | ✅ |
 | D4 | **Companion-linjer** | Grønne/røde forbindelseslinjer mellem naboer | ✅ |
@@ -577,5 +577,5 @@ Klar til at starte implementation? 🚀
 
 | # | Feature | Beskrivelse | Status |
 |---|---------|------------|--------|
-| E1 | **Del bedplaner** | Del et bed-design via link, QR-kode eller direkte til andre brugere. Modtager kan importere som skabelon | ⬜ |
+| E1 | **Del bedplaner** | Del et bed-design via link, QR-kode eller direkte til andre brugere. Modtager kan importere som skabelon. Base64url-encoded share payload, auto-import via `?bedshare=` URL parameter, kopiér-link dialog med QR-visual, template gallery → del-knap | ✅ |
 | E2 | **Brugerforum** | Forum/community-funktion: opret tråde, del erfaringer, stil spørgsmål, upload billeder. Kategorier per emne (bed-design, skadedyr, høst, sorter osv.) | ⬜ |
