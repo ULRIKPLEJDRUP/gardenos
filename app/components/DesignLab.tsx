@@ -476,6 +476,11 @@ function DesignLabInner({
   const [colorBy, setColorBy] = useState<"season" | "family" | "category" | "harvest">("season");
   const [tool, setTool] = useState<LabTool>("select");
   const [selectedElementId, setSelectedElementId] = useState<string | null>(null);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [clipboard, setClipboard] = useState<BedElement[]>([]);
+  const [contextMenu, setContextMenu] = useState<{ x: number; y: number; elementId: string } | null>(null);
+  const [lassoRect, setLassoRect] = useState<{ x1: number; y1: number; x2: number; y2: number } | null>(null);
+  const lassoStartRef = useRef<{ x: number; y: number } | null>(null);
   const [zoom, setZoom] = useState(1);
   const [pan, setPan] = useState({ x: 0, y: 0 });
   const [isPanning, setIsPanning] = useState(false);
@@ -491,6 +496,25 @@ function DesignLabInner({
   const [paletteSearch, setPaletteSearch] = useState("");
   const [sidebarTab, setSidebarTab] = useState<"palette" | "info" | "timeline" | "rotation" | "ai">("palette");
   const [paletteCategory, setPaletteCategory] = useState<string>("all");
+
+  // ── Selection helpers ──
+  const isElementSelected = useCallback((id: string) => selectedIds.has(id), [selectedIds]);
+  const selectSingle = useCallback((id: string) => {
+    setSelectedElementId(id);
+    setSelectedIds(new Set([id]));
+  }, []);
+  const clearSelection = useCallback(() => {
+    setSelectedElementId(null);
+    setSelectedIds(new Set());
+  }, []);
+  const toggleSelection = useCallback((id: string) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      setSelectedElementId(next.size === 1 ? [...next][0] : null);
+      return next;
+    });
+  }, []);
 
   // ── Drag state ──
   const [draggingElementId, setDraggingElementId] = useState<string | null>(null);
@@ -723,37 +747,99 @@ function DesignLabInner({
     setPlacingSpeciesId(speciesId);
     setPlacingInfraKind(null);
     setTool("place");
-    setSelectedElementId(null);
+    clearSelection();
     setRowStart(null);
-  }, []);
+  }, [clearSelection]);
 
   // ── Start placing infrastructure ──
   const startPlacingInfra = useCallback((kind: string) => {
     setPlacingInfraKind(kind);
     setPlacingSpeciesId(null);
     setTool("place");
-    setSelectedElementId(null);
+    clearSelection();
     setRowStart(null);
-  }, []);
+  }, [clearSelection]);
 
   // ── Keyboard ──
   useEffect(() => {
     function handleKey(e: KeyboardEvent) {
-      if ((e.target as HTMLElement).tagName === "INPUT") return;
+      if ((e.target as HTMLElement).tagName === "INPUT" || (e.target as HTMLElement).tagName === "TEXTAREA") return;
       // Undo / Redo
       if ((e.metaKey || e.ctrlKey) && e.key === "z" && !e.shiftKey) { e.preventDefault(); handleUndo(); return; }
       if ((e.metaKey || e.ctrlKey) && (e.key === "Z" || (e.key === "z" && e.shiftKey))) { e.preventDefault(); handleRedo(); return; }
+      // Select all (⌘A)
+      if ((e.metaKey || e.ctrlKey) && (e.key === "a" || e.key === "A")) {
+        e.preventDefault();
+        const allIds = new Set(layout.elements.map((el) => el.id));
+        setSelectedIds(allIds);
+        setSelectedElementId(allIds.size === 1 ? [...allIds][0] : null);
+        return;
+      }
+      // Copy (⌘C)
+      if ((e.metaKey || e.ctrlKey) && (e.key === "c" || e.key === "C") && !e.shiftKey) {
+        e.preventDefault();
+        const els = layout.elements.filter((el) => selectedIds.has(el.id));
+        if (els.length > 0) setClipboard(els);
+        return;
+      }
+      // Paste (⌘V)
+      if ((e.metaKey || e.ctrlKey) && (e.key === "v" || e.key === "V")) {
+        e.preventDefault();
+        if (clipboard.length === 0) return;
+        const offset = 8; // cm offset so pasted items don't overlap
+        const newElements = clipboard.map((el) => ({
+          ...el,
+          id: crypto.randomUUID(),
+          position: { x: el.position.x + offset, y: el.position.y + offset },
+        }));
+        const updated = {
+          ...layout,
+          elements: [...layout.elements, ...newElements],
+          version: layout.version + 1,
+        };
+        persistLayout(updated);
+        const newIds = new Set(newElements.map((el) => el.id));
+        setSelectedIds(newIds);
+        setSelectedElementId(newIds.size === 1 ? [...newIds][0] : null);
+        return;
+      }
+      // Duplicate (⌘D)
+      if ((e.metaKey || e.ctrlKey) && (e.key === "d" || e.key === "D")) {
+        e.preventDefault();
+        const els = layout.elements.filter((el) => selectedIds.has(el.id));
+        if (els.length === 0) return;
+        const dupes = els.map((el) => ({
+          ...el,
+          id: crypto.randomUUID(),
+          position: { x: el.position.x + 6, y: el.position.y + 6 },
+        }));
+        const updated = {
+          ...layout,
+          elements: [...layout.elements, ...dupes],
+          version: layout.version + 1,
+        };
+        persistLayout(updated);
+        const newIds = new Set(dupes.map((el) => el.id));
+        setSelectedIds(newIds);
+        setSelectedElementId(newIds.size === 1 ? [...newIds][0] : null);
+        return;
+      }
       switch (e.key) {
         case "Escape":
+          if (contextMenu) { setContextMenu(null); break; }
           if (placingSpeciesId || placingInfraKind) { setPlacingSpeciesId(null); setPlacingInfraKind(null); setTool("select"); setGhostPos(null); setRowStart(null); }
-          else if (selectedElementId) setSelectedElementId(null);
+          else if (selectedIds.size > 0) clearSelection();
           else onClose();
           break;
         case "Delete": case "Backspace":
-          if (selectedElementId) {
-            const updated = removeElement(featureId, selectedElementId);
-            if (updated) persistLayout(updated);
-            setSelectedElementId(null);
+          if (selectedIds.size > 0) {
+            let updated = layout;
+            for (const id of selectedIds) {
+              const next = removeElement(featureId, id);
+              if (next) updated = next;
+            }
+            if (updated !== layout) persistLayout(updated);
+            clearSelection();
           }
           break;
         case "v": case "V": setTool("select"); break;
@@ -769,7 +855,7 @@ function DesignLabInner({
     }
     window.addEventListener("keydown", handleKey);
     return () => window.removeEventListener("keydown", handleKey);
-  }, [selectedElementId, placingSpeciesId, placingInfraKind, featureId, onClose, persistLayout, handleUndo, handleRedo]);
+  }, [selectedIds, selectedElementId, placingSpeciesId, placingInfraKind, featureId, onClose, persistLayout, handleUndo, handleRedo, layout, clipboard, clearSelection, contextMenu]);
 
   // ── Zoom ──
   const handleWheel = useCallback((e: React.WheelEvent) => {
@@ -778,16 +864,23 @@ function DesignLabInner({
     setZoom((z) => Math.min(5, Math.max(0.3, z * delta)));
   }, []);
 
-  // ── Pan ──
+  // ── Pan / Lasso ──
   const handlePointerDown = useCallback(
     (e: React.PointerEvent) => {
+      setContextMenu(null);
       if (tool === "pan" || e.button === 1 || (e.button === 0 && e.altKey)) {
         setIsPanning(true);
         panStartRef.current = { x: e.clientX, y: e.clientY, panX: pan.x, panY: pan.y };
         (e.target as HTMLElement).setPointerCapture?.(e.pointerId);
+      } else if (tool === "select" && e.button === 0 && !e.shiftKey) {
+        // Start lasso selection
+        const pos = svgPointFromEvent(e);
+        if (pos) {
+          lassoStartRef.current = { x: pos.x, y: pos.y };
+        }
       }
     },
-    [tool, pan]
+    [tool, pan, svgPointFromEvent]
   );
 
   const handlePointerMove = useCallback(
@@ -797,6 +890,19 @@ function DesignLabInner({
           x: panStartRef.current.panX + (e.clientX - panStartRef.current.x),
           y: panStartRef.current.panY + (e.clientY - panStartRef.current.y),
         });
+        return;
+      }
+      // Lasso drag
+      if (lassoStartRef.current && !draggingElementId && tool === "select") {
+        const pos = svgPointFromEvent(e);
+        if (pos) {
+          setLassoRect({
+            x1: Math.min(lassoStartRef.current.x, pos.x),
+            y1: Math.min(lassoStartRef.current.y, pos.y),
+            x2: Math.max(lassoStartRef.current.x, pos.x),
+            y2: Math.max(lassoStartRef.current.y, pos.y),
+          });
+        }
         return;
       }
       // Drag element
@@ -839,6 +945,28 @@ function DesignLabInner({
         panStartRef.current = null;
         return;
       }
+      // Finalize lasso selection
+      if (lassoStartRef.current && lassoRect) {
+        const { x1, y1, x2, y2 } = lassoRect;
+        // Only count as lasso if rect is big enough (> 3cm in each direction)
+        if (Math.abs(x2 - x1) > 3 && Math.abs(y2 - y1) > 3) {
+          const hits = new Set<string>();
+          for (const el of layout.elements) {
+            if (el.position.x >= x1 && el.position.x <= x2 &&
+                el.position.y >= y1 && el.position.y <= y2) {
+              hits.add(el.id);
+            }
+          }
+          if (hits.size > 0) {
+            setSelectedIds(hits);
+            setSelectedElementId(hits.size === 1 ? [...hits][0] : null);
+          }
+        }
+        setLassoRect(null);
+        lassoStartRef.current = null;
+        return;
+      }
+      lassoStartRef.current = null;
       if (draggingElementId) {
         const el = layout.elements.find((el) => el.id === draggingElementId);
         if (el) {
@@ -851,7 +979,7 @@ function DesignLabInner({
         return;
       }
     },
-    [isPanning, draggingElementId, layout.elements, featureId, persistLayout]
+    [isPanning, draggingElementId, layout, featureId, persistLayout, lassoRect]
   );
 
   // ── SVG click for placement ──
@@ -905,26 +1033,34 @@ function DesignLabInner({
       return;
     }
     if (tool === "select") {
-      setSelectedElementId(null);
+      clearSelection();
+      setContextMenu(null);
     }
   }, [tool, placingSpecies, placingInfraKind, rowStart, svgPointFromEvent, placeElementAt, placeRow, layout.outlineCm, featureId, persistLayout]);
 
   // ── Element pointer down (select or start drag) ──
   const handleElementPointerDown = useCallback((e: React.PointerEvent, el: BedElement) => {
     e.stopPropagation();
+    setContextMenu(null);
     if (tool === "select") {
-      setSelectedElementId(el.id);
-      setDraggingElementId(el.id);
-      dragStartRef.current = {
-        elemX: el.position.x, elemY: el.position.y,
-        pointerX: e.clientX, pointerY: e.clientY,
-      };
-      (e.target as HTMLElement).setPointerCapture?.(e.pointerId);
+      if (e.shiftKey) {
+        // Shift+click → toggle multi-select
+        toggleSelection(el.id);
+      } else {
+        // Regular click → single select + start drag
+        selectSingle(el.id);
+        setDraggingElementId(el.id);
+        dragStartRef.current = {
+          elemX: el.position.x, elemY: el.position.y,
+          pointerX: e.clientX, pointerY: e.clientY,
+        };
+        (e.target as HTMLElement).setPointerCapture?.(e.pointerId);
+      }
     } else if (tool === "delete") {
       const updated = removeElement(featureId, el.id);
       if (updated) persistLayout(updated);
     }
-  }, [tool, featureId, persistLayout]);
+  }, [tool, featureId, persistLayout, toggleSelection, selectSingle]);
 
   // ── Build PlantCalendar from PlantSpecies ──
   const calendarFromSpecies = useCallback((sp: PlantSpecies): PlantCalendar => {
@@ -1279,7 +1415,7 @@ function DesignLabInner({
   const uniqueSpecies = new Set(plantElements.map((e) => e.speciesId).filter(Boolean));
 
   // ── Selected element info ──
-  const selectedElement = selectedElementId ? layout.elements.find((e) => e.id === selectedElementId) : null;
+  const selectedElement = selectedIds.size === 1 ? layout.elements.find((e) => selectedIds.has(e.id)) ?? null : null;
   const selectedSpecies = selectedElement?.speciesId ? getPlantById(selectedElement.speciesId) : null;
 
   // ── Cursor ──
@@ -1637,6 +1773,7 @@ function DesignLabInner({
             ref={svgRef}
             viewBox={viewBox}
             onClick={handleSvgClick}
+            onContextMenu={(e) => e.preventDefault()}
             style={{
               maxWidth: "90%",
               maxHeight: "85%",
@@ -1744,7 +1881,8 @@ function DesignLabInner({
                   const shape = cal?.shape ?? "leafy";
 
                   return (
-                    <g key={el.id} transform={el.rotation ? `rotate(${el.rotation} ${el.position.x} ${el.position.y})` : undefined}>
+                    <g key={el.id} transform={el.rotation ? `rotate(${el.rotation} ${el.position.x} ${el.position.y})` : undefined}
+                       onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); selectSingle(el.id); setContextMenu({ x: e.clientX, y: e.clientY, elementId: el.id }); }}>
                       <PlantShape
                         shape={shape}
                         x={el.position.x}
@@ -1755,7 +1893,7 @@ function DesignLabInner({
                         icon={el.icon ?? "🌱"}
                         viewMode={viewMode}
                         spreadCm={el.width || 10}
-                        isSelected={selectedElementId === el.id}
+                        isSelected={selectedIds.has(el.id)}
                         onPointerDown={(e) => handleElementPointerDown(e, el)}
                         minRadius={minPlantRadius}
                       />
@@ -1764,51 +1902,139 @@ function DesignLabInner({
                 })}
             </g>
 
-            {/* Infrastructure elements */}
+            {/* Infrastructure elements (improved artwork) */}
             <g>
               {infraElements.map((el) => {
-                const isInfraSelected = selectedElementId === el.id;
+                const isInfraSelected = selectedIds.has(el.id);
                 const infraColor = el.type === "water" ? "#3b82f6"
                   : el.type === "electric" ? "#f59e0b"
                   : el.type === "path" ? "#a8a29e"
                   : el.type === "edge" ? "#8B6914"
                   : "var(--foreground)";
-                const infraIcon = el.icon ?? (
-                  el.type === "water" ? "💧" : el.type === "electric" ? "⚡"
-                  : el.type === "path" ? "🪨" : el.type === "edge" ? "🪵" : "🏷️"
-                );
                 const halfW = (el.width || 20) / 2;
                 const halfL = (el.length || 20) / 2;
+                const kind = el.infrastructureKind ?? "";
+
                 return (
                   <g key={el.id}
                      transform={`translate(${el.position.x},${el.position.y})${el.rotation ? ` rotate(${el.rotation})` : ""}`}
-                     onClick={(e) => { e.stopPropagation(); setSelectedElementId(el.id); }}
+                     onClick={(e) => { e.stopPropagation(); if (e.shiftKey) toggleSelection(el.id); else selectSingle(el.id); }}
                      onPointerDown={(e) => handleElementPointerDown(e, el)}
+                     onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); selectSingle(el.id); setContextMenu({ x: e.clientX, y: e.clientY, elementId: el.id }); }}
                      style={{ cursor: tool === "select" ? "pointer" : tool === "delete" ? "not-allowed" : undefined }}
                   >
-                    {/* Background shape */}
-                    <rect
-                      x={-halfW} y={-halfL}
-                      width={el.width || 20} height={el.length || 20}
-                      rx={el.type === "path" ? 4 : 2}
-                      fill={infraColor}
-                      fillOpacity={0.15}
-                      stroke={infraColor}
-                      strokeWidth={isInfraSelected ? 1.5 : 0.8}
-                      strokeDasharray={el.type === "water" ? "4 2" : el.type === "electric" ? "2 3" : undefined}
-                      opacity={0.8}
-                    />
-                    {/* Icon */}
-                    <text
-                      x={0} y={0}
-                      textAnchor="middle"
-                      dominantBaseline="central"
-                      fontSize={Math.min(halfW, halfL, 8)}
-                    >
-                      {infraIcon}
-                    </text>
+                    {/* Water infrastructure */}
+                    {el.type === "water" && kind === "drip-line" && (
+                      <>
+                        <path
+                          d={`M${-halfW},0 ${Array.from({length: Math.floor(halfW * 2 / 6)}, (_, i) =>
+                            `Q${-halfW + i * 6 + 3},${i % 2 === 0 ? -2.5 : 2.5} ${-halfW + (i + 1) * 6},0`
+                          ).join(" ")}`}
+                          stroke={infraColor} strokeWidth={1.5} fill="none" opacity={0.7}
+                          strokeLinecap="round"
+                        />
+                        {/* Water drops along the line */}
+                        {Array.from({length: Math.floor(halfW * 2 / 12)}, (_, i) => (
+                          <circle key={`wd${i}`}
+                            cx={-halfW + 6 + i * 12} cy={3}
+                            r={1} fill={infraColor} opacity={0.4 + (i % 3) * 0.15}
+                          />
+                        ))}
+                      </>
+                    )}
+                    {el.type === "water" && kind !== "drip-line" && (
+                      <>
+                        <circle cx={0} cy={0} r={Math.min(halfW, halfL) * 0.8}
+                          fill={infraColor} fillOpacity={0.12}
+                          stroke={infraColor} strokeWidth={0.8} />
+                        <text x={0} y={0} textAnchor="middle" dominantBaseline="central"
+                          fontSize={Math.min(halfW, halfL, 8)}>
+                          {el.icon ?? "💧"}
+                        </text>
+                      </>
+                    )}
+
+                    {/* Path / stepping stones */}
+                    {el.type === "path" && kind === "stepping" && (
+                      <>
+                        {[{x: -6, y: -4, r: 5.5}, {x: 3, y: 2, r: 6}, {x: -2, y: 8, r: 5}].map((s, i) => (
+                          <ellipse key={`step${i}`}
+                            cx={s.x} cy={s.y} rx={s.r} ry={s.r * 0.85}
+                            fill="#b8b0a0" stroke="#9a9285" strokeWidth={0.5}
+                            opacity={0.7} />
+                        ))}
+                      </>
+                    )}
+                    {el.type === "path" && kind !== "stepping" && (
+                      <>
+                        <rect x={-halfW} y={-halfL} width={el.width || 20} height={el.length || 20}
+                          rx={halfL * 0.3} fill="#c8c0b0" fillOpacity={0.25}
+                          stroke="#a8a098" strokeWidth={0.8} />
+                        {/* Gravel dots */}
+                        {Array.from({length: 6}, (_, i) => (
+                          <circle key={`grav${i}`}
+                            cx={-halfW + 4 + (i % 3) * ((el.width || 20) / 3)}
+                            cy={-halfL + 4 + Math.floor(i / 3) * ((el.length || 20) / 2.5)}
+                            r={0.8} fill="#908878" opacity={0.3} />
+                        ))}
+                      </>
+                    )}
+
+                    {/* Edge / timber */}
+                    {el.type === "edge" && (
+                      <>
+                        <rect x={-halfW} y={-halfL} width={el.width || 20} height={el.length || 20}
+                          rx={1}
+                          fill={kind === "stone-edge" ? "#a09888" : "#A0845C"}
+                          fillOpacity={0.5} />
+                        {/* Wood grain lines for timber */}
+                        {kind !== "stone-edge" && Array.from({length: Math.floor((el.width || 20) / 8)}, (_, i) => (
+                          <line key={`grain${i}`}
+                            x1={-halfW + 4 + i * 8} y1={-halfL + 1}
+                            x2={-halfW + 4 + i * 8} y2={halfL - 1}
+                            stroke="#8B6914" strokeWidth={0.3} opacity={0.35} />
+                        ))}
+                        {/* Stone blocks */}
+                        {kind === "stone-edge" && Array.from({length: Math.floor((el.width || 20) / 10)}, (_, i) => (
+                          <rect key={`stone${i}`}
+                            x={-halfW + 1 + i * 10} y={-halfL + 1}
+                            width={8} height={(el.length || 8) - 2}
+                            rx={1} fill="#b0a898" fillOpacity={0.4}
+                            stroke="#908878" strokeWidth={0.3} />
+                        ))}
+                      </>
+                    )}
+
+                    {/* Electric */}
+                    {el.type === "electric" && (
+                      <>
+                        <rect x={-halfW} y={-halfL} width={el.width || 20} height={el.length || 20}
+                          rx={2} fill={infraColor} fillOpacity={0.1}
+                          stroke={infraColor} strokeWidth={0.8}
+                          strokeDasharray="2 3" opacity={0.8} />
+                        <text x={0} y={0} textAnchor="middle" dominantBaseline="central"
+                          fontSize={Math.min(halfW, halfL, 8)}>
+                          {el.icon ?? "⚡"}
+                        </text>
+                      </>
+                    )}
+
                     {/* Label */}
-                    {el.label && (
+                    {el.type === "label" && (
+                      <>
+                        <rect x={-halfW} y={-halfL} width={el.width || 20} height={el.length || 20}
+                          rx={2} fill="var(--accent-light, #e8f5e9)" fillOpacity={0.4}
+                          stroke="var(--border)" strokeWidth={0.5} />
+                        <text x={0} y={0} textAnchor="middle" dominantBaseline="central"
+                          fontSize={Math.min(halfW * 0.5, 5)}
+                          fill="var(--foreground)" opacity={0.8}>
+                          {el.label ?? el.icon ?? "🏷️"}
+                        </text>
+                      </>
+                    )}
+
+                    {/* Label text below */}
+                    {el.label && el.type !== "label" && (
                       <text
                         x={0} y={halfL + 4}
                         textAnchor="middle"
@@ -1919,7 +2145,118 @@ function DesignLabInner({
             >
               {bedLengthM} m
             </text>
+
+            {/* Lasso selection rectangle */}
+            {lassoRect && (
+              <rect
+                x={lassoRect.x1}
+                y={lassoRect.y1}
+                width={lassoRect.x2 - lassoRect.x1}
+                height={lassoRect.y2 - lassoRect.y1}
+                fill="var(--accent, #2d7a3a)"
+                fillOpacity={0.08}
+                stroke="var(--accent, #2d7a3a)"
+                strokeWidth={0.6}
+                strokeDasharray="3 2"
+                rx={1}
+              />
+            )}
+
+            {/* Scale bar */}
+            {(() => {
+              // Find a nice round cm value for the scale bar
+              const barTargetPx = 60; // target width in SVG units
+              const niceSteps = [5, 10, 20, 25, 50, 100, 200, 500];
+              const barCm = niceSteps.find((s) => s >= barTargetPx * 0.5) ?? 50;
+              const barWidth = barCm;
+              const bx = layout.widthCm - barCm - 5;
+              const by = layout.lengthCm + 10;
+              const barLabel = barCm >= 100 ? `${barCm / 100} m` : `${barCm} cm`;
+              return (
+                <g>
+                  <line x1={bx} y1={by} x2={bx + barWidth} y2={by}
+                    stroke="var(--foreground, #333)" strokeWidth={0.8} />
+                  <line x1={bx} y1={by - 2} x2={bx} y2={by + 2}
+                    stroke="var(--foreground, #333)" strokeWidth={0.5} />
+                  <line x1={bx + barWidth} y1={by - 2} x2={bx + barWidth} y2={by + 2}
+                    stroke="var(--foreground, #333)" strokeWidth={0.5} />
+                  <text x={bx + barWidth / 2} y={by + 6}
+                    textAnchor="middle" fontSize="3.5"
+                    fill="var(--muted, #8a8578)" fontWeight="500">
+                    {barLabel}
+                  </text>
+                </g>
+              );
+            })()}
           </svg>
+
+          {/* Context menu (floating) */}
+          {contextMenu && (
+            <div
+              className="fixed z-50 min-w-[140px] rounded-lg shadow-lg border py-1"
+              style={{
+                left: contextMenu.x,
+                top: contextMenu.y,
+                background: "var(--sidebar-bg, #fff)",
+                borderColor: "var(--border)",
+              }}
+              onClick={(e) => e.stopPropagation()}
+            >
+              {[
+                { label: "📋 Kopiér", action: () => {
+                  const els = layout.elements.filter((el) => selectedIds.has(el.id));
+                  if (els.length > 0) setClipboard(els);
+                  setContextMenu(null);
+                }},
+                { label: "📑 Duplikér", action: () => {
+                  const els = layout.elements.filter((el) => selectedIds.has(el.id));
+                  if (els.length === 0) { setContextMenu(null); return; }
+                  const dupes = els.map((el) => ({
+                    ...el,
+                    id: crypto.randomUUID(),
+                    position: { x: el.position.x + 6, y: el.position.y + 6 },
+                  }));
+                  const updated = {
+                    ...layout,
+                    elements: [...layout.elements, ...dupes],
+                    version: layout.version + 1,
+                  };
+                  persistLayout(updated);
+                  const newIds = new Set(dupes.map((el) => el.id));
+                  setSelectedIds(newIds);
+                  setSelectedElementId(newIds.size === 1 ? [...newIds][0] : null);
+                  setContextMenu(null);
+                }},
+                { label: "🗑 Slet", action: () => {
+                  let updated = layout;
+                  for (const id of selectedIds) {
+                    const next = removeElement(featureId, id);
+                    if (next) updated = next;
+                  }
+                  if (updated !== layout) persistLayout(updated);
+                  clearSelection();
+                  setContextMenu(null);
+                }},
+              ].map((item) => (
+                <button
+                  key={item.label}
+                  onClick={item.action}
+                  className="w-full text-left px-3 py-1.5 text-[11px] hover:bg-black/5 transition-colors"
+                  style={{ color: "var(--foreground)" }}
+                >
+                  {item.label}
+                </button>
+              ))}
+              {selectedIds.size > 1 && (
+                <div className="border-t mx-2 my-1" style={{ borderColor: "var(--border)" }} />
+              )}
+              {selectedIds.size > 1 && (
+                <div className="px-3 py-1 text-[9px]" style={{ color: "var(--muted)" }}>
+                  {selectedIds.size} elementer valgt
+                </div>
+              )}
+            </div>
+          )}
         </div>
 
         {/* ── Sidebar ── */}
@@ -2197,7 +2534,60 @@ function DesignLabInner({
               </div>
 
               {/* Selected element details */}
-              {selectedElement && (
+              {selectedIds.size > 1 && (
+                <div className="mb-3 p-2.5 rounded-lg border" style={{ borderColor: "var(--accent)", background: "var(--accent-light)" }}>
+                  <h4 className="text-xs font-semibold mb-1" style={{ color: "var(--accent)" }}>
+                    ✏️ {selectedIds.size} elementer valgt
+                  </h4>
+                  <div className="text-[11px] space-y-1" style={{ color: "var(--foreground)" }}>
+                    <p className="text-[10px]" style={{ color: "var(--muted)" }}>
+                      Shift+klik for at til-/fravælge. ⌘C kopiér, ⌘V indsæt, ⌘D duplikér, Delete slet.
+                    </p>
+                  </div>
+                  <div className="flex gap-1 mt-2">
+                    <button onClick={() => {
+                      const els = layout.elements.filter((el) => selectedIds.has(el.id));
+                      if (els.length > 0) setClipboard(els);
+                    }}
+                      className="flex-1 px-2 py-1 rounded text-[10px] border transition-colors hover:bg-[var(--accent-light)]"
+                      style={{ borderColor: "var(--border)", color: "var(--foreground)" }}>
+                      📋 Kopiér
+                    </button>
+                    <button onClick={() => {
+                      const els = layout.elements.filter((el) => selectedIds.has(el.id));
+                      const dupes = els.map((el) => ({
+                        ...el,
+                        id: crypto.randomUUID(),
+                        position: { x: el.position.x + 6, y: el.position.y + 6 },
+                      }));
+                      persistLayout({
+                        ...layout,
+                        elements: [...layout.elements, ...dupes],
+                        version: layout.version + 1,
+                      });
+                      setSelectedIds(new Set(dupes.map((d) => d.id)));
+                    }}
+                      className="flex-1 px-2 py-1 rounded text-[10px] border transition-colors hover:bg-[var(--accent-light)]"
+                      style={{ borderColor: "var(--border)", color: "var(--foreground)" }}>
+                      📑 Duplikér
+                    </button>
+                    <button onClick={() => {
+                      let updated = layout;
+                      for (const id of selectedIds) {
+                        const next = removeElement(featureId, id);
+                        if (next) updated = next;
+                      }
+                      if (updated !== layout) persistLayout(updated);
+                      clearSelection();
+                    }}
+                      className="px-2 py-1 rounded text-[10px] border transition-colors hover:bg-red-50"
+                      style={{ borderColor: "#f87171", color: "#dc2626" }}>
+                      🗑
+                    </button>
+                  </div>
+                </div>
+              )}
+              {selectedElement && selectedIds.size === 1 && (
                 <div className="mb-3 p-2.5 rounded-lg border" style={{ borderColor: "var(--accent)", background: "var(--accent-light)" }}>
                   <h4 className="text-xs font-semibold mb-1" style={{ color: "var(--accent)" }}>
                     ✏️ Valgt element
@@ -2227,7 +2617,7 @@ function DesignLabInner({
                   <button onClick={() => {
                     const updated = removeElement(featureId, selectedElement.id);
                     if (updated) persistLayout(updated);
-                    setSelectedElementId(null);
+                    clearSelection();
                   }}
                     className="mt-2 w-full px-2 py-1 rounded text-[10px] border transition-colors hover:bg-red-50"
                     style={{ borderColor: "#f87171", color: "#dc2626" }}>
