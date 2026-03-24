@@ -536,7 +536,8 @@ Klar til at starte implementation? 🚀
 | A4 | **Bedre jordtextur** | SVG turbulence-filter for synlig muldjord i stedet for usynlig 8×8 pattern | ✅ |
 | A5 | **Infrastruktur-illustrationer** | Drypslange → bølget linje, trædesten → cirkler, trækant → grain-mønster | ✅ |
 | A6 | **Perspektivisk skygge** | Høje planter kaster større skygger — giver dybdefornemmelse | ✅ |
-| A7 | **Sæsonambience** | Snefnug i vinter, gule blade i efterår, sommerlys i juni | ⬜ |
+| A7 | **Sæsonambience** | Animerede sæson-partikler: ❄ snefnug (dec-feb), 🍂 faldende blade (okt-nov), 🌸 kirsebærblomster (apr-maj), 🦋🐝 insekter (jun-aug). CSS keyframe-animationer i globals.css | ✅ |
+| A8 | **SVG plante-ikonbibliotek** | Erstat generiske emoji (🌿×27, 🥬×16, 🔴×10) med unikke inline-SVG ikoner for alle ~196 arter. Hvert ikon er en farverig mini-illustration (radis, rødbede, salat, squash osv.) renderet direkte i SVG-canvas. Emoji-fallback bevares. Ikonerne ligger i `plantIcons.tsx` som React-komponenter. **196/196 arter dækket (100%).** | ✅ |
 
 ### ✏️ B. Bedre redigering
 
@@ -544,7 +545,7 @@ Klar til at starte implementation? 🚀
 |---|---------|------------|--------|
 | B1 | **Multi-select + bulk move** | Lasso-selection eller Shift+klik — flyt/slet/kopiér mange på én gang | ✅ |
 | B2 | **Copy/Paste + Duplikér** | ⌘C/⌘V + Alt+drag for hurtig klon | ✅ |
-| B3 | **Drag-from-palette** | Træk plante direkte fra sidebar ind på canvas | ⬜ |
+| B3 | **Drag-from-palette** | Træk plante direkte fra sidebar ind på canvas via HTML5 drag-and-drop. Sæt `draggable` + `onDragStart` på palette-knapper, `onDragOver`/`onDrop` på canvas-wrapper med SVG CTM-konvertering | ✅ |
 | B4 | **Afstandsmåler** | Ruler-tool: klik to punkter → viser cm-afstand + companion-status | ✅ |
 | B5 | **Element-rotation handles** | Visuelle drag-handles til rotation + resize pr. element | ✅ |
 | B6 | **Højreklik-kontekstmenu** | Kopiér / Slet / Dupliker række / Vis info | ✅ |
@@ -558,7 +559,7 @@ Klar til at starte implementation? 🚀
 | C1 | **Måneds-slider med labels** | "Jan Feb Mar…" under slider + auto-play ▶️ | ✅ |
 | C2 | **Minimap** | Lille overview-kort i hjørnet ved zoom | ✅ |
 | C3 | **Scale bar** | Målestok-bar (10cm/50cm/1m) der opdaterer ved zoom | ✅ |
-| C4 | **Floating toolbar** | Toolbar svæver over canvas → mere plads | ⬜ |
+| C4 | **Floating toolbar** | Toolbar er nu en `absolute top-3 left-1/2` rounded-2xl backdrop-blur pill der svæver over canvas. Giver mere plads til bedet | ✅ |
 | C5 | **Keyboard shortcuts legend** | Tooltip eller ?-dialog med alle shortcuts | ✅ |
 | C6 | **Mobile/touch support** | Pinch-zoom, two-finger pan, touch-venlige knapper | ⬜ |
 

@@ -24,6 +24,22 @@ import SeasonTimeline from "./designlab/SeasonTimeline";
 import SuccessionView from "./designlab/SuccessionView";
 import BedGeneratorDialog from "./designlab/BedGeneratorDialog";
 import { autoFillBed } from "../lib/smartAutoFill";
+import { getPlantSvgIcon } from "../lib/plantIcons";
+
+// ---------------------------------------------------------------------------
+// Palette icon helper — renders SVG icon if available, else emoji
+// ---------------------------------------------------------------------------
+function PaletteIcon({ plantId, emoji, size = 16 }: { plantId: string; emoji: string; size?: number }) {
+  const SvgIcon = getPlantSvgIcon(plantId);
+  if (SvgIcon) {
+    return (
+      <svg width={size} height={size} viewBox="0 0 32 32" style={{ flexShrink: 0 }}>
+        <SvgIcon />
+      </svg>
+    );
+  }
+  return <span className="text-sm" style={{ flexShrink: 0 }}>{emoji}</span>;
+}
 
 // ---------------------------------------------------------------------------
 // Props
@@ -65,7 +81,7 @@ export type DesignLabProps = {
 
 function PlantShape({
   shape, x, y, phase, scale, colors, icon, viewMode, spreadCm,
-  isSelected, onClick, onPointerDown, opacity, minRadius,
+  isSelected, onClick, onPointerDown, opacity, minRadius, plantId,
 }: {
   shape: PlantShapeType;
   x: number; y: number;
@@ -76,6 +92,7 @@ function PlantShape({
   onPointerDown?: (e: React.PointerEvent) => void;
   opacity?: number;
   minRadius?: number;
+  plantId?: string;
 }) {
   const uid = useId().replace(/:/g, "");
   const rawR = (spreadCm / 2) * scale;
@@ -93,11 +110,22 @@ function PlantShape({
             <circle cx={0} cy={0} r={dormantR * 0.5} fill="#6B5335" opacity={0.25} />
           </>
         )}
-        {viewMode !== "color" && (
-          <text x={0} y={0.5} textAnchor="middle" dominantBaseline="central" fontSize={dormantFontSize} opacity={0.45}>
-            {icon}
-          </text>
-        )}
+        {viewMode !== "color" && (() => {
+          const SvgIcon = plantId ? getPlantSvgIcon(plantId) : null;
+          if (SvgIcon) {
+            const iconScale = dormantFontSize / 32;
+            return (
+              <g transform={`translate(${-dormantFontSize / 2},${-dormantFontSize / 2}) scale(${iconScale})`} opacity={0.45}>
+                <SvgIcon />
+              </g>
+            );
+          }
+          return (
+            <text x={0} y={0.5} textAnchor="middle" dominantBaseline="central" fontSize={dormantFontSize} opacity={0.45}>
+              {icon}
+            </text>
+          );
+        })()}
         {isSelected && (
           <circle cx={0} cy={0} r={dormantR + 2} fill="none" stroke="var(--accent, #2d7a3a)"
             strokeWidth={0.8} strokeDasharray="2 1" opacity={0.9} />
@@ -510,18 +538,31 @@ function PlantShape({
       )}
 
       {/* Icon overlay */}
-      {viewMode !== "color" && (
-        <text
-          x={0}
-          y={viewMode === "icon" ? r * 0.05 : r * 0.05}
-          textAnchor="middle"
-          dominantBaseline="central"
-          fontSize={viewMode === "icon" ? r * 1.6 : r * 0.8}
-          opacity={viewMode === "icon" ? 0.95 : 0.85}
-        >
-          {icon}
-        </text>
-      )}
+      {viewMode !== "color" && (() => {
+        const SvgIcon = plantId ? getPlantSvgIcon(plantId) : null;
+        const iconSize = viewMode === "icon" ? r * 1.6 : r * 0.8;
+        if (SvgIcon) {
+          const iconScale = iconSize / 32;
+          return (
+            <g transform={`translate(${-iconSize / 2},${-iconSize / 2}) scale(${iconScale})`}
+               opacity={viewMode === "icon" ? 0.95 : 0.85}>
+              <SvgIcon />
+            </g>
+          );
+        }
+        return (
+          <text
+            x={0}
+            y={viewMode === "icon" ? r * 0.05 : r * 0.05}
+            textAnchor="middle"
+            dominantBaseline="central"
+            fontSize={iconSize}
+            opacity={viewMode === "icon" ? 0.95 : 0.85}
+          >
+            {icon}
+          </text>
+        );
+      })()}
 
       {/* Selection ring */}
       {isSelected && (
@@ -851,6 +892,34 @@ function DesignLabInner({
     clearSelection();
     setRowStart(null);
   }, [clearSelection]);
+
+  // ── Handle drag-drop from palette onto canvas (B3) ──
+  const handleCanvasDragOver = useCallback((e: React.DragEvent) => {
+    if (e.dataTransfer.types.includes("application/x-plant-id")) {
+      e.preventDefault();
+      e.dataTransfer.dropEffect = "copy";
+    }
+  }, []);
+
+  const handleCanvasDrop = useCallback((e: React.DragEvent) => {
+    const speciesId = e.dataTransfer.getData("application/x-plant-id");
+    if (!speciesId) return;
+    e.preventDefault();
+    const sp = getPlantById(speciesId);
+    if (!sp) return;
+    // Convert drop coords to SVG local coords
+    const svg = svgRef.current;
+    if (!svg) return;
+    const pt = svg.createSVGPoint();
+    pt.x = e.clientX;
+    pt.y = e.clientY;
+    const ctm = svg.getScreenCTM();
+    if (!ctm) return;
+    const svgP = pt.matrixTransform(ctm.inverse());
+    const pos: BedLocalCoord = { x: svgP.x, y: svgP.y };
+    const snapped = snapEnabled ? snapToGrid(pos, 5, layout.outlineCm) : { snappedPosition: pos, guides: [] };
+    placeElementAt(snapped.snappedPosition, sp);
+  }, [snapEnabled, layout.outlineCm, placeElementAt]);
 
   // ── Start placing infrastructure ──
   const startPlacingInfra = useCallback((kind: string) => {
@@ -1708,10 +1777,24 @@ function DesignLabInner({
         </div>
       </div>
 
-      {/* ── Toolbar ── */}
+      {/* ── Main area: Canvas + Sidebar ── */}
+      <div className="flex flex-1 overflow-hidden">
+        {/* Canvas */}
+        <div
+          className="flex-1 relative flex items-center justify-center overflow-hidden"
+          style={{ background: "var(--background)", cursor: canvasCursor }}
+          onWheel={handleWheel}
+          onPointerDown={handlePointerDown}
+          onPointerMove={handlePointerMove}
+          onPointerUp={handlePointerUp}
+          onDragOver={handleCanvasDragOver}
+          onDrop={handleCanvasDrop}
+        >
+
+      {/* ── Floating Toolbar (C4) ── */}
       <div
-        className="flex items-center gap-2 px-4 py-2 border-b"
-        style={{ borderColor: "var(--border)", background: "var(--sidebar-bg)" }}
+        className="absolute top-3 left-1/2 -translate-x-1/2 z-30 flex flex-wrap items-center gap-2 px-4 py-2 rounded-2xl shadow-lg backdrop-blur-md border max-w-[95%]"
+        style={{ borderColor: "var(--border)", background: "color-mix(in srgb, var(--sidebar-bg) 85%, transparent)" }}
       >
         {/* Tool buttons */}
         {(
@@ -2031,18 +2114,6 @@ function DesignLabInner({
           ⌨ ?
         </button>
       </div>
-
-      {/* ── Main area: Canvas + Sidebar ── */}
-      <div className="flex flex-1 overflow-hidden">
-        {/* Canvas */}
-        <div
-          className="flex-1 relative flex items-center justify-center overflow-hidden"
-          style={{ background: "var(--background)", cursor: canvasCursor }}
-          onWheel={handleWheel}
-          onPointerDown={handlePointerDown}
-          onPointerMove={handlePointerMove}
-          onPointerUp={handlePointerUp}
-        >
           <svg
             ref={svgRef}
             viewBox={viewBox}
@@ -2203,6 +2274,7 @@ function DesignLabInner({
                         isSelected={selectedIds.has(el.id)}
                         onPointerDown={(e) => handleElementPointerDown(e, el)}
                         minRadius={minPlantRadius}
+                        plantId={el.speciesId}
                       />
                     </g>
                   );
@@ -2550,7 +2622,7 @@ function DesignLabInner({
                 colors={getSeasonColors("growing", undefined, placingSpecies.category ?? "vegetable")}
                 icon={placingSpecies.icon ?? "🌱"} viewMode={viewMode}
                 spreadCm={placingSpecies.spreadDiameterCm ?? placingSpecies.spacingCm ?? 10}
-                opacity={0.4} minRadius={minPlantRadius} />
+                opacity={0.4} minRadius={minPlantRadius} plantId={placingSpecies.id} />
             )}
             {/* Ghost preview for infrastructure placement */}
             {tool === "place" && ghostPos && placingInfraKind && pointInBedOutline(ghostPos, layout.outlineCm) && (
@@ -2749,6 +2821,98 @@ function DesignLabInner({
               )}
             </div>
           )}
+
+          {/* ── Season ambience overlay (A7) ── */}
+          {(() => {
+            // Snow in Dec-Feb, falling leaves in Oct-Nov, butterflies/bees in Jun-Aug, blossoms in Apr-May
+            const particles: React.ReactNode[] = [];
+            const PARTICLE_COUNT = 18;
+            if (month >= 12 || month <= 2) {
+              // Winter: snowflakes
+              for (let i = 0; i < PARTICLE_COUNT; i++) {
+                const x = ((i * 37 + 13) % 100);
+                const y = ((i * 53 + 7) % 100);
+                const size = 3 + (i % 4);
+                const dur = 6 + (i % 5);
+                const delay = (i * 0.4) % 4;
+                particles.push(
+                  <div key={`snow-${i}`} className="absolute rounded-full pointer-events-none"
+                    style={{
+                      left: `${x}%`, top: `${y}%`,
+                      width: size, height: size,
+                      background: "white", opacity: 0.7,
+                      animation: `dlSnowFall ${dur}s linear ${delay}s infinite`,
+                    }} />
+                );
+              }
+            } else if (month >= 10 && month <= 11) {
+              // Autumn: falling leaves
+              const leafColors = ["#E65100", "#FF8F00", "#D32F2F", "#BF360C", "#F9A825"];
+              for (let i = 0; i < PARTICLE_COUNT; i++) {
+                const x = ((i * 41 + 11) % 100);
+                const y = ((i * 59 + 3) % 100);
+                const size = 6 + (i % 5);
+                const dur = 8 + (i % 6);
+                const delay = (i * 0.5) % 5;
+                const color = leafColors[i % leafColors.length];
+                particles.push(
+                  <div key={`leaf-${i}`} className="absolute pointer-events-none"
+                    style={{
+                      left: `${x}%`, top: `${y}%`,
+                      width: size, height: size,
+                      fontSize: size, lineHeight: 1,
+                      color, opacity: 0.6,
+                      animation: `dlLeafFall ${dur}s ease-in-out ${delay}s infinite`,
+                    }}>🍂</div>
+                );
+              }
+            } else if (month >= 4 && month <= 5) {
+              // Spring: cherry blossoms
+              for (let i = 0; i < PARTICLE_COUNT; i++) {
+                const x = ((i * 43 + 17) % 100);
+                const y = ((i * 61 + 9) % 100);
+                const size = 5 + (i % 4);
+                const dur = 9 + (i % 5);
+                const delay = (i * 0.6) % 5;
+                particles.push(
+                  <div key={`blossom-${i}`} className="absolute pointer-events-none"
+                    style={{
+                      left: `${x}%`, top: `${y}%`,
+                      width: size, height: size,
+                      fontSize: size, lineHeight: 1,
+                      opacity: 0.5,
+                      animation: `dlBlossomFall ${dur}s ease-in-out ${delay}s infinite`,
+                    }}>🌸</div>
+                );
+              }
+            } else if (month >= 6 && month <= 8) {
+              // Summer: butterflies & bees (sparse)
+              const bugs = ["🦋", "🐝", "🦋", "🐝", "🐞"];
+              for (let i = 0; i < 8; i++) {
+                const x = ((i * 47 + 19) % 80) + 10;
+                const y = ((i * 67 + 5) % 70) + 15;
+                const size = 8 + (i % 4);
+                const dur = 12 + (i % 6);
+                const delay = (i * 1.2) % 6;
+                particles.push(
+                  <div key={`bug-${i}`} className="absolute pointer-events-none"
+                    style={{
+                      left: `${x}%`, top: `${y}%`,
+                      fontSize: size, lineHeight: 1,
+                      opacity: 0.5,
+                      animation: `dlBugFloat ${dur}s ease-in-out ${delay}s infinite`,
+                    }}>{bugs[i % bugs.length]}</div>
+                );
+              }
+            }
+            if (particles.length === 0) return null;
+            return (
+              <div className="absolute inset-0 pointer-events-none overflow-hidden z-10">
+                {particles}
+              </div>
+            );
+          })()}
+
         </div>
 
         {/* ── Sidebar ── */}
@@ -2828,6 +2992,8 @@ function DesignLabInner({
                     {plants.map((p) => (
                       <button key={p.speciesId}
                         onClick={() => startPlacing(p.speciesId)}
+                        draggable
+                        onDragStart={(e) => { e.dataTransfer.setData("application/x-plant-id", p.speciesId); e.dataTransfer.effectAllowed = "copy"; }}
                         className={`flex items-center gap-1.5 px-2 py-1.5 rounded-lg border text-left text-[10px] transition-colors ${
                           placingSpeciesId === p.speciesId ? "shadow-sm" : "hover:bg-[var(--accent-light)]"
                         }`}
@@ -2836,7 +3002,7 @@ function DesignLabInner({
                           background: placingSpeciesId === p.speciesId ? "var(--accent-light)" : "transparent",
                           color: "var(--foreground)",
                         }}>
-                        <span className="text-sm">{p.icon}</span>
+                        <PaletteIcon plantId={p.speciesId} emoji={p.icon} />
                         <span className="truncate">{p.name}</span>
                       </button>
                     ))}
@@ -2852,6 +3018,8 @@ function DesignLabInner({
                 {filteredPalettePlants.map((sp) => (
                   <button key={sp.id}
                     onClick={() => startPlacing(sp.id)}
+                    draggable
+                    onDragStart={(e) => { e.dataTransfer.setData("application/x-plant-id", sp.id); e.dataTransfer.effectAllowed = "copy"; }}
                     className={`w-full flex items-center gap-2 px-2 py-1.5 rounded-lg border text-left text-[10px] transition-colors ${
                       placingSpeciesId === sp.id ? "shadow-sm" : "hover:bg-[var(--accent-light)]"
                     }`}
@@ -2860,7 +3028,7 @@ function DesignLabInner({
                       background: placingSpeciesId === sp.id ? "var(--accent-light)" : "transparent",
                       color: "var(--foreground)",
                     }}>
-                    <span className="text-sm flex-shrink-0">{sp.icon ?? "🌱"}</span>
+                    <PaletteIcon plantId={sp.id} emoji={sp.icon ?? "🌱"} />
                     <div className="min-w-0 flex-1">
                       <div className="truncate font-medium">{sp.name}</div>
                       {sp.latinName && (
