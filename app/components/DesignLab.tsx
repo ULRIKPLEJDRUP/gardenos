@@ -2060,6 +2060,41 @@ function DesignLabInner({
                     💡 Ændringer synkroniseres til kortet
                   </p>
                 </div>
+
+                {/* Re-import from map button */}
+                <button
+                  onClick={() => {
+                    if (!confirm("Genimportér alle rækker fra kortet? Eksisterende placeringer i Design Lab erstattes.")) return;
+                    const elements: BedElement[] = [];
+                    const rowSpacing = 25;
+                    const edgeMargin = 12;
+                    plants.forEach((p, rowIdx) => {
+                      const rowY = edgeMargin + rowIdx * rowSpacing;
+                      if (rowY > layout.lengthCm - edgeMargin) return;
+                      const startX = edgeMargin + (p.spacingCm || 10);
+                      const availWidth = layout.widthCm - edgeMargin * 2 - (p.spacingCm || 10);
+                      const count = Math.min(p.count || 1, Math.max(1, Math.floor(availWidth / Math.max(p.spacingCm || 10, 3))));
+                      for (let i = 0; i < count; i++) {
+                        const x = startX + i * (availWidth / Math.max(count, 1));
+                        elements.push({
+                          id: crypto.randomUUID(), type: "plant",
+                          position: { x, y: rowY }, rotation: 0,
+                          width: p.spreadCm || 10, length: p.spreadCm || 10,
+                          speciesId: p.speciesId, instanceId: p.id, count: 1,
+                          spacingCm: p.spacingCm, icon: p.icon, label: p.name,
+                        });
+                      }
+                    });
+                    if (elements.length > 0) {
+                      persistLayout({ ...layout, elements, version: layout.version + 1 });
+                    }
+                  }}
+                  className="w-full px-2.5 py-1.5 text-[10px] rounded-lg border transition-colors hover:bg-[var(--accent-light)]"
+                  style={{ borderColor: "var(--border)", color: "var(--foreground)" }}
+                  title="Genimportér alle rækker fra kortet"
+                >
+                  🔄 Genimportér rækker fra kort ({plants.length} rækker)
+                </button>
               </div>
 
               {/* Selected element details */}

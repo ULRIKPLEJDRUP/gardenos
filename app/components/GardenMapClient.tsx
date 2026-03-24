@@ -8608,28 +8608,27 @@ export function GardenMapClient({ userId }: { userId: string }) {
         });
 
         // Also include species from child rows (parentBedId)
+        // Each child row gets its own entry (even if same species) so Design Lab
+        // renders one visual row per map row rather than collapsing duplicates.
         for (const f of layoutForContainment.features) {
           const props = (f as GardenFeature).properties;
           if (props?.parentBedId === selected.gardenosId && props?.speciesId) {
-            // Check if already included
-            if (!designLabPlants.some((p) => p.speciesId === props.speciesId)) {
-              const sp = getPlantById(props.speciesId);
-              const childInst = getInstancesForFeature(props.gardenosId);
-              const totalCount = childInst.reduce((s, i) => s + (i.count ?? 1), 0);
-              designLabPlants.push({
-                id: props.gardenosId,
-                speciesId: props.speciesId,
-                name: sp?.name ?? props.speciesId,
-                icon: sp?.icon ?? "🌱",
-                count: totalCount || 1,
-                spacingCm: sp?.spacingCm ?? 10,
-                spreadCm: sp?.spreadDiameterCm ?? sp?.spacingCm ?? 10,
-                rowSpacingCm: sp?.rowSpacingCm ?? 30,
-                category: sp?.category,
-                matureHeightM: sp?.matureHeightM,
-                forestGardenLayer: sp?.forestGardenLayer,
-              });
-            }
+            const sp = getPlantById(props.speciesId);
+            const childInst = getInstancesForFeature(props.gardenosId);
+            const totalCount = childInst.reduce((s, i) => s + (i.count ?? 1), 0);
+            designLabPlants.push({
+              id: props.gardenosId,
+              speciesId: props.speciesId,
+              name: sp?.name ?? props.speciesId,
+              icon: sp?.icon ?? "🌱",
+              count: totalCount || 1,
+              spacingCm: sp?.spacingCm ?? 10,
+              spreadCm: sp?.spreadDiameterCm ?? sp?.spacingCm ?? 10,
+              rowSpacingCm: sp?.rowSpacingCm ?? 30,
+              category: sp?.category,
+              matureHeightM: sp?.matureHeightM,
+              forestGardenLayer: sp?.forestGardenLayer,
+            });
           }
         }
 
