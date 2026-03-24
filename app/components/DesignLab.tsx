@@ -611,6 +611,10 @@ function DesignLabInner({
   const [isPanning, setIsPanning] = useState(false);
   const panStartRef = useRef<{ x: number; y: number; panX: number; panY: number } | null>(null);
 
+  // ── Touch / pinch state (C6) ──
+  const activeTouchesRef = useRef<Map<number, { x: number; y: number }>>(new Map());
+  const pinchStartRef = useRef<{ dist: number; zoom: number; midX: number; midY: number } | null>(null);
+
   // ── Rotation state (compass) ──
   const [rotationDeg, setRotationDeg] = useState(0);
 
@@ -662,6 +666,19 @@ function DesignLabInner({
   // ── Snap toggle ──
   const [snapEnabled, setSnapEnabled] = useState(true);
 
+  // ── Shadow overlay toggle (D2) ──
+  const [showShadowOverlay, setShowShadowOverlay] = useState(false);
+
+  // ── Side-by-side comparison mode (D3) ──
+  const [compareMode, setCompareMode] = useState(false);
+  const [compareMonth, setCompareMonth] = useState(() => {
+    const cur = new Date().getMonth() + 1;
+    return cur <= 6 ? cur + 6 : cur - 6; // opposite season
+  });
+
+  // ── Sidebar collapse for mobile (C6) ──
+  const [sidebarOpen, setSidebarOpen] = useState(true);
+
   // ── Row tool state ──
   const [rowStart, setRowStart] = useState<BedLocalCoord | null>(null);
 
@@ -700,6 +717,26 @@ function DesignLabInner({
       `${-svgPadding} ${-svgPadding} ${layout.widthCm + svgPadding * 2} ${layout.lengthCm + svgPadding * 2}`,
     [layout.widthCm, layout.lengthCm]
   );
+
+  // ── Sun angle (D2) – approximate for Denmark (lat ~56°) ──
+  const sunAngle = useMemo(() => {
+    // Solar altitude at noon by month (approximate for lat 56°N)
+    const altitudes = [0, 11, 17, 24, 34, 44, 51, 55, 51, 44, 34, 24, 17]; // month 1-12
+    const altitude = altitudes[month] ?? 34;
+    // Azimuth: south = 180°. Morning light from SE, evening from SW. At noon → south.
+    // For a static "midday" view: azimuth ~180° mapped to SVG coords where up=north.
+    // Shadow falls away from sun. Sun in south → shadow falls north (up in SVG).
+    // In summer sun is higher → shorter shadow. In winter → longer shadow.
+    const altRad = (altitude * Math.PI) / 180;
+    const shadowLength = altitude > 5 ? 1 / Math.tan(altRad) : 6; // length multiplier
+    // Shadow direction: sun from south (bottom of bed) → shadow toward top (negative Y in SVG)
+    // Slight seasonal eastward drift in morning
+    const azOff = month <= 6 ? (6 - month) * 2 : (month - 6) * 2; // degrees offset
+    const azRad = ((180 + azOff) * Math.PI) / 180;
+    const dx = Math.sin(azRad - Math.PI); // shadow direction X
+    const dy = -Math.cos(azRad - Math.PI); // shadow direction Y (negative = up in SVG)
+    return { altitude, shadowLength: Math.min(shadowLength, 6), dx, dy, opacity: 0.07 + (1 - altitude / 55) * 0.08 };
+  }, [month]);
 
   // Minimum visible radius – ensures plants are visible even on very large beds.
   // For a 2800cm bed this gives ~22px SVG units → ~6px on screen.
@@ -752,45 +789,73 @@ function DesignLabInner({
   }, [autoPlay]);
 
   // ── Auto-populate plants from main map ──
+  // ── Auto-populate + merge new plants from Map ──
   useEffect(() => {
-    if (layout.elements.length > 0) return; // already populated
-    if (plants.length === 0) return;
+    if (plants.length === 0 && layout.elements.length === 0) return;
 
-    const elements: BedElement[] = [];
-    const rowSpacing = 25; // cm
-    const edgeMargin = 12; // cm
+    // Build set of instance IDs already present in the layout
+    const existingInstanceIds = new Set(
+      layout.elements.filter((e) => e.instanceId).map((e) => e.instanceId!)
+    );
+    // Build set of plant IDs from the map
+    const mapPlantIds = new Set(plants.map((p) => p.id));
 
-    plants.forEach((p, rowIdx) => {
-      const rowY = edgeMargin + rowIdx * rowSpacing;
-      if (rowY > layout.lengthCm - edgeMargin) return;
+    // 1) Find plants from the prop that are NOT yet in the layout (new rows from Map)
+    const newPlants = plants.filter((p) => !existingInstanceIds.has(p.id));
 
-      const startX = edgeMargin + (p.spacingCm || 10);
-      const availWidth = layout.widthCm - edgeMargin * 2 - (p.spacingCm || 10);
-      const count = Math.min(p.count || 1, Math.max(1, Math.floor(availWidth / Math.max(p.spacingCm || 10, 3))));
+    // 2) Find elements whose instanceId no longer exists in the Map (removed rows)
+    const removedInstanceIds = new Set(
+      layout.elements
+        .filter((e) => e.instanceId && !mapPlantIds.has(e.instanceId))
+        .map((e) => e.instanceId!)
+    );
 
-      for (let i = 0; i < count; i++) {
-        const x = startX + i * (availWidth / Math.max(count, 1));
-        elements.push({
-          id: crypto.randomUUID(),
-          type: "plant",
-          position: { x, y: rowY },
-          rotation: 0,
-          width: p.spreadCm || 10,
-          length: p.spreadCm || 10,
-          speciesId: p.speciesId,
-          instanceId: p.id,
-          count: 1,
-          spacingCm: p.spacingCm,
-          icon: p.icon,
-          label: p.name,
-        });
-      }
-    });
+    if (newPlants.length === 0 && removedInstanceIds.size === 0) return;
 
-    if (elements.length > 0) {
-      const updated = { ...layout, elements, version: layout.version + 1 };
-      persistLayout(updated);
+    // Start with existing elements, minus removed ones
+    let mergedElements = removedInstanceIds.size > 0
+      ? layout.elements.filter((e) => !e.instanceId || !removedInstanceIds.has(e.instanceId))
+      : [...layout.elements];
+
+    // Determine starting Y — after last existing row, or from the top
+    if (newPlants.length > 0) {
+      const existingMaxY = mergedElements.length > 0
+        ? Math.max(...mergedElements.map((e) => e.position.y))
+        : 0;
+      const rowSpacing = 25; // cm
+      const edgeMargin = 12; // cm
+      const startY = mergedElements.length > 0 ? existingMaxY + rowSpacing : edgeMargin;
+
+      newPlants.forEach((p, rowIdx) => {
+        const rowY = startY + rowIdx * rowSpacing;
+        if (rowY > layout.lengthCm - edgeMargin) return;
+
+        const startX = edgeMargin + (p.spacingCm || 10);
+        const availWidth = layout.widthCm - edgeMargin * 2 - (p.spacingCm || 10);
+        const count = Math.min(p.count || 1, Math.max(1, Math.floor(availWidth / Math.max(p.spacingCm || 10, 3))));
+
+        for (let i = 0; i < count; i++) {
+          const x = startX + i * (availWidth / Math.max(count, 1));
+          mergedElements.push({
+            id: crypto.randomUUID(),
+            type: "plant",
+            position: { x, y: rowY },
+            rotation: 0,
+            width: p.spreadCm || 10,
+            length: p.spreadCm || 10,
+            speciesId: p.speciesId,
+            instanceId: p.id,
+            count: 1,
+            spacingCm: p.spacingCm,
+            icon: p.icon,
+            label: p.name,
+          });
+        }
+      });
     }
+
+    const updated = { ...layout, elements: mergedElements, version: layout.version + 1 };
+    persistLayout(updated);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -1032,16 +1097,78 @@ function DesignLabInner({
     return () => window.removeEventListener("keydown", handleKey);
   }, [selectedIds, selectedElementId, placingSpeciesId, placingInfraKind, featureId, onClose, persistLayout, handleUndo, handleRedo, layout, clipboard, clearSelection, contextMenu]);
 
-  // ── Zoom ──
+  // ── Zoom (wheel + trackpad pinch) ──
   const handleWheel = useCallback((e: React.WheelEvent) => {
     e.preventDefault();
-    const delta = e.deltaY > 0 ? 0.9 : 1.1;
-    setZoom((z) => Math.min(5, Math.max(0.3, z * delta)));
+    // Trackpad pinch sends ctrlKey + deltaY
+    if (e.ctrlKey) {
+      const delta = e.deltaY > 0 ? 0.95 : 1.05;
+      setZoom((z) => Math.min(5, Math.max(0.3, z * delta)));
+    } else {
+      const delta = e.deltaY > 0 ? 0.9 : 1.1;
+      setZoom((z) => Math.min(5, Math.max(0.3, z * delta)));
+    }
+  }, []);
+
+  // ── Multi-touch handlers (C6) ──
+  const getTouchDist = (a: { x: number; y: number }, b: { x: number; y: number }) =>
+    Math.hypot(a.x - b.x, a.y - b.y);
+
+  const handleTouchStart = useCallback((e: React.TouchEvent) => {
+    for (let i = 0; i < e.changedTouches.length; i++) {
+      const t = e.changedTouches[i];
+      activeTouchesRef.current.set(t.identifier, { x: t.clientX, y: t.clientY });
+    }
+    if (activeTouchesRef.current.size === 2) {
+      const pts = [...activeTouchesRef.current.values()];
+      const dist = getTouchDist(pts[0], pts[1]);
+      const midX = (pts[0].x + pts[1].x) / 2;
+      const midY = (pts[0].y + pts[1].y) / 2;
+      pinchStartRef.current = { dist, zoom, midX, midY };
+      // Cancel any single-pointer drag/lasso
+      setIsPanning(false);
+      setDraggingElementId(null);
+      lassoStartRef.current = null;
+      setLassoRect(null);
+    }
+  }, [zoom]);
+
+  const handleTouchMove = useCallback((e: React.TouchEvent) => {
+    for (let i = 0; i < e.changedTouches.length; i++) {
+      const t = e.changedTouches[i];
+      activeTouchesRef.current.set(t.identifier, { x: t.clientX, y: t.clientY });
+    }
+    if (activeTouchesRef.current.size >= 2 && pinchStartRef.current) {
+      e.preventDefault();
+      const pts = [...activeTouchesRef.current.values()];
+      const dist = getTouchDist(pts[0], pts[1]);
+      const scale = dist / pinchStartRef.current.dist;
+      setZoom(Math.min(5, Math.max(0.3, pinchStartRef.current.zoom * scale)));
+      // Two-finger pan
+      const midX = (pts[0].x + pts[1].x) / 2;
+      const midY = (pts[0].y + pts[1].y) / 2;
+      setPan((prev) => ({
+        x: prev.x + (midX - pinchStartRef.current!.midX) * 0.5,
+        y: prev.y + (midY - pinchStartRef.current!.midY) * 0.5,
+      }));
+      pinchStartRef.current = { ...pinchStartRef.current, midX, midY };
+    }
+  }, []);
+
+  const handleTouchEnd = useCallback((e: React.TouchEvent) => {
+    for (let i = 0; i < e.changedTouches.length; i++) {
+      activeTouchesRef.current.delete(e.changedTouches[i].identifier);
+    }
+    if (activeTouchesRef.current.size < 2) {
+      pinchStartRef.current = null;
+    }
   }, []);
 
   // ── Pan / Lasso ──
   const handlePointerDown = useCallback(
     (e: React.PointerEvent) => {
+      // C6: ignore if multi-touch pinch in progress
+      if (pinchStartRef.current) return;
       setContextMenu(null);
       if (tool === "pan" || e.button === 1 || (e.button === 0 && e.altKey)) {
         setIsPanning(true);
@@ -1782,18 +1909,21 @@ function DesignLabInner({
         {/* Canvas */}
         <div
           className="flex-1 relative flex items-center justify-center overflow-hidden"
-          style={{ background: "var(--background)", cursor: canvasCursor }}
+          style={{ background: "var(--background)", cursor: canvasCursor, touchAction: "none" }}
           onWheel={handleWheel}
           onPointerDown={handlePointerDown}
           onPointerMove={handlePointerMove}
           onPointerUp={handlePointerUp}
+          onTouchStart={handleTouchStart}
+          onTouchMove={handleTouchMove}
+          onTouchEnd={handleTouchEnd}
           onDragOver={handleCanvasDragOver}
           onDrop={handleCanvasDrop}
         >
 
-      {/* ── Floating Toolbar (C4) ── */}
+      {/* ── Floating Toolbar (C4) – responsive (C6) ── */}
       <div
-        className="absolute top-3 left-1/2 -translate-x-1/2 z-30 flex flex-wrap items-center gap-2 px-4 py-2 rounded-2xl shadow-lg backdrop-blur-md border max-w-[95%]"
+        className="absolute top-3 left-1/2 -translate-x-1/2 z-30 flex flex-wrap items-center gap-1.5 sm:gap-2 px-2 sm:px-4 py-1.5 sm:py-2 rounded-2xl shadow-lg backdrop-blur-md border max-w-[98%] sm:max-w-[95%]"
         style={{ borderColor: "var(--border)", background: "color-mix(in srgb, var(--sidebar-bg) 85%, transparent)" }}
       >
         {/* Tool buttons */}
@@ -1950,6 +2080,23 @@ function DesignLabInner({
           </div>
         </div>
 
+        {/* D3: Compare month selector (only in compare mode) */}
+        {compareMode && (
+          <div className="flex items-center gap-1.5">
+            <span className="text-[9px] font-medium" style={{ color: "var(--accent)" }}>vs</span>
+            <div className="flex flex-col items-center gap-0">
+              <span className="text-[11px]" style={{ color: "var(--accent)" }}>
+                {MONTH_ICONS[compareMonth]} {MONTH_NAMES_DA[compareMonth]}
+              </span>
+              <input
+                type="range" min={1} max={12} value={compareMonth}
+                onChange={(e) => setCompareMonth(Number(e.target.value))}
+                className="w-24 accent-[var(--accent)]"
+              />
+            </div>
+          </div>
+        )}
+
         <div className="mx-1 h-5 w-px" style={{ background: "var(--border)" }} />
 
         {/* Bed generator */}
@@ -2015,6 +2162,34 @@ function DesignLabInner({
           title="Grid-snap til/fra (G)"
         >
           🧲 Snap
+        </button>
+
+        {/* Shadow overlay toggle (D2) */}
+        <button
+          onClick={() => setShowShadowOverlay((v) => !v)}
+          className={`px-2.5 py-1 text-[11px] rounded-lg border transition-colors hover:shadow-sm ${showShadowOverlay ? "shadow-sm" : ""}`}
+          style={{
+            borderColor: showShadowOverlay ? "var(--accent)" : "var(--border)",
+            background: showShadowOverlay ? "var(--accent)" : "transparent",
+            color: showShadowOverlay ? "#fff" : "var(--foreground)",
+          }}
+          title="Vis skygge-overlay baseret på solvinkel"
+        >
+          🌤 Skygger
+        </button>
+
+        {/* Side-by-side compare toggle (D3) */}
+        <button
+          onClick={() => setCompareMode((v) => !v)}
+          className={`px-2.5 py-1 text-[11px] rounded-lg border transition-colors hover:shadow-sm ${compareMode ? "shadow-sm" : ""}`}
+          style={{
+            borderColor: compareMode ? "var(--accent)" : "var(--border)",
+            background: compareMode ? "var(--accent)" : "transparent",
+            color: compareMode ? "#fff" : "var(--foreground)",
+          }}
+          title="Sammenlign to sæsoner side om side"
+        >
+          🔀 Sammenlign
         </button>
 
         {/* Align & distribute (only when multi-selected) */}
@@ -2114,13 +2289,20 @@ function DesignLabInner({
           ⌨ ?
         </button>
       </div>
+          {/* D3: Month label when comparing */}
+          {compareMode && (
+            <div className="absolute left-3 top-16 z-20 px-2 py-1 rounded-lg text-xs font-medium"
+              style={{ background: "color-mix(in srgb, var(--accent) 10%, transparent)", color: "var(--accent)" }}>
+              {MONTH_ICONS[month]} {MONTH_NAMES_DA[month]}
+            </div>
+          )}
           <svg
             ref={svgRef}
             viewBox={viewBox}
             onClick={handleSvgClick}
             onContextMenu={(e) => e.preventDefault()}
             style={{
-              maxWidth: "90%",
+              maxWidth: compareMode ? "50%" : "90%",
               maxHeight: "85%",
               transform: `scale(${zoom}) translate(${pan.x / zoom}px, ${pan.y / zoom}px) rotate(${rotationDeg}deg)`,
               transition: isPanning || draggingElementId ? "none" : "transform 0.2s ease-out",
@@ -2215,7 +2397,7 @@ function DesignLabInner({
               })}
             </g>
 
-            {/* Perspectival shadows (A6) – rendered below plants */}
+            {/* Perspectival shadows (A6 + D2 sun-angle) – rendered below plants */}
             <g>
               {sortedPlantElements.map((el) => {
                 if (!el.speciesId) return null;
@@ -2229,24 +2411,67 @@ function DesignLabInner({
                 const scale = getPhaseScale(phase);
                 const spreadCm = el.width || sp.spreadDiameterCm || sp.spacingCm || 10;
                 const r = (spreadCm / 2) * scale;
-                // Shadow size proportional to plant height: taller = larger shadow
-                const shadowScale = Math.min(heightM / 2, 3); // cap at 3× for very tall trees
+                // D2: sun-angle based shadow
+                const shadowScale = Math.min(heightM / 2, 3);
                 const shadowRx = r * (1 + shadowScale * 0.4);
                 const shadowRy = r * (0.3 + shadowScale * 0.15);
-                // Shadow offset (light from upper-left → shadow to lower-right)
-                const shadowOffX = heightM * 1.5;
-                const shadowOffY = heightM * 2;
+                // Shadow offset from sun angle
+                const shadowDist = heightM * sunAngle.shadowLength * 1.5;
+                const shadowOffX = sunAngle.dx * shadowDist;
+                const shadowOffY = sunAngle.dy * shadowDist;
                 return (
                   <ellipse key={`shadow-${el.id}`}
                     cx={el.position.x + shadowOffX}
                     cy={el.position.y + shadowOffY}
                     rx={shadowRx} ry={shadowRy}
-                    fill="#1a1a1a" opacity={0.08 + Math.min(heightM * 0.02, 0.07)}
+                    fill="#1a1a1a" opacity={sunAngle.opacity}
                     transform={el.rotation ? `rotate(${el.rotation} ${el.position.x} ${el.position.y})` : undefined}
                   />
                 );
               })}
             </g>
+
+            {/* D2: Full shadow overlay – shows shade zones when enabled */}
+            {showShadowOverlay && (
+              <g opacity="0.6">
+                {/* Gradient overlay showing shaded areas */}
+                <defs>
+                  <radialGradient id="dlShadowGrad" cx="50%" cy="50%" r="50%">
+                    <stop offset="0%" stopColor="#000" stopOpacity="0.25" />
+                    <stop offset="70%" stopColor="#000" stopOpacity="0.08" />
+                    <stop offset="100%" stopColor="#000" stopOpacity="0" />
+                  </radialGradient>
+                </defs>
+                {sortedPlantElements.map((el) => {
+                  if (!el.speciesId) return null;
+                  const sp = getPlantById(el.speciesId);
+                  if (!sp) return null;
+                  const heightM = estimateHeightM(sp);
+                  if (!heightM || heightM < 1) return null;
+                  const cal = plantCalendars.get(el.speciesId);
+                  const phase = cal ? getPhase(cal.cal, month) : "growing";
+                  if (phase === "dormant") return null;
+                  const spreadCm = el.width || sp.spreadDiameterCm || sp.spacingCm || 10;
+                  const r = spreadCm / 2;
+                  const shadeReach = heightM * sunAngle.shadowLength * 3;
+                  const shadeCx = el.position.x + sunAngle.dx * shadeReach * 0.5;
+                  const shadeCy = el.position.y + sunAngle.dy * shadeReach * 0.5;
+                  return (
+                    <ellipse key={`shade-${el.id}`}
+                      cx={shadeCx} cy={shadeCy}
+                      rx={r + shadeReach * 0.4} ry={r + shadeReach * 0.6}
+                      fill="url(#dlShadowGrad)"
+                      transform={`rotate(${Math.atan2(sunAngle.dy, sunAngle.dx) * (180 / Math.PI) + 90} ${shadeCx} ${shadeCy})`}
+                    />
+                  );
+                })}
+                {/* Legend */}
+                <rect x={layout.widthCm - 45} y={layout.lengthCm - 12} width={40} height={10} rx={2}
+                  fill="var(--sidebar-bg, #fff)" stroke="var(--border)" strokeWidth="0.5" opacity="0.9" />
+                <text x={layout.widthCm - 43} y={layout.lengthCm - 4.5}
+                  fontSize="4" fill="var(--muted)">☀ Sol {sunAngle.altitude}°</text>
+              </g>
+            )}
 
             {/* Plant elements (zIndex sorted) */}
             <g filter="url(#shadow)">
@@ -2913,12 +3138,113 @@ function DesignLabInner({
             );
           })()}
 
+          {/* D3: Side-by-side comparison panel */}
+          {compareMode && (
+            <div className="absolute right-0 top-0 bottom-0 z-20 flex flex-col"
+              style={{ width: "45%", borderLeft: "2px dashed var(--accent)", background: "color-mix(in srgb, var(--background) 92%, transparent)", backdropFilter: "blur(4px)" }}>
+              <div className="flex items-center justify-center gap-2 py-1.5 text-xs font-medium"
+                style={{ color: "var(--accent)", background: "color-mix(in srgb, var(--accent) 10%, transparent)" }}>
+                {MONTH_ICONS[compareMonth]} {MONTH_NAMES_DA[compareMonth]}
+              </div>
+              <div className="flex-1 flex items-center justify-center p-2">
+                <svg viewBox={viewBox} style={{ maxWidth: "95%", maxHeight: "95%" }}>
+                  <defs>
+                    <filter id="dlSoilNoise2" x="0%" y="0%" width="100%" height="100%">
+                      <feTurbulence type="fractalNoise" baseFrequency="0.65" numOctaves="4" seed="2" result="noise" />
+                      <feColorMatrix type="saturate" values="0.15" result="desat" />
+                      <feComponentTransfer result="dimmed"><feFuncA type="linear" slope="0.12" /></feComponentTransfer>
+                      <feBlend in="SourceGraphic" in2="dimmed" mode="multiply" />
+                    </filter>
+                    <pattern id="dlSoilPattern2" x="0" y="0" width="16" height="16" patternUnits="userSpaceOnUse">
+                      <rect width="16" height="16" fill={GROUND_COLORS[compareMonth] ?? "#8B7355"} />
+                    </pattern>
+                    <filter id="shadow2" x="-10%" y="-10%" width="130%" height="130%">
+                      <feDropShadow dx="0.5" dy="0.8" stdDeviation="1" floodOpacity="0.25" />
+                    </filter>
+                  </defs>
+                  {/* Bed outline */}
+                  <polygon
+                    points={layout.outlineCm.map((p) => `${p.x},${p.y}`).join(" ")}
+                    fill="url(#dlSoilPattern2)" filter="url(#dlSoilNoise2)"
+                    stroke="var(--border, #e0ddd5)" strokeWidth="1.5"
+                  />
+                  <polygon
+                    points={layout.outlineCm.map((p) => `${p.x},${p.y}`).join(" ")}
+                    fill="none" stroke="#8B6914" strokeWidth="2.5" opacity="0.5"
+                  />
+                  {/* Plants at compare month */}
+                  <g filter="url(#shadow2)">
+                    {sortedPlantElements.map((el) => {
+                      const cal = el.speciesId ? plantCalendars.get(el.speciesId) : null;
+                      const phase = cal ? getPhase(cal.cal, compareMonth) : "growing";
+                      const scale = getPhaseScale(phase);
+                      const colors = getElementColors(el.speciesId, phase, cal?.category ?? "vegetable");
+                      const shape = cal?.shape ?? "leafy";
+                      return (
+                        <g key={el.id} transform={el.rotation ? `rotate(${el.rotation} ${el.position.x} ${el.position.y})` : undefined}>
+                          <PlantShape
+                            shape={shape} x={el.position.x} y={el.position.y}
+                            phase={phase} scale={scale} colors={colors}
+                            icon={el.icon ?? "🌱"} viewMode={viewMode}
+                            spreadCm={el.width || 10} isSelected={false}
+                            onPointerDown={() => {}} minRadius={minPlantRadius}
+                            plantId={el.speciesId}
+                          />
+                        </g>
+                      );
+                    })}
+                  </g>
+                  {/* Infrastructure */}
+                  <g>
+                    {infraElements.map((el) => {
+                      const infraColor = el.type === "water" ? "#3b82f6"
+                        : el.type === "electric" ? "#f59e0b"
+                        : el.type === "path" ? "#a8a29e"
+                        : el.type === "edge" ? "#8B6914" : "var(--foreground)";
+                      return (
+                        <g key={el.id}>
+                          <circle cx={el.position.x} cy={el.position.y} r={el.width ? el.width / 2 : 5}
+                            fill={infraColor} opacity={0.6} />
+                          <text x={el.position.x} y={el.position.y + 1} textAnchor="middle"
+                            fontSize="5" fill="white">
+                            {el.type === "water" ? "💧" : el.type === "electric" ? "⚡" : el.type === "path" ? "🚶" : "🪵"}
+                          </text>
+                        </g>
+                      );
+                    })}
+                  </g>
+                </svg>
+              </div>
+            </div>
+          )}
+
         </div>
+
+        {/* ── Sidebar toggle (C6) ── */}
+        <button
+          onClick={() => setSidebarOpen((v) => !v)}
+          className="absolute right-0 top-1/2 -translate-y-1/2 z-40 px-0.5 py-3 rounded-l-lg border border-r-0 shadow-md"
+          style={{
+            borderColor: "var(--border)",
+            background: "var(--sidebar-bg)",
+            color: "var(--muted)",
+            right: sidebarOpen ? "280px" : "0",
+            transition: "right 0.2s ease-out",
+          }}
+          title={sidebarOpen ? "Skjul sidebar" : "Vis sidebar"}
+        >
+          {sidebarOpen ? "›" : "‹"}
+        </button>
 
         {/* ── Sidebar ── */}
         <div
-          className="w-[280px] border-l flex flex-col overflow-hidden"
-          style={{ borderColor: "var(--border)", background: "var(--sidebar-bg)" }}
+          className="border-l flex flex-col overflow-hidden transition-all duration-200"
+          style={{
+            borderColor: "var(--border)",
+            background: "var(--sidebar-bg)",
+            width: sidebarOpen ? "280px" : "0px",
+            minWidth: sidebarOpen ? "280px" : "0px",
+          }}
         >
           {/* Sidebar tabs */}
           <div className="flex border-b overflow-x-auto" style={{ borderColor: "var(--border)" }}>

@@ -561,15 +561,15 @@ Klar til at starte implementation? 🚀
 | C3 | **Scale bar** | Målestok-bar (10cm/50cm/1m) der opdaterer ved zoom | ✅ |
 | C4 | **Floating toolbar** | Toolbar er nu en `absolute top-3 left-1/2` rounded-2xl backdrop-blur pill der svæver over canvas. Giver mere plads til bedet | ✅ |
 | C5 | **Keyboard shortcuts legend** | Tooltip eller ?-dialog med alle shortcuts | ✅ |
-| C6 | **Mobile/touch support** | Pinch-zoom, two-finger pan, touch-venlige knapper | ⬜ |
+| C6 | **Mobile/touch support** | Pinch-zoom, two-finger pan, collapsible sidebar, responsive toolbar, touch-action:none | ✅ |
 
 ### 🧠 D. Avancerede features
 
 | # | Feature | Beskrivelse | Status |
 |---|---------|------------|--------|
 | D1 | **Bruger-definerede templates** | "Gem dette bed som skabelon" → genbruges i andre bede | ⬜ |
-| D2 | **Skygge-overlay** | Visualisér skygge fra høje planter baseret på sol-vinkel | ⬜ |
-| D3 | **Side-by-side sæson-sammenligning** | Split-view: se marts vs. juli samtidig | ⬜ |
+| D2 | **Skygge-overlay** | Sun-angle beregning (lat 56°N), sæson-afhængig skyggretning + længde, toggle-knap, shade-zone overlay med radial gradient | ✅ |
+| D3 | **Side-by-side sæson-sammenligning** | Split-view med uafhængig månedsvalg, compare-toggle i toolbar, full bed rendering i begge paneler | ✅ |
 | D4 | **Companion-linjer** | Grønne/røde forbindelseslinjer mellem naboer | ✅ |
 | D5 | **3D-preview** | Three.js isometrisk visning med plant-højder | ⬜ |
 
