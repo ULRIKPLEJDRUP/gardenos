@@ -8,7 +8,7 @@
 
 import React, { useState, useCallback, useRef, useEffect, useMemo, useId, memo } from "react";
 import type { BedLayout, BedElement, BedLocalCoord, LabTool, PlantShapeType, GrowthPhase } from "../lib/bedLayoutTypes";
-import { geoPolygonToBedLayout, pointInBedOutline, snapToGrid } from "../lib/bedGeometry";
+import { geoPolygonToBedLayout, pointInBedOutline, snapToGrid, generateRowPositions } from "../lib/bedGeometry";
 import { getBedLayout, createBedLayout, saveBedLayout, removeElement, addElement, updateElement } from "../lib/bedLayoutStore";
 import {
   MONTH_NAMES_DA, MONTH_ICONS, PHASE_LABELS_DA,
@@ -898,20 +898,27 @@ function DesignLabInner({
       const edgeMargin = 12; // cm
       const startY = mergedElements.length > 0 ? existingMaxY + rowSpacing : edgeMargin;
 
-      newPlants.forEach((p, rowIdx) => {
-        const rowY = startY + rowIdx * rowSpacing;
-        if (rowY > layout.lengthCm - edgeMargin) return;
+      // Use polygon-aware row generation so plants stay inside the bed outline
+      const rows = generateRowPositions(layout.outlineCm, rowSpacing, edgeMargin, "horizontal");
+      // Skip rows that overlap with existing elements
+      const availableRows = rows.filter((r) => r.start.y >= startY);
 
-        const startX = edgeMargin + (p.spacingCm || 10);
-        const availWidth = layout.widthCm - edgeMargin * 2 - (p.spacingCm || 10);
-        const count = Math.min(p.count || 1, Math.max(1, Math.floor(availWidth / Math.max(p.spacingCm || 10, 3))));
+      newPlants.forEach((p, rowIdx) => {
+        if (rowIdx >= availableRows.length) return; // no more room
+        const row = availableRows[rowIdx];
+        const spacing = Math.max(p.spacingCm || 10, 3);
+        const rowWidth = row.end.x - row.start.x;
+        const count = Math.min(p.count || 1, Math.max(1, Math.floor(rowWidth / spacing)));
 
         for (let i = 0; i < count; i++) {
-          const x = startX + i * (availWidth / Math.max(count, 1));
+          const x = row.start.x + spacing / 2 + i * (rowWidth / Math.max(count, 1));
+          const pos = { x, y: row.start.y };
+          // Extra safety: skip if outside polygon
+          if (!pointInBedOutline(pos, layout.outlineCm)) continue;
           mergedElements.push({
             id: crypto.randomUUID(),
             type: "plant",
-            position: { x, y: rowY },
+            position: pos,
             rotation: 0,
             width: p.spreadCm || 10,
             length: p.spreadCm || 10,
@@ -3754,10 +3761,17 @@ function DesignLabInner({
                       min={20}
                       max={10000}
                       step={10}
-                      value={Math.round(layout.widthCm)}
-                      onChange={(e) => {
+                      defaultValue={Math.round(layout.widthCm)}
+                      key={`w-${Math.round(layout.widthCm)}`}
+                      onBlur={(e) => {
                         const v = Number(e.target.value);
-                        if (v >= 20 && v <= 10000) handleBedResize(v, layout.lengthCm);
+                        if (v >= 20 && v <= 10000 && v !== Math.round(layout.widthCm)) handleBedResize(v, layout.lengthCm);
+                      }}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") {
+                          const v = Number((e.target as HTMLInputElement).value);
+                          if (v >= 20 && v <= 10000) handleBedResize(v, layout.lengthCm);
+                        }
                       }}
                       className="flex-1 rounded border px-2 py-1 text-xs"
                       style={{ borderColor: "var(--border)", background: "var(--background)", color: "var(--foreground)" }}
@@ -3771,10 +3785,17 @@ function DesignLabInner({
                       min={20}
                       max={10000}
                       step={10}
-                      value={Math.round(layout.lengthCm)}
-                      onChange={(e) => {
+                      defaultValue={Math.round(layout.lengthCm)}
+                      key={`l-${Math.round(layout.lengthCm)}`}
+                      onBlur={(e) => {
                         const v = Number(e.target.value);
-                        if (v >= 20 && v <= 10000) handleBedResize(layout.widthCm, v);
+                        if (v >= 20 && v <= 10000 && v !== Math.round(layout.lengthCm)) handleBedResize(layout.widthCm, v);
+                      }}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") {
+                          const v = Number((e.target as HTMLInputElement).value);
+                          if (v >= 20 && v <= 10000) handleBedResize(layout.widthCm, v);
+                        }
                       }}
                       className="flex-1 rounded border px-2 py-1 text-xs"
                       style={{ borderColor: "var(--border)", background: "var(--background)", color: "var(--foreground)" }}
