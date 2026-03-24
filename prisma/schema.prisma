@@ -56,6 +56,9 @@ model User {
   forumReplies ForumReply[]
   forumLikes   ForumLike[]
 
+  // Announcements (admin broadcasts)
+  announcements Announcement[]
+
   @@map("users")
 }
 
@@ -273,4 +276,23 @@ model ForumLike {
   @@index([threadId])
   @@index([replyId])
   @@map("forum_likes")
+}
+
+// ---------------------------------------------------------------------------
+// Announcement – admin broadcast messages shown to all users
+// ---------------------------------------------------------------------------
+model Announcement {
+  id          String    @id @default(cuid())
+  message     String
+  type        String    @default("info")  // "info" | "warning" | "success"
+  active      Boolean   @default(true)
+  expiresAt   DateTime?
+  createdById String
+  createdAt   DateTime  @default(now())
+
+  createdBy   User      @relation(fields: [createdById], references: [id], onDelete: Cascade)
+
+  @@index([active])
+  @@index([createdAt])
+  @@map("announcements")
 }

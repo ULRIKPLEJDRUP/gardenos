@@ -148,6 +148,9 @@ export interface ViewTabProps {
   // Utilities
   showToast: (msg: string, type?: "success" | "error" | "warning" | "info") => void;
   userKey: (key: string) => string;
+
+  // GeoJSON import (F4)
+  onImportGeoJSON?: (file: File) => void;
 }
 
 // ── Component ──
@@ -1227,6 +1230,32 @@ export default function ViewTab(props: ViewTabProps) {
               GeoJSON kan importeres i QGIS, Google Earth og andre GIS-værktøjer.<br />
               CSV-filen bruger semikolon (;) som separator og UTF-8 med BOM.
             </p>
+
+            {/* F4: GeoJSON import */}
+            {props.onImportGeoJSON && (
+              <div className="pt-2 border-t border-border">
+                <h3 className="text-sm font-bold text-foreground/80 mb-1">📥 Importér GeoJSON</h3>
+                <p className="text-[10px] text-foreground/50 leading-relaxed mb-2">
+                  Importér en GeoJSON-fil og flet elementerne ind i din eksisterende have.
+                </p>
+                <label
+                  className="w-full flex items-center justify-center gap-2 rounded-lg border-2 border-dashed border-accent/40 bg-accent/5 px-3 py-3 cursor-pointer hover:bg-accent/10 hover:border-accent/60 transition-all"
+                >
+                  <span className="text-lg">📂</span>
+                  <span className="text-xs font-medium text-accent">Vælg .geojson fil…</span>
+                  <input
+                    type="file"
+                    accept=".geojson,.json,application/geo+json,application/json"
+                    className="hidden"
+                    onChange={(e) => {
+                      const file = e.target.files?.[0];
+                      if (file) props.onImportGeoJSON!(file);
+                      e.target.value = "";
+                    }}
+                  />
+                </label>
+              </div>
+            )}
           </div>
         );
       })() : null}

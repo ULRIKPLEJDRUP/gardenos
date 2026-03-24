@@ -114,8 +114,16 @@ export default function AdminPage() {
   const [activityLogs, setActivityLogs] = useState<ActivityLogEntry[]>([]);
   const [activityLogsLoading, setActivityLogsLoading] = useState(false);
 
+  // Announcements state (F6)
+  const [annList, setAnnList] = useState<{ id: string; message: string; type: string; active: boolean; createdAt: string; expiresAt: string | null }[]>([]);
+  const [annLoading, setAnnLoading] = useState(false);
+  const [annMessage, setAnnMessage] = useState("");
+  const [annType, setAnnType] = useState<"info" | "warning" | "success">("info");
+  const [annExpiry, setAnnExpiry] = useState<number | "">(24);
+  const [annSending, setAnnSending] = useState(false);
+
   // Accordion state – which sections are open
-  type SectionId = "invite" | "codes" | "users" | "activity" | "feedback" | "icons";
+  type SectionId = "invite" | "codes" | "users" | "activity" | "feedback" | "icons" | "announcements";
   const [openSections, setOpenSections] = useState<Set<SectionId>>(new Set(["invite"]));
   const toggleSection = (id: SectionId) => {
     setOpenSections((prev) => {
@@ -1387,6 +1395,95 @@ export default function AdminPage() {
           })()}
           </div>
           )}
+        </div>
+
+        {/* ═══════════════════ Announcements (F6) ═══════════════════ */}
+        <div className="rounded-lg border border-gray-700 overflow-hidden">
+          <button className="w-full flex items-center justify-between px-4 py-3 bg-gray-800 hover:bg-gray-750 transition-colors text-left" onClick={() => toggleSection("announcements")}>
+            <h2 className="text-lg font-semibold text-white">📢 Meddelelser</h2>
+            <span className={`text-gray-400 text-lg transition-transform ${openSections.has("announcements") ? "rotate-90" : ""}`}>›</span>
+          </button>
+          {openSections.has("announcements") && (() => {
+            // Load announcements on open
+            if (!annLoading && annList.length === 0) {
+              setAnnLoading(true);
+              fetch("/api/admin/announcements").then((r) => r.json()).then((data) => {
+                if (Array.isArray(data)) setAnnList(data);
+              }).catch(() => {}).finally(() => setAnnLoading(false));
+            }
+            const handleSend = async () => {
+              if (!annMessage.trim() || annSending) return;
+              setAnnSending(true);
+              try {
+                const res = await fetch("/api/admin/announcements", {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({ message: annMessage.trim(), type: annType, expiresInHours: annExpiry || undefined }),
+                });
+                if (res.ok) {
+                  const created = await res.json();
+                  setAnnList((prev) => [created, ...prev]);
+                  setAnnMessage("");
+                }
+              } catch {} finally { setAnnSending(false); }
+            };
+            const handleDeactivate = async (id: string) => {
+              await fetch(`/api/admin/announcements?id=${id}`, { method: "DELETE" });
+              setAnnList((prev) => prev.map((a) => a.id === id ? { ...a, active: false } : a));
+            };
+            return (
+              <div className="p-4 space-y-4">
+                {/* Create announcement */}
+                <div className="space-y-3 rounded-lg border border-gray-700 bg-gray-800/50 p-3">
+                  <textarea
+                    value={annMessage}
+                    onChange={(e) => setAnnMessage(e.target.value)}
+                    placeholder="Skriv meddelelse til alle brugere…"
+                    className="w-full rounded-lg border border-gray-600 bg-gray-900 px-3 py-2 text-sm text-white placeholder:text-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    rows={2}
+                  />
+                  <div className="flex items-center gap-3">
+                    <select value={annType} onChange={(e) => setAnnType(e.target.value as typeof annType)} className="rounded-lg border border-gray-600 bg-gray-900 px-2 py-1.5 text-xs text-white">
+                      <option value="info">ℹ️ Info</option>
+                      <option value="warning">⚠️ Advarsel</option>
+                      <option value="success">✅ Succes</option>
+                    </select>
+                    <div className="flex items-center gap-1">
+                      <label className="text-xs text-gray-400">Udløber om</label>
+                      <input type="number" min={1} max={720} value={annExpiry} onChange={(e) => setAnnExpiry(e.target.value ? Number(e.target.value) : "")} className="w-16 rounded border border-gray-600 bg-gray-900 px-2 py-1 text-xs text-white" />
+                      <span className="text-xs text-gray-400">timer</span>
+                    </div>
+                    <button
+                      onClick={handleSend}
+                      disabled={annSending || !annMessage.trim()}
+                      className="ml-auto rounded-lg bg-blue-600 px-4 py-1.5 text-xs font-semibold text-white hover:bg-blue-700 disabled:opacity-50 transition-colors"
+                    >
+                      {annSending ? "Sender…" : "📤 Send"}
+                    </button>
+                  </div>
+                </div>
+
+                {/* List */}
+                {annList.length === 0 && !annLoading && <p className="text-sm text-gray-400 text-center py-4">Ingen meddelelser endnu.</p>}
+                {annList.map((a) => (
+                  <div key={a.id} className={`flex items-start justify-between rounded-lg border px-3 py-2 text-sm ${a.active ? "border-gray-600 bg-gray-800/50" : "border-gray-700/50 bg-gray-900/30 opacity-50"}`}>
+                    <div>
+                      <span className="mr-1">{a.type === "warning" ? "⚠️" : a.type === "success" ? "✅" : "ℹ️"}</span>
+                      <span className="text-white">{a.message}</span>
+                      <div className="text-[10px] text-gray-500 mt-0.5">
+                        {new Date(a.createdAt).toLocaleString("da-DK")}
+                        {a.expiresAt && ` — udløber ${new Date(a.expiresAt).toLocaleString("da-DK")}`}
+                        {!a.active && " — deaktiveret"}
+                      </div>
+                    </div>
+                    {a.active && (
+                      <button onClick={() => handleDeactivate(a.id)} className="ml-2 text-xs text-red-400 hover:text-red-300 whitespace-nowrap">❌ Deaktivér</button>
+                    )}
+                  </div>
+                ))}
+              </div>
+            );
+          })()}
         </div>
       </div>
     </div>

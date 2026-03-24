@@ -74,6 +74,8 @@ import SettingsModal from "./SettingsModal";
 import PlantsTab from "./PlantsTab";
 import CreateTab from "./CreateTab";
 import ForumPanel from "./ForumPanel";
+import GardenDashboard from "./GardenDashboard";
+import type { DashboardData } from "./GardenDashboard";
 import type { CreateSelectionInfo } from "./CreateTab";
 import { ContentTab } from "./ContentTab";
 import type { ContentTabHelpers } from "./ContentTab";
@@ -3107,6 +3109,22 @@ export function GardenMapClient({ userId }: { userId: string }) {
   // ── User settings modal state ──
   const [settingsOpen, setSettingsOpen] = useState(false);
 
+  // ── Dashboard (F1) ──
+  const [showDashboard, setShowDashboard] = useState(false);
+
+  // ── Announcements (F6) ──
+  const [announcements, setAnnouncements] = useState<{ id: string; message: string; type: string }[]>([]);
+  const [dismissedAnnouncements, setDismissedAnnouncements] = useState<Set<string>>(() => {
+    try {
+      const raw = localStorage.getItem(userKey("gardenos:dismissed-announcements:v1"));
+      return raw ? new Set(JSON.parse(raw) as string[]) : new Set();
+    } catch { return new Set(); }
+  });
+
+  // ── PWA install prompt (F5) ──
+  const deferredPromptRef = useRef<{ prompt: () => Promise<void>; userChoice: Promise<{ outcome: string }> } | null>(null);
+  const [showInstallBtn, setShowInstallBtn] = useState(false);
+
   // ── Saved Designs state ──
   const [savedDesigns, setSavedDesigns] = useState<SavedDesign[]>([]);
   const [designsLoading, setDesignsLoading] = useState(false);
@@ -3847,6 +3865,179 @@ export function GardenMapClient({ userId }: { userId: string }) {
     }
     return sortByUrgency(adviceList);
   }, [layoutForContainment, weatherData, plantInstancesVersion, plantDataVersion]);
+
+  // ── F6: Fetch active announcements ──
+  useEffect(() => {
+    let cancelled = false;
+    fetch("/api/admin/announcements").then((r) => r.ok ? r.json() : []).then((data) => {
+      if (!cancelled && Array.isArray(data)) setAnnouncements(data);
+    }).catch(() => {});
+    return () => { cancelled = true; };
+  }, []);
+
+  const dismissAnnouncement = useCallback((id: string) => {
+    setDismissedAnnouncements((prev) => {
+      const next = new Set(prev);
+      next.add(id);
+      try { localStorage.setItem(userKey("gardenos:dismissed-announcements:v1"), JSON.stringify([...next])); } catch {}
+      return next;
+    });
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ── F5: PWA install prompt ──
+  useEffect(() => {
+    const handler = (e: Event) => {
+      e.preventDefault();
+      deferredPromptRef.current = e as unknown as typeof deferredPromptRef.current;
+      setShowInstallBtn(true);
+    };
+    window.addEventListener("beforeinstallprompt", handler);
+    return () => window.removeEventListener("beforeinstallprompt", handler);
+  }, []);
+
+  const handleInstallClick = useCallback(async () => {
+    const prompt = deferredPromptRef.current;
+    if (!prompt) return;
+    await prompt.prompt();
+    const choice = await prompt.userChoice;
+    if (choice.outcome === "accepted") {
+      setShowInstallBtn(false);
+      showToast("✅ GardenOS installeret!", "success");
+    }
+    deferredPromptRef.current = null;
+  }, [showToast]);
+
+  // ── F1: Dashboard data (computed from layout + plant instances) ──
+  const dashboardData = useMemo((): DashboardData => {
+    const features = layoutForContainment?.features ?? [];
+    const bedCategories = new Set(["area", "seedbed", "row", "container"]);
+    let bedCount = 0;
+    let elementCount = 0;
+    let containerCount = 0;
+    let rowCount = 0;
+    let totalAreaM2 = 0;
+    for (const f of features) {
+      const cat = (f as GardenFeature).properties?.category;
+      const kind = (f as GardenFeature).properties?.kind;
+      if (cat === "element") { elementCount++; continue; }
+      if (cat === "container") { containerCount++; bedCount++; continue; }
+      if (cat === "row") { rowCount++; continue; }
+      if (cat && bedCategories.has(cat)) { bedCount++; }
+      // rough polygon area
+      if (kind === "bed" || kind === "seedbed" || cat === "area") {
+        try {
+          const geom = (f as GardenFeature).geometry;
+          if (geom.type === "Polygon") {
+            const coords = (geom as Polygon).coordinates[0];
+            if (coords.length >= 3) {
+              let a = 0;
+              for (let i = 0; i < coords.length - 1; i++) {
+                const [x1, y1] = coords[i];
+                const [x2, y2] = coords[i + 1];
+                a += (x2 - x1) * (y2 + y1);
+              }
+              const latMid = coords.reduce((s, c) => s + c[1], 0) / coords.length;
+              const mPerDegLon = 111320 * Math.cos((latMid * Math.PI) / 180);
+              const mPerDegLat = 110540;
+              totalAreaM2 += Math.abs(a / 2) * mPerDegLon * mPerDegLat;
+            }
+          }
+        } catch {}
+      }
+    }
+    const allInstances = loadPlantInstances();
+    const speciesSet = new Set<string>();
+    const familySet = new Set<string>();
+    const harvests: DashboardData["upcomingHarvests"] = [];
+    const seenHarvestSpecies = new Set<string>();
+    for (const inst of allInstances) {
+      speciesSet.add(inst.speciesId);
+      const sp = getPlantById(inst.speciesId);
+      if (sp?.family) familySet.add(sp.family);
+      if (sp && sp.harvest && !seenHarvestSpecies.has(sp.id)) {
+        seenHarvestSpecies.add(sp.id);
+        harvests.push({ name: sp.name, from: sp.harvest.from, to: sp.harvest.to });
+      }
+    }
+    // Rotation warnings count
+    let rotationWarnings = 0;
+    const season = getCurrentSeason();
+    const bedFeatureIds = features
+      .filter((f) => { const c = (f as GardenFeature).properties?.category; return c === "area" || c === "seedbed" || c === "row" || c === "container"; })
+      .map((f) => (f as GardenFeature).properties?.gardenosId)
+      .filter(Boolean) as string[];
+    for (const fId of bedFeatureIds) {
+      rotationWarnings += checkRotation(fId, season).length;
+    }
+    return {
+      bedCount,
+      elementCount,
+      uniqueSpecies: speciesSet.size,
+      plantInstanceCount: allInstances.length,
+      totalAreaM2,
+      families: [...familySet].map((f) => PLANT_FAMILY_LABELS[f as keyof typeof PLANT_FAMILY_LABELS] || f),
+      conflictCount: detectPlantConflicts(features).length,
+      upcomingHarvests: harvests,
+      rotationWarnings,
+      containerCount,
+      rowCount,
+    };
+  }, [layoutForContainment, plantInstancesVersion, plantDataVersion]);
+
+  // ── F4: GeoJSON import handler ──
+  const handleImportGeoJSON = useCallback((file: File) => {
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      try {
+        const text = e.target?.result as string;
+        const parsed = JSON.parse(text);
+        if (!isFeatureCollection(parsed)) {
+          showToast("❌ Filen er ikke en gyldig GeoJSON FeatureCollection", "error");
+          return;
+        }
+        const group = featureGroupRef.current;
+        if (!group) return;
+        // Assign gardenosId to features that don't have one
+        let assignedCount = 0;
+        for (const f of parsed.features) {
+          if (!f.properties) f.properties = {} as GardenFeatureProperties;
+          if (!f.properties.gardenosId) {
+            f.properties.gardenosId = crypto.randomUUID();
+            assignedCount++;
+          }
+          if (!f.properties.category) {
+            // guess category from geometry type
+            f.properties.category = f.geometry?.type === "Point" ? "element" : "area";
+          }
+          if (!f.properties.kind) {
+            f.properties.kind = f.properties.category === "element" ? "plant" : "bed";
+          }
+        }
+        // Merge into existing layout
+        const existingLayout = layoutForContainment ?? { type: "FeatureCollection" as const, features: [] };
+        const merged: GardenFeatureCollection = {
+          type: "FeatureCollection",
+          features: [...existingLayout.features, ...parsed.features],
+        };
+        // Rebuild map layers
+        group.clearLayers();
+        const geoJsonLayer = L.geoJSON(merged, {
+          onEachFeature: (_feature, layer) => {
+            attachClickHandlerRef.current(layer, _feature as GardenFeature);
+          },
+        });
+        geoJsonLayer.eachLayer((layer) => group.addLayer(layer));
+        window.localStorage.setItem(userKey(STORAGE_LAYOUT_KEY), JSON.stringify(merged));
+        markDirty(STORAGE_LAYOUT_KEY);
+        setLayoutForContainment(merged);
+        setSelectedAndFocus(null);
+        showToast(`✅ Importeret ${parsed.features.length} elementer${assignedCount ? ` (${assignedCount} nye ID'er)` : ""}`, "success");
+      } catch {
+        showToast("❌ Kunne ikke parse GeoJSON-fil", "error");
+      }
+    };
+    reader.readAsText(file);
+  }, [layoutForContainment, showToast]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const applyLayerVisuals = useCallback(
     (layer: L.Layer, selectedId: string | null) => {
@@ -7841,6 +8032,29 @@ export function GardenMapClient({ userId }: { userId: string }) {
                     <div className="text-[10px] text-foreground/40 mt-0.5">Del erfaringer, stil spørgsmål</div>
                   </div>
                 </button>
+                <div className="w-full h-px bg-border/50 my-0.5" />
+                <button
+                  className="w-full flex items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-xs font-medium text-foreground/70 hover:bg-accent/10 hover:text-accent transition-colors"
+                  onClick={() => { setGuidePopoverOpen(false); setShowDashboard(true); }}
+                >
+                  <span className="text-base">🏡</span>
+                  <div>
+                    <div className="font-semibold text-foreground/80">Min Have</div>
+                    <div className="text-[10px] text-foreground/40 mt-0.5">Statistik, sundhed og overblik</div>
+                  </div>
+                </button>
+                {showInstallBtn && (
+                  <button
+                    className="w-full flex items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-xs font-medium text-foreground/70 hover:bg-accent/10 hover:text-accent transition-colors"
+                    onClick={() => { setGuidePopoverOpen(false); handleInstallClick(); }}
+                  >
+                    <span className="text-base">📲</span>
+                    <div>
+                      <div className="font-semibold text-foreground/80">Installér app</div>
+                      <div className="text-[10px] text-foreground/40 mt-0.5">Tilføj GardenOS til hjemmeskærm</div>
+                    </div>
+                  </button>
+                )}
               </div>
             </div>
           )}
@@ -8477,6 +8691,7 @@ export function GardenMapClient({ userId }: { userId: string }) {
             mapRef={mapRef}
             showToast={showToast}
             userKey={userKey}
+            onImportGeoJSON={handleImportGeoJSON}
           />
         ) : null}
         {sidebarTab === "journal" ? (
@@ -8710,6 +8925,35 @@ export function GardenMapClient({ userId }: { userId: string }) {
           />
         );
       })() : null}
+
+      {/* ── F6: Announcement banner ── */}
+      {announcements.filter((a) => !dismissedAnnouncements.has(a.id)).length > 0 && (
+        <div className="fixed top-0 left-0 right-0 z-[9600] flex flex-col">
+          {announcements.filter((a) => !dismissedAnnouncements.has(a.id)).map((a) => (
+            <div
+              key={a.id}
+              className={`flex items-center justify-between px-4 py-2 text-xs font-medium shadow-sm ${
+                a.type === "warning" ? "bg-amber-100 text-amber-900 dark:bg-amber-900/80 dark:text-amber-100" :
+                a.type === "success" ? "bg-green-100 text-green-900 dark:bg-green-900/80 dark:text-green-100" :
+                "bg-blue-100 text-blue-900 dark:bg-blue-900/80 dark:text-blue-100"
+              }`}
+            >
+              <span>{a.type === "warning" ? "⚠️" : a.type === "success" ? "✅" : "ℹ️"} {a.message}</span>
+              <button
+                type="button"
+                className="ml-3 rounded px-1.5 py-0.5 hover:bg-black/10 transition-colors"
+                onClick={() => dismissAnnouncement(a.id)}
+                aria-label="Luk"
+              >✕</button>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* ── F1: Dashboard overlay ── */}
+      {showDashboard && (
+        <GardenDashboard data={dashboardData} onClose={() => setShowDashboard(false)} />
+      )}
 
       {/* ── User Settings Modal ── */}
       <SettingsModal
