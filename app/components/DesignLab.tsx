@@ -689,6 +689,12 @@ function DesignLabInner({
   const [rotatingElementId, setRotatingElementId] = useState<string | null>(null);
   const rotateStartRef = useRef<{ startAngle: number; elemRotation: number } | null>(null);
 
+  // ── Outline vertex drag state (interactive bed resize) ──
+  const [draggingVertexIdx, setDraggingVertexIdx] = useState<number | null>(null);
+  // For edge midpoint drags: the two vertex indices that form the edge
+  const [draggingEdge, setDraggingEdge] = useState<[number, number] | null>(null);
+  const vertexDragStartRef = useRef<{ pointerX: number; pointerY: number; origOutline: BedLocalCoord[] } | null>(null);
+
   // ── Shortcuts legend dialog ──
   const [showShortcuts, setShowShortcuts] = useState(false);
 
@@ -1273,6 +1279,47 @@ function DesignLabInner({
         });
         return;
       }
+      // Outline vertex drag
+      if (draggingVertexIdx !== null && vertexDragStartRef.current) {
+        const pos = svgPointFromEvent(e);
+        if (!pos) return;
+        const orig = vertexDragStartRef.current.origOutline;
+        const newOutline = [...orig];
+        newOutline[draggingVertexIdx] = { x: Math.max(0, pos.x), y: Math.max(0, pos.y) };
+        // Recompute bounding box
+        const xs = newOutline.map((p) => p.x);
+        const ys = newOutline.map((p) => p.y);
+        const newW = Math.max(20, Math.max(...xs));
+        const newH = Math.max(20, Math.max(...ys));
+        setLayout((prev) => ({ ...prev, outlineCm: newOutline, widthCm: newW, lengthCm: newH }));
+        return;
+      }
+      // Outline edge drag (move both endpoints perpendicular)
+      if (draggingEdge !== null && vertexDragStartRef.current) {
+        const pos = svgPointFromEvent(e);
+        if (!pos) return;
+        const svg = svgRef.current;
+        if (!svg) return;
+        const startPt = svg.createSVGPoint();
+        startPt.x = vertexDragStartRef.current.pointerX;
+        startPt.y = vertexDragStartRef.current.pointerY;
+        const ctm = svg.getScreenCTM();
+        if (!ctm) return;
+        const startSvg = startPt.matrixTransform(ctm.inverse());
+        const dx = pos.x - startSvg.x;
+        const dy = pos.y - startSvg.y;
+        const orig = vertexDragStartRef.current.origOutline;
+        const [iA, iB] = draggingEdge;
+        const newOutline = [...orig];
+        newOutline[iA] = { x: Math.max(0, orig[iA].x + dx), y: Math.max(0, orig[iA].y + dy) };
+        newOutline[iB] = { x: Math.max(0, orig[iB].x + dx), y: Math.max(0, orig[iB].y + dy) };
+        const xs = newOutline.map((p) => p.x);
+        const ys = newOutline.map((p) => p.y);
+        const newW = Math.max(20, Math.max(...xs));
+        const newH = Math.max(20, Math.max(...ys));
+        setLayout((prev) => ({ ...prev, outlineCm: newOutline, widthCm: newW, lengthCm: newH }));
+        return;
+      }
       // Lasso drag
       if (lassoStartRef.current && !draggingElementId && tool === "select") {
         const pos = svgPointFromEvent(e);
@@ -1338,7 +1385,7 @@ function DesignLabInner({
         if (pos) setGhostPos(pos);
       }
     },
-    [isPanning, draggingElementId, rotatingElementId, tool, placingSpeciesId, placingInfraKind, svgPointFromEvent, layout.outlineCm, layout.elements, snapEnabled]
+    [isPanning, draggingElementId, rotatingElementId, draggingVertexIdx, draggingEdge, tool, placingSpeciesId, placingInfraKind, svgPointFromEvent, layout.outlineCm, layout.elements, snapEnabled]
   );
 
   const handlePointerUp = useCallback(
@@ -1346,6 +1393,39 @@ function DesignLabInner({
       if (isPanning) {
         setIsPanning(false);
         panStartRef.current = null;
+        return;
+      }
+      // Finalize outline vertex/edge drag
+      if (draggingVertexIdx !== null || draggingEdge !== null) {
+        // Normalize outline: shift so min x/y = 0, recompute bounds
+        const minX = Math.min(...layout.outlineCm.map((p) => p.x));
+        const minY = Math.min(...layout.outlineCm.map((p) => p.y));
+        const normalizedOutline = layout.outlineCm.map((p) => ({
+          x: p.x - minX,
+          y: p.y - minY,
+        }));
+        const newW = Math.max(20, Math.max(...normalizedOutline.map((p) => p.x)));
+        const newH = Math.max(20, Math.max(...normalizedOutline.map((p) => p.y)));
+        // Also shift elements to match
+        const newElements = layout.elements.map((el) => ({
+          ...el,
+          position: {
+            x: Math.max(2, Math.min(el.position.x - minX, newW - 2)),
+            y: Math.max(2, Math.min(el.position.y - minY, newH - 2)),
+          },
+        }));
+        const updated: BedLayout = {
+          ...layout,
+          outlineCm: normalizedOutline,
+          widthCm: newW,
+          lengthCm: newH,
+          elements: newElements,
+          version: layout.version + 1,
+        };
+        persistLayout(updated);
+        setDraggingVertexIdx(null);
+        setDraggingEdge(null);
+        vertexDragStartRef.current = null;
         return;
       }
       // Finalize lasso selection
@@ -1393,7 +1473,7 @@ function DesignLabInner({
         return;
       }
     },
-    [isPanning, draggingElementId, rotatingElementId, layout, featureId, persistLayout, lassoRect]
+    [isPanning, draggingElementId, rotatingElementId, draggingVertexIdx, draggingEdge, layout, featureId, persistLayout, lassoRect]
   );
 
   // ── SVG click for placement ──
@@ -2647,6 +2727,73 @@ function DesignLabInner({
               strokeWidth="2.5"
               opacity="0.5"
             />
+
+            {/* Interactive outline vertex + edge handles */}
+            {tool === "select" && selectedIds.size === 0 && (() => {
+              const pts = layout.outlineCm;
+              const handleR = Math.max(3, Math.min(layout.widthCm, layout.lengthCm) * 0.015);
+              return (
+                <g>
+                  {/* Edge midpoint handles — drag to move an entire edge */}
+                  {pts.map((p, i) => {
+                    const next = pts[(i + 1) % pts.length];
+                    const mx = (p.x + next.x) / 2;
+                    const my = (p.y + next.y) / 2;
+                    return (
+                      <rect
+                        key={`edge-${i}`}
+                        x={mx - handleR * 0.7}
+                        y={my - handleR * 0.7}
+                        width={handleR * 1.4}
+                        height={handleR * 1.4}
+                        rx={handleR * 0.2}
+                        fill="var(--accent, #2d7a3a)"
+                        fillOpacity={draggingEdge?.[0] === i ? 0.7 : 0.15}
+                        stroke="var(--accent, #2d7a3a)"
+                        strokeWidth={0.6}
+                        style={{ cursor: "move" }}
+                        onPointerDown={(ev) => {
+                          ev.stopPropagation();
+                          ev.preventDefault();
+                          setDraggingEdge([i, (i + 1) % pts.length]);
+                          vertexDragStartRef.current = {
+                            pointerX: ev.clientX,
+                            pointerY: ev.clientY,
+                            origOutline: pts.map((pp) => ({ ...pp })),
+                          };
+                          (ev.target as HTMLElement).setPointerCapture?.(ev.pointerId);
+                        }}
+                      />
+                    );
+                  })}
+                  {/* Vertex handles — drag to move individual corners */}
+                  {pts.map((p, i) => (
+                    <circle
+                      key={`vtx-${i}`}
+                      cx={p.x}
+                      cy={p.y}
+                      r={handleR}
+                      fill="#fff"
+                      fillOpacity={draggingVertexIdx === i ? 0.9 : 0.6}
+                      stroke="var(--accent, #2d7a3a)"
+                      strokeWidth={1}
+                      style={{ cursor: "nwse-resize" }}
+                      onPointerDown={(ev) => {
+                        ev.stopPropagation();
+                        ev.preventDefault();
+                        setDraggingVertexIdx(i);
+                        vertexDragStartRef.current = {
+                          pointerX: ev.clientX,
+                          pointerY: ev.clientY,
+                          origOutline: pts.map((pp) => ({ ...pp })),
+                        };
+                        (ev.target as HTMLElement).setPointerCapture?.(ev.pointerId);
+                      }}
+                    />
+                  ))}
+                </g>
+              );
+            })()}
 
             {/* Grid lines (subtle) */}
             <g opacity="0.08" stroke="var(--foreground, #1a1a1a)" strokeWidth="0.3">
