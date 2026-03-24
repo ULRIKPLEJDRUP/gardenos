@@ -519,3 +519,62 @@ function listBedLayouts(): { featureId: string; updatedAt: string }[];
 **Forventet tid:** ~2-3 arbejdssessioner
 
 Klar til at starte implementation? 🚀
+
+---
+
+## 10. Feature Roadmap — Kommende forbedringer
+
+> Løbende feature-liste. Status opdateres efterhånden.
+
+### 🎨 A. Mere virkelighedstro illustrationer
+
+| # | Feature | Beskrivelse | Status |
+|---|---------|------------|--------|
+| A1 | **SVG-gradienter på planter** | `<radialGradient>` i stedet for flade fills → 3D-kugle-effekt | ⬜ |
+| A2 | **Blad- og kroneblade-detaljer** | SVG-paths for bladårer, kroneblade, bærtextur, græstotter | ⬜ |
+| A3 | **Sæson-transitions (animerede)** | CSS/SVG transitions når man skifter måned — smooth fade/grow/wilt | ⬜ |
+| A4 | **Bedre jordtextur** | SVG turbulence-filter for synlig muldjord i stedet for usynlig 8×8 pattern | ⬜ |
+| A5 | **Infrastruktur-illustrationer** | Drypslange → bølget linje, trædesten → cirkler, trækant → grain-mønster | ⬜ |
+| A6 | **Perspektivisk skygge** | Høje planter kaster større skygger — giver dybdefornemmelse | ⬜ |
+| A7 | **Sæsonambience** | Snefnug i vinter, gule blade i efterår, sommerlys i juni | ⬜ |
+
+### ✏️ B. Bedre redigering
+
+| # | Feature | Beskrivelse | Status |
+|---|---------|------------|--------|
+| B1 | **Multi-select + bulk move** | Lasso-selection eller Shift+klik — flyt/slet/kopiér mange på én gang | ⬜ |
+| B2 | **Copy/Paste + Duplikér** | ⌘C/⌘V + Alt+drag for hurtig klon | ⬜ |
+| B3 | **Drag-from-palette** | Træk plante direkte fra sidebar ind på canvas | ⬜ |
+| B4 | **Afstandsmåler** | Ruler-tool: klik to punkter → viser cm-afstand + companion-status | ⬜ |
+| B5 | **Element-rotation handles** | Visuelle drag-handles til rotation + resize pr. element | ⬜ |
+| B6 | **Højreklik-kontekstmenu** | Kopiér / Slet / Dupliker række / Vis info | ⬜ |
+| B7 | **Snap on/off toggle** | Knap til at slå snap-to-grid fra (friplacement) | ⬜ |
+| B8 | **Align & distribute** | Justér valgte planter: venstre/center/højre/jævn fordeling | ⬜ |
+
+### 🖥️ C. UI-forbedringer
+
+| # | Feature | Beskrivelse | Status |
+|---|---------|------------|--------|
+| C1 | **Måneds-slider med labels** | "Jan Feb Mar…" under slider + auto-play ▶️ | ⬜ |
+| C2 | **Minimap** | Lille overview-kort i hjørnet ved zoom | ⬜ |
+| C3 | **Scale bar** | Målestok-bar (10cm/50cm/1m) der opdaterer ved zoom | ⬜ |
+| C4 | **Floating toolbar** | Toolbar svæver over canvas → mere plads | ⬜ |
+| C5 | **Keyboard shortcuts legend** | Tooltip eller ?-dialog med alle shortcuts | ⬜ |
+| C6 | **Mobile/touch support** | Pinch-zoom, two-finger pan, touch-venlige knapper | ⬜ |
+
+### 🧠 D. Avancerede features
+
+| # | Feature | Beskrivelse | Status |
+|---|---------|------------|--------|
+| D1 | **Bruger-definerede templates** | "Gem dette bed som skabelon" → genbruges i andre bede | ⬜ |
+| D2 | **Skygge-overlay** | Visualisér skygge fra høje planter baseret på sol-vinkel | ⬜ |
+| D3 | **Side-by-side sæson-sammenligning** | Split-view: se marts vs. juli samtidig | ⬜ |
+| D4 | **Companion-linjer** | Grønne/røde forbindelseslinjer mellem naboer | ⬜ |
+| D5 | **3D-preview** | Three.js isometrisk visning med plant-højder | ⬜ |
+
+### 🤝 E. Sociale features
+
+| # | Feature | Beskrivelse | Status |
+|---|---------|------------|--------|
+| E1 | **Del bedplaner** | Del et bed-design via link, QR-kode eller direkte til andre brugere. Modtager kan importere som skabelon | ⬜ |
+| E2 | **Brugerforum** | Forum/community-funktion: opret tråde, del erfaringer, stil spørgsmål, upload billeder. Kategorier per emne (bed-design, skadedyr, høst, sorter osv.) | ⬜ |

@@ -214,3 +214,11 @@ export function lightenColor(hex: string, amount: number): string {
   const b = Math.min(255, (num & 0xff) + amount);
   return `rgb(${r},${g},${b})`;
 }
+
+export function darkenColor(hex: string, amount: number): string {
+  const num = parseInt(hex.replace("#", ""), 16);
+  const r = Math.max(0, (num >> 16) - amount);
+  const g = Math.max(0, ((num >> 8) & 0xff) - amount);
+  const b = Math.max(0, (num & 0xff) - amount);
+  return `rgb(${r},${g},${b})`;
+}

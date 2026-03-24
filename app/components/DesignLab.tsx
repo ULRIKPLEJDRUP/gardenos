@@ -6,14 +6,14 @@
 // Uses the same design tokens as the rest of the app (--accent, --border, etc.)
 // ---------------------------------------------------------------------------
 
-import React, { useState, useCallback, useRef, useEffect, useMemo, memo } from "react";
+import React, { useState, useCallback, useRef, useEffect, useMemo, useId, memo } from "react";
 import type { BedLayout, BedElement, BedLocalCoord, LabTool, PlantShapeType, GrowthPhase } from "../lib/bedLayoutTypes";
 import { geoPolygonToBedLayout, pointInBedOutline, snapToGrid } from "../lib/bedGeometry";
 import { getBedLayout, createBedLayout, saveBedLayout, removeElement, addElement, updateElement } from "../lib/bedLayoutStore";
 import {
   MONTH_NAMES_DA, MONTH_ICONS, PHASE_LABELS_DA,
   getPhaseScale, getPhase, getSeasonColors, GROUND_COLORS,
-  guessPlantShape, lightenColor,
+  guessPlantShape, lightenColor, darkenColor,
   type PlantCalendar,
 } from "../lib/seasonColors";
 import type { PhaseColors } from "../lib/bedLayoutTypes";
@@ -77,6 +77,7 @@ function PlantShape({
   opacity?: number;
   minRadius?: number;
 }) {
+  const uid = useId().replace(/:/g, "");
   const rawR = (spreadCm / 2) * scale;
   const r = Math.max(rawR, minRadius ?? 3);
 
@@ -109,22 +110,56 @@ function PlantShape({
   const sc = colors.stem;
   const ac = colors.accent;
 
+  // Gradient IDs – unique per PlantShape instance
+  const gf = `gf${uid}`;
+  const gs = `gs${uid}`;
+  const ga = `ga${uid}`;
+  const fillFc = `url(#${gf})`;
+  const fillSc = `url(#${gs})`;
+  const fillAc = ac ? `url(#${ga})` : undefined;
+
   return (
     <g
       transform={`translate(${x},${y})`}
       onClick={onClick}
       onPointerDown={onPointerDown}
-      style={{ cursor: onClick || onPointerDown ? "pointer" : undefined }}
+      style={{
+        cursor: onClick || onPointerDown ? "pointer" : undefined,
+        transition: "opacity 0.6s ease, transform 0.4s ease",
+      }}
       filter={isSelected ? "url(#glow)" : undefined}
       opacity={opacity}
     >
+      {/* Gradient definitions (scoped to this plant) */}
+      {viewMode !== "icon" && (
+        <defs>
+          <radialGradient id={gf} cx="38%" cy="32%" r="65%">
+            <stop offset="0%" stopColor={lightenColor(fc, 45)} />
+            <stop offset="50%" stopColor={fc} />
+            <stop offset="100%" stopColor={darkenColor(fc, 30)} />
+          </radialGradient>
+          <radialGradient id={gs} cx="42%" cy="38%" r="58%">
+            <stop offset="0%" stopColor={lightenColor(sc, 30)} />
+            <stop offset="60%" stopColor={sc} />
+            <stop offset="100%" stopColor={darkenColor(sc, 20)} />
+          </radialGradient>
+          {ac && (
+            <radialGradient id={ga} cx="35%" cy="28%" r="62%">
+              <stop offset="0%" stopColor={lightenColor(ac, 55)} />
+              <stop offset="45%" stopColor={ac} />
+              <stop offset="100%" stopColor={darkenColor(ac, 25)} />
+            </radialGradient>
+          )}
+        </defs>
+      )}
+
       {/* Color shapes */}
       {viewMode !== "icon" && (
         <>
           {shape === "rosette" && (
             <>
-              {(phase === "fruiting" || phase === "harvesting") && ac && (
-                <circle cx={0} cy={0} r={r * 0.4} fill={ac} opacity={0.6} />
+              {(phase === "fruiting" || phase === "harvesting") && fillAc && (
+                <circle cx={0} cy={0} r={r * 0.4} fill={fillAc} opacity={0.6} />
               )}
               {[0, 60, 120, 180, 240, 300].map((angle, i) => {
                 const rad = (angle * Math.PI) / 180;
@@ -137,13 +172,13 @@ function PlantShape({
                     cy={ly}
                     rx={r * 0.15}
                     ry={r * 0.45}
-                    fill={fc}
+                    fill={fillFc}
                     opacity={0.8}
                     transform={`rotate(${angle} ${lx} ${ly})`}
                   />
                 );
               })}
-              <circle cx={0} cy={0} r={r * 0.2} fill={sc} opacity={0.9} />
+              <circle cx={0} cy={0} r={r * 0.2} fill={fillSc} opacity={0.9} />
             </>
           )}
 
@@ -157,7 +192,7 @@ function PlantShape({
                     cx={Math.cos(rad) * r * 0.35}
                     cy={Math.sin(rad) * r * 0.35}
                     r={r * 0.55}
-                    fill={fc}
+                    fill={fillFc}
                     opacity={0.5}
                   />
                 );
@@ -184,8 +219,8 @@ function PlantShape({
 
           {shape === "upright" && (
             <>
-              {(phase === "fruiting" || phase === "harvesting") && ac && (
-                <ellipse cx={0} cy={r * 0.15} rx={r * 0.4} ry={r * 0.3} fill={ac} opacity={0.7} />
+              {(phase === "fruiting" || phase === "harvesting") && fillAc && (
+                <ellipse cx={0} cy={r * 0.15} rx={r * 0.4} ry={r * 0.3} fill={fillAc} opacity={0.7} />
               )}
               {[-2, -1, 0, 1, 2].map((i) => (
                 <ellipse
@@ -194,7 +229,7 @@ function PlantShape({
                   cy={-r * 0.15}
                   rx={r * 0.08}
                   ry={r * 0.55}
-                  fill={fc}
+                  fill={fillFc}
                   opacity={0.75}
                   transform={`rotate(${i * 8} ${i * r * 0.12} ${-r * 0.15})`}
                 />
@@ -204,7 +239,7 @@ function PlantShape({
 
           {shape === "bushy" && (
             <>
-              <circle cx={0} cy={0} r={r * 0.7} fill={fc} opacity={0.5} />
+              <circle cx={0} cy={0} r={r * 0.7} fill={fillFc} opacity={0.5} />
               {[0, 51.4, 102.8, 154.2, 205.6, 257, 308.4].map((angle, i) => {
                 const rad = (angle * Math.PI) / 180;
                 const dist = r * (0.3 + (((i * 7 + 3) % 11) / 11) * 0.4);
@@ -219,7 +254,7 @@ function PlantShape({
                   />
                 );
               })}
-              {phase === "flowering" && ac &&
+              {phase === "flowering" && fillAc &&
                 [0, 90, 180, 270].map((angle, i) => {
                   const rad = ((angle + 20) * Math.PI) / 180;
                   return (
@@ -228,12 +263,12 @@ function PlantShape({
                       cx={Math.cos(rad) * r * 0.4}
                       cy={Math.sin(rad) * r * 0.4}
                       r={r * 0.12}
-                      fill={ac}
+                      fill={fillAc}
                       opacity={0.9}
                     />
                   );
                 })}
-              {(phase === "fruiting" || phase === "harvesting") && ac &&
+              {(phase === "fruiting" || phase === "harvesting") && fillAc &&
                 [0, 72, 144, 216, 288].map((angle, i) => {
                   const rad = ((angle + 10) * Math.PI) / 180;
                   return (
@@ -243,7 +278,7 @@ function PlantShape({
                       cy={Math.sin(rad) * r * 0.45}
                       rx={r * 0.06}
                       ry={r * 0.22}
-                      fill={ac}
+                      fill={fillAc}
                       opacity={0.85}
                       transform={`rotate(${angle + 100} ${Math.cos(rad) * r * 0.45} ${Math.sin(rad) * r * 0.45})`}
                     />
@@ -255,21 +290,21 @@ function PlantShape({
           {shape === "tree-canopy" && (
             <>
               {/* Trunk */}
-              <rect x={-r * 0.08} y={r * 0.15} width={r * 0.16} height={r * 0.55} rx={r * 0.04} fill={sc} opacity={0.8} />
+              <rect x={-r * 0.08} y={r * 0.15} width={r * 0.16} height={r * 0.55} rx={r * 0.04} fill={fillSc} opacity={0.8} />
               {/* Crown layers */}
-              <ellipse cx={0} cy={-r * 0.15} rx={r * 0.85} ry={r * 0.7} fill={fc} opacity={0.4} />
+              <ellipse cx={0} cy={-r * 0.15} rx={r * 0.85} ry={r * 0.7} fill={fillFc} opacity={0.4} />
               <ellipse cx={-r * 0.15} cy={-r * 0.1} rx={r * 0.55} ry={r * 0.5} fill={lightenColor(fc, 10)} opacity={0.5} />
               <ellipse cx={r * 0.15} cy={-r * 0.2} rx={r * 0.5} ry={r * 0.45} fill={lightenColor(fc, 20)} opacity={0.5} />
               <ellipse cx={0} cy={-r * 0.25} rx={r * 0.35} ry={r * 0.3} fill={lightenColor(fc, 30)} opacity={0.6} />
-              {phase === "flowering" && ac &&
+              {phase === "flowering" && fillAc &&
                 [30, 150, 270].map((angle, i) => {
                   const rad = (angle * Math.PI) / 180;
-                  return <circle key={`tf${i}`} cx={Math.cos(rad) * r * 0.4} cy={-r * 0.15 + Math.sin(rad) * r * 0.3} r={r * 0.1} fill={ac} opacity={0.85} />;
+                  return <circle key={`tf${i}`} cx={Math.cos(rad) * r * 0.4} cy={-r * 0.15 + Math.sin(rad) * r * 0.3} r={r * 0.1} fill={fillAc} opacity={0.85} />;
                 })}
-              {(phase === "fruiting" || phase === "harvesting") && ac &&
+              {(phase === "fruiting" || phase === "harvesting") && fillAc &&
                 [45, 135, 225, 315].map((angle, i) => {
                   const rad = (angle * Math.PI) / 180;
-                  return <circle key={`tp${i}`} cx={Math.cos(rad) * r * 0.35} cy={-r * 0.1 + Math.sin(rad) * r * 0.25} r={r * 0.08} fill={ac} opacity={0.9} />;
+                  return <circle key={`tp${i}`} cx={Math.cos(rad) * r * 0.35} cy={-r * 0.1 + Math.sin(rad) * r * 0.25} r={r * 0.08} fill={fillAc} opacity={0.9} />;
                 })}
             </>
           )}
@@ -277,7 +312,7 @@ function PlantShape({
           {shape === "ground-cover" && (
             <>
               {/* Flat, spreading rosettes */}
-              <ellipse cx={0} cy={0} rx={r * 0.9} ry={r * 0.6} fill={fc} opacity={0.35} />
+              <ellipse cx={0} cy={0} rx={r * 0.9} ry={r * 0.6} fill={fillFc} opacity={0.35} />
               {[0, 60, 120, 180, 240, 300].map((angle, i) => {
                 const rad = (angle * Math.PI) / 180;
                 const d = r * 0.4;
@@ -287,10 +322,10 @@ function PlantShape({
                     transform={`rotate(${angle * 0.5} ${Math.cos(rad) * d} ${Math.sin(rad) * d * 0.65})`} />
                 );
               })}
-              {phase === "flowering" && ac &&
+              {phase === "flowering" && fillAc &&
                 [0, 120, 240].map((angle, i) => {
                   const rad = (angle * Math.PI) / 180;
-                  return <circle key={`gf${i}`} cx={Math.cos(rad) * r * 0.3} cy={Math.sin(rad) * r * 0.2} r={r * 0.08} fill={ac} opacity={0.85} />;
+                  return <circle key={`gf${i}`} cx={Math.cos(rad) * r * 0.3} cy={Math.sin(rad) * r * 0.2} r={r * 0.08} fill={fillAc} opacity={0.85} />;
                 })}
             </>
           )}
@@ -305,7 +340,7 @@ function PlantShape({
                   <path d={`M0,${r * 0.1} Q${side * r * 0.5},${-r * 0.1} ${side * r * 0.3},${-r * 0.35}`}
                     stroke={fc} strokeWidth={r * 0.04} fill="none" opacity={0.7} />
                   <ellipse cx={side * r * 0.35} cy={r * 0.15} rx={r * 0.2} ry={r * 0.3}
-                    fill={fc} opacity={0.55} transform={`rotate(${side * 25} ${side * r * 0.35} ${r * 0.15})`} />
+                    fill={fillFc} opacity={0.55} transform={`rotate(${side * 25} ${side * r * 0.35} ${r * 0.15})`} />
                   <ellipse cx={side * r * 0.25} cy={-r * 0.25} rx={r * 0.18} ry={r * 0.25}
                     fill={lightenColor(fc, 15)} opacity={0.6} transform={`rotate(${side * -15} ${side * r * 0.25} ${-r * 0.25})`} />
                 </g>
@@ -313,15 +348,15 @@ function PlantShape({
               {/* Curl tendrils */}
               <path d={`M${r * 0.3},${-r * 0.35} Q${r * 0.55},${-r * 0.5} ${r * 0.4},${-r * 0.6}`}
                 stroke={sc} strokeWidth={r * 0.025} fill="none" opacity={0.5} />
-              {phase === "flowering" && ac &&
-                <circle cx={0} cy={-r * 0.5} r={r * 0.12} fill={ac} opacity={0.85} />}
+              {phase === "flowering" && fillAc &&
+                <circle cx={0} cy={-r * 0.5} r={r * 0.12} fill={fillAc} opacity={0.85} />}
             </>
           )}
 
           {shape === "bulb" && (
             <>
               {/* Underground bulb hint */}
-              <ellipse cx={0} cy={r * 0.35} rx={r * 0.25} ry={r * 0.18} fill={sc} opacity={0.3} />
+              <ellipse cx={0} cy={r * 0.35} rx={r * 0.25} ry={r * 0.18} fill={fillSc} opacity={0.3} />
               {/* Pointed leaves emerging from center */}
               {[0, 45, 90, 135, 180, 225, 270, 315].map((angle, i) => {
                 const rad = ((angle - 90) * Math.PI) / 180;
@@ -329,18 +364,18 @@ function PlantShape({
                 const tipY = Math.sin(rad) * r * 0.15;
                 return (
                   <ellipse key={i} cx={tipX} cy={tipY - r * 0.15}
-                    rx={r * 0.06} ry={r * 0.45} fill={fc} opacity={0.6}
+                    rx={r * 0.06} ry={r * 0.45} fill={fillFc} opacity={0.6}
                     transform={`rotate(${angle} ${tipX} ${tipY - r * 0.15})`} />
                 );
               })}
-              <circle cx={0} cy={0} r={r * 0.12} fill={sc} opacity={0.7} />
+              <circle cx={0} cy={0} r={r * 0.12} fill={fillSc} opacity={0.7} />
               {/* Flower on top */}
-              {phase === "flowering" && ac && (
+              {phase === "flowering" && fillAc && (
                 <>
                   {[0, 72, 144, 216, 288].map((angle, i) => {
                     const rad = (angle * Math.PI) / 180;
                     return <ellipse key={`bf${i}`} cx={Math.cos(rad) * r * 0.12} cy={-r * 0.4 + Math.sin(rad) * r * 0.12}
-                      rx={r * 0.08} ry={r * 0.14} fill={ac} opacity={0.85}
+                      rx={r * 0.08} ry={r * 0.14} fill={fillAc} opacity={0.85}
                       transform={`rotate(${angle} ${Math.cos(rad) * r * 0.12} ${-r * 0.4 + Math.sin(rad) * r * 0.12})`} />;
                   })}
                   <circle cx={0} cy={-r * 0.4} r={r * 0.06} fill="#FFD700" opacity={0.9} />
@@ -357,15 +392,15 @@ function PlantShape({
                 return (
                   <ellipse key={i} cx={i * r * 0.1} cy={-r * 0.1}
                     rx={r * 0.04} ry={r * 0.6}
-                    fill={i % 2 === 0 ? fc : lightenColor(fc, 15)} opacity={0.7}
+                    fill={i % 2 === 0 ? fillFc : lightenColor(fc, 15)} opacity={0.7}
                     transform={`rotate(${sway} ${i * r * 0.1} ${-r * 0.1})`} />
                 );
               })}
               {/* Base tuft */}
-              <ellipse cx={0} cy={r * 0.35} rx={r * 0.35} ry={r * 0.12} fill={sc} opacity={0.4} />
-              {phase === "flowering" && ac &&
+              <ellipse cx={0} cy={r * 0.35} rx={r * 0.35} ry={r * 0.12} fill={fillSc} opacity={0.4} />
+              {phase === "flowering" && fillAc &&
                 [-1, 0, 1].map((i) => (
-                  <circle key={`grf${i}`} cx={i * r * 0.15} cy={-r * 0.55} r={r * 0.05} fill={ac} opacity={0.8} />
+                  <circle key={`grf${i}`} cx={i * r * 0.15} cy={-r * 0.55} r={r * 0.05} fill={fillAc} opacity={0.8} />
                 ))}
             </>
           )}
@@ -377,13 +412,13 @@ function PlantShape({
                 const rad = (angle * Math.PI) / 180;
                 return (
                   <ellipse key={i} cx={Math.cos(rad) * r * 0.2} cy={Math.sin(rad) * r * 0.2 - r * 0.15}
-                    rx={r * 0.12} ry={r * 0.35} fill={fc} opacity={0.6}
+                    rx={r * 0.12} ry={r * 0.35} fill={fillFc} opacity={0.6}
                     transform={`rotate(${angle * 0.8 - 10} ${Math.cos(rad) * r * 0.2} ${Math.sin(rad) * r * 0.2 - r * 0.15})`} />
                 );
               })}
               <circle cx={0} cy={-r * 0.15} r={r * 0.15} fill={lightenColor(fc, 25)} opacity={0.7} />
               {/* Root body visible below */}
-              <ellipse cx={0} cy={r * 0.25} rx={r * 0.2} ry={r * 0.35} fill={ac ?? sc} opacity={0.6} />
+              <ellipse cx={0} cy={r * 0.25} rx={r * 0.2} ry={r * 0.35} fill={fillAc ?? fillSc} opacity={0.6} />
               <ellipse cx={0} cy={r * 0.2} rx={r * 0.15} ry={r * 0.25} fill={lightenColor(ac ?? sc, 15)} opacity={0.5} />
             </>
           )}
@@ -435,6 +470,8 @@ function DesignLabInner({
 }: DesignLabProps) {
   // ── Core state ──
   const [month, setMonth] = useState(() => new Date().getMonth() + 1);
+  const [autoPlay, setAutoPlay] = useState(false);
+  const autoPlayRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const [viewMode, setViewMode] = useState<"color" | "icon" | "both">("both");
   const [colorBy, setColorBy] = useState<"season" | "family" | "category" | "harvest">("season");
   const [tool, setTool] = useState<LabTool>("select");
@@ -534,6 +571,19 @@ function DesignLabInner({
     saveBedLayout(next);
     onLayoutChange?.(next);
   }, [redoStack, layout, onLayoutChange]);
+
+  // ── Season auto-play ──
+  useEffect(() => {
+    if (autoPlay) {
+      autoPlayRef.current = setInterval(() => {
+        setMonth((m) => (m >= 12 ? 1 : m + 1));
+      }, 1200);
+    } else if (autoPlayRef.current) {
+      clearInterval(autoPlayRef.current);
+      autoPlayRef.current = null;
+    }
+    return () => { if (autoPlayRef.current) clearInterval(autoPlayRef.current); };
+  }, [autoPlay]);
 
   // ── Auto-populate plants from main map ──
   useEffect(() => {
@@ -1486,18 +1536,51 @@ function DesignLabInner({
           </div>
         )}
 
-        {/* Season slider */}
-        <label className="text-[10px]" style={{ color: "var(--muted)" }}>
-          Sæson:
-        </label>
-        <input
-          type="range"
-          min={1}
-          max={12}
-          value={month}
-          onChange={(e) => setMonth(Number(e.target.value))}
-          className="w-32 accent-[var(--accent)]"
-        />
+        {/* Season slider with month labels */}
+        <div className="flex items-center gap-1.5">
+          <button
+            onClick={() => setAutoPlay((a) => !a)}
+            className="text-[11px] px-1.5 py-0.5 rounded transition-colors"
+            style={{
+              background: autoPlay ? "var(--accent)" : "transparent",
+              color: autoPlay ? "#fff" : "var(--muted)",
+            }}
+            title={autoPlay ? "Stop afspilning" : "Afspil sæsonforløb"}
+          >
+            {autoPlay ? "⏸" : "▶"}
+          </button>
+          <div className="flex flex-col items-center gap-0">
+            <div className="flex items-center gap-1">
+              <span className="text-[11px]" style={{ color: "var(--muted)" }}>
+                {MONTH_ICONS[month]} {MONTH_NAMES_DA[month]}
+              </span>
+            </div>
+            <input
+              type="range"
+              min={1}
+              max={12}
+              value={month}
+              onChange={(e) => { setMonth(Number(e.target.value)); setAutoPlay(false); }}
+              className="w-36 accent-[var(--accent)]"
+            />
+            <div className="flex justify-between w-36 -mt-0.5">
+              {[1,2,3,4,5,6,7,8,9,10,11,12].map((m) => (
+                <span
+                  key={m}
+                  className="text-[6px] cursor-pointer select-none"
+                  style={{
+                    color: m === month ? "var(--accent)" : "var(--muted)",
+                    fontWeight: m === month ? 700 : 400,
+                    opacity: m === month ? 1 : 0.6,
+                  }}
+                  onClick={() => { setMonth(m); setAutoPlay(false); }}
+                >
+                  {MONTH_NAMES_DA[m]?.slice(0, 1)}
+                </span>
+              ))}
+            </div>
+          </div>
+        </div>
 
         <div className="mx-1 h-5 w-px" style={{ background: "var(--border)" }} />
 
@@ -1562,12 +1645,27 @@ function DesignLabInner({
             }}
           >
             <defs>
-              {/* Soil texture */}
-              <pattern id="dlSoilPattern" x="0" y="0" width="8" height="8" patternUnits="userSpaceOnUse">
-                <rect width="8" height="8" fill={GROUND_COLORS[month] ?? "#8B7355"} />
-                <circle cx="2" cy="3" r="0.5" fill="#7a6545" opacity="0.5" />
-                <circle cx="6" cy="7" r="0.4" fill="#9c8565" opacity="0.4" />
-                <circle cx="5" cy="1" r="0.3" fill="#7a6545" opacity="0.3" />
+              {/* Soil texture – realistic mulch/earth look */}
+              <filter id="dlSoilNoise" x="0%" y="0%" width="100%" height="100%">
+                <feTurbulence type="fractalNoise" baseFrequency="0.65" numOctaves="4" seed="2" result="noise" />
+                <feColorMatrix type="saturate" values="0.15" result="desat" />
+                <feComponentTransfer result="dimmed">
+                  <feFuncA type="linear" slope="0.12" />
+                </feComponentTransfer>
+                <feBlend in="SourceGraphic" in2="dimmed" mode="multiply" />
+              </filter>
+              <pattern id="dlSoilPattern" x="0" y="0" width="16" height="16" patternUnits="userSpaceOnUse">
+                <rect width="16" height="16" fill={GROUND_COLORS[month] ?? "#8B7355"} />
+                {/* Organic matter specks */}
+                <circle cx="3" cy="5" r="0.7" fill="#7a6545" opacity="0.5" />
+                <circle cx="11" cy="3" r="0.5" fill="#9c8565" opacity="0.4" />
+                <circle cx="7" cy="11" r="0.6" fill="#6a5535" opacity="0.45" />
+                <circle cx="14" cy="9" r="0.4" fill="#8c7555" opacity="0.35" />
+                <circle cx="1" cy="14" r="0.3" fill="#7a6545" opacity="0.3" />
+                <circle cx="9" cy="7" r="0.35" fill="#a89575" opacity="0.25" />
+                {/* Tiny root-like lines */}
+                <line x1="5" y1="2" x2="6.5" y2="3" stroke="#6a5535" strokeWidth="0.2" opacity="0.3" />
+                <line x1="12" y1="12" x2="14" y2="13.5" stroke="#6a5535" strokeWidth="0.15" opacity="0.25" />
               </pattern>
               {/* Glow filter */}
               <filter id="glow">
@@ -1577,9 +1675,9 @@ function DesignLabInner({
                   <feMergeNode in="SourceGraphic" />
                 </feMerge>
               </filter>
-              {/* Shadow filter */}
-              <filter id="shadow">
-                <feDropShadow dx="0.5" dy="0.5" stdDeviation="0.8" floodOpacity="0.3" />
+              {/* Shadow filter for depth */}
+              <filter id="shadow" x="-10%" y="-10%" width="130%" height="130%">
+                <feDropShadow dx="0.5" dy="0.8" stdDeviation="1" floodOpacity="0.25" />
               </filter>
             </defs>
 
@@ -1587,6 +1685,7 @@ function DesignLabInner({
             <polygon
               points={layout.outlineCm.map((p) => `${p.x},${p.y}`).join(" ")}
               fill="url(#dlSoilPattern)"
+              filter="url(#dlSoilNoise)"
               stroke="var(--border, #e0ddd5)"
               strokeWidth="1.5"
             />
