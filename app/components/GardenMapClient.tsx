@@ -73,6 +73,7 @@ import DesignsTab from "./DesignsTab";
 import SettingsModal from "./SettingsModal";
 import PlantsTab from "./PlantsTab";
 import CreateTab from "./CreateTab";
+import ForumPanel from "./ForumPanel";
 import type { CreateSelectionInfo } from "./CreateTab";
 import { ContentTab } from "./ContentTab";
 import type { ContentTabHelpers } from "./ContentTab";
@@ -3275,6 +3276,7 @@ export function GardenMapClient({ userId }: { userId: string }) {
 
   // ── Guide overlay state (floating ❓ on map) ──
   const [guidePopoverOpen, setGuidePopoverOpen] = useState(false);
+  const [showForum, setShowForum] = useState(false);
   const [guideAiOpen, setGuideAiOpen] = useState(false);
   const [guideAiMessages, setGuideAiMessages] = useState<{ role: "user" | "assistant"; content: string }[]>([]);
   const [guideAiInput, setGuideAiInput] = useState("");
@@ -7828,6 +7830,17 @@ export function GardenMapClient({ userId }: { userId: string }) {
                     />
                   </span>
                 </div>
+                <div className="w-full h-px bg-border/50 my-0.5" />
+                <button
+                  className="w-full flex items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-xs font-medium text-foreground/70 hover:bg-accent/10 hover:text-accent transition-colors"
+                  onClick={() => { setGuidePopoverOpen(false); setShowForum(true); }}
+                >
+                  <span className="text-base">🌱</span>
+                  <div>
+                    <div className="font-semibold text-foreground/80">Haveforum</div>
+                    <div className="text-[10px] text-foreground/40 mt-0.5">Del erfaringer, stil spørgsmål</div>
+                  </div>
+                </button>
               </div>
             </div>
           )}
@@ -8705,6 +8718,11 @@ export function GardenMapClient({ userId }: { userId: string }) {
         userEmail={sessionData?.user?.email}
         initialName={sessionData?.user?.name || ""}
       />
+
+      {/* ── Forum (E2) ── */}
+      {showForum && (
+        <ForumPanel userId={userId} onClose={() => setShowForum(false)} />
+      )}
 
       {/* ── Guided Tour ── */}
       <GuidedTour

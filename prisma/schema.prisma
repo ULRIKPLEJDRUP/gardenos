@@ -51,6 +51,11 @@ model User {
   lastLoginAt DateTime?
   activityLog ActivityLog[]
 
+  // Forum (E2)
+  forumThreads ForumThread[]
+  forumReplies ForumReply[]
+  forumLikes   ForumLike[]
+
   @@map("users")
 }
 
@@ -201,4 +206,71 @@ model ActivityLog {
   @@index([userId])
   @@index([createdAt])
   @@map("activity_log")
+}
+
+// ---------------------------------------------------------------------------
+// ForumThread – community discussion threads (E2)
+// ---------------------------------------------------------------------------
+model ForumThread {
+  id         String   @id @default(cuid())
+  userId     String
+  title      String
+  body       String
+  category   String   @default("general") // "general"|"bed-design"|"pests"|"harvest"|"varieties"|"tips"
+  imageData  String?  // optional base64 image
+  pinned     Boolean  @default(false)
+  locked     Boolean  @default(false)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  user    User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  replies ForumReply[]
+  likes   ForumLike[]  @relation("ThreadLikes")
+
+  @@index([userId])
+  @@index([category])
+  @@index([createdAt])
+  @@map("forum_threads")
+}
+
+// ---------------------------------------------------------------------------
+// ForumReply – replies to a forum thread (E2)
+// ---------------------------------------------------------------------------
+model ForumReply {
+  id        String   @id @default(cuid())
+  threadId  String
+  userId    String
+  body      String
+  imageData String?  // optional base64 image
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  thread ForumThread @relation(fields: [threadId], references: [id], onDelete: Cascade)
+  user   User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  likes  ForumLike[] @relation("ReplyLikes")
+
+  @@index([threadId])
+  @@index([userId])
+  @@map("forum_replies")
+}
+
+// ---------------------------------------------------------------------------
+// ForumLike – likes on threads or replies (E2)
+// ---------------------------------------------------------------------------
+model ForumLike {
+  id        String   @id @default(cuid())
+  userId    String
+  threadId  String?
+  replyId   String?
+  createdAt DateTime @default(now())
+
+  user    User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  thread  ForumThread? @relation("ThreadLikes", fields: [threadId], references: [id], onDelete: Cascade)
+  reply   ForumReply?  @relation("ReplyLikes", fields: [replyId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, threadId])
+  @@unique([userId, replyId])
+  @@index([threadId])
+  @@index([replyId])
+  @@map("forum_likes")
 }

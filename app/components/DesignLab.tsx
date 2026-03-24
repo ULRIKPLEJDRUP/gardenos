@@ -6,7 +6,9 @@
 // Uses the same design tokens as the rest of the app (--accent, --border, etc.)
 // ---------------------------------------------------------------------------
 
-import React, { useState, useCallback, useRef, useEffect, useMemo, useId, memo } from "react";
+import React, { useState, useCallback, useRef, useEffect, useMemo, useId, memo, lazy } from "react";
+import { Suspense } from "react";
+const ThreeDPreview = lazy(() => import("./designlab/ThreeDPreview"));
 import type { BedLayout, BedElement, BedLocalCoord, LabTool, PlantShapeType, GrowthPhase } from "../lib/bedLayoutTypes";
 import { geoPolygonToBedLayout, pointInBedOutline, snapToGrid, generateRowPositions } from "../lib/bedGeometry";
 import { getBedLayout, createBedLayout, saveBedLayout, removeElement, addElement, updateElement } from "../lib/bedLayoutStore";
@@ -715,6 +717,9 @@ function DesignLabInner({
   // ── Shadow overlay toggle (D2) ──
   const [showShadowOverlay, setShowShadowOverlay] = useState(false);
 
+  // ── 3D preview toggle (D5) ──
+  const [show3D, setShow3D] = useState(false);
+
   // ── Side-by-side comparison mode (D3) ──
   const [compareMode, setCompareMode] = useState(false);
   const [compareMonth, setCompareMonth] = useState(() => {
@@ -947,6 +952,21 @@ function DesignLabInner({
 
   // ── All plants for palette ──
   const allPlants = useMemo(() => getAllPlants(), []);
+
+  // ── Plant info map for 3D preview (D5) ──
+  const plantInfoMap = useMemo(() => {
+    const m: Record<string, { matureHeightM?: number; spreadCm?: number; forestGardenLayer?: string; category?: string; shape?: string }> = {};
+    for (const p of allPlants) {
+      m[p.id] = {
+        matureHeightM: p.matureHeightM ?? undefined,
+        spreadCm: p.spacingCm ?? 30,
+        forestGardenLayer: p.forestGardenLayer ?? undefined,
+        category: p.category ?? undefined,
+      };
+    }
+    return m;
+  }, [allPlants]);
+
   const filteredPalettePlants = useMemo(() => {
     let list = allPlants;
     // Category filter
@@ -2543,6 +2563,20 @@ function DesignLabInner({
           title="Vis skygge-overlay baseret på solvinkel"
         >
           🌤 Skygger
+        </button>
+
+        {/* 3D preview toggle (D5) */}
+        <button
+          onClick={() => setShow3D(true)}
+          className="px-2.5 py-1 text-[11px] rounded-lg border transition-colors hover:shadow-sm"
+          style={{
+            borderColor: "var(--border)",
+            background: "transparent",
+            color: "var(--foreground)",
+          }}
+          title="Åbn 3D-visning af bedet"
+        >
+          🧊 3D
         </button>
 
         {/* Side-by-side compare toggle (D3) */}
@@ -4908,6 +4942,24 @@ function DesignLabInner({
             </div>
           </div>
         </div>
+      )}
+      {/* 3D Preview overlay (D5) */}
+      {show3D && (
+        <Suspense fallback={
+          <div className="fixed inset-0 z-[9999] bg-black/70 flex items-center justify-center">
+            <div className="text-white text-lg">Indlæser 3D-visning…</div>
+          </div>
+        }>
+          <ThreeDPreview
+            outlineCm={layout.outlineCm}
+            widthCm={layout.widthCm}
+            lengthCm={layout.lengthCm}
+            elements={layout.elements}
+            plantInfoMap={plantInfoMap}
+            growthScale={getPhaseScale(getPhase({ sowMonth: 3, growStart: 4, flowerMonth: 6, harvestStart: 7, harvestEnd: 10, dieMonth: 11 }, month))}
+            onClose={() => setShow3D(false)}
+          />
+        </Suspense>
       )}
     </div>
   );

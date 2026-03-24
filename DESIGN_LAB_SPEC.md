@@ -571,11 +571,11 @@ Klar til at starte implementation? 🚀
 | D2 | **Skygge-overlay** | Sun-angle beregning (lat 56°N), sæson-afhængig skyggretning + længde, toggle-knap, shade-zone overlay med radial gradient | ✅ |
 | D3 | **Side-by-side sæson-sammenligning** | Split-view med uafhængig månedsvalg, compare-toggle i toolbar, full bed rendering i begge paneler | ✅ |
 | D4 | **Companion-linjer** | Grønne/røde forbindelseslinjer mellem naboer | ✅ |
-| D5 | **3D-preview** | Three.js isometrisk visning med plant-højder | ⬜ |
+| D5 | **3D-preview** | Three.js isometrisk visning med plant-højder. React Three Fiber + Drei. Styliserede 3D-meshes per planteform (tree-canopy, bushy, upright, rosette, ground-cover, climber, bulb, grass). Infrastruktur (vand, sti, kant, el) som 3D-geometri. Isometrisk kamera med OrbitControls. `ThreeDPreview.tsx` component, lazy-loaded fra DesignLab toolbar via 🧊 3D knap | ✅ |
 
 ### 🤝 E. Sociale features
 
 | # | Feature | Beskrivelse | Status |
 |---|---------|------------|--------|
 | E1 | **Del bedplaner** | Del et bed-design via link, QR-kode eller direkte til andre brugere. Modtager kan importere som skabelon. Base64url-encoded share payload, auto-import via `?bedshare=` URL parameter, kopiér-link dialog med QR-visual, template gallery → del-knap | ✅ |
-| E2 | **Brugerforum** | Forum/community-funktion: opret tråde, del erfaringer, stil spørgsmål, upload billeder. Kategorier per emne (bed-design, skadedyr, høst, sorter osv.) | ⬜ |
+| E2 | **Brugerforum** | Forum/community-funktion: opret tråde, del erfaringer, stil spørgsmål, upload billeder. Kategorier per emne (general, bed-design, skadedyr, høst, sorter, tips). Prisma-modeller: ForumThread, ForumReply, ForumLike. API-ruter: /api/forum, /api/forum/reply, /api/forum/like. Full UI i ForumPanel.tsx med søgning, paginering, likes, svartekst. Tilgås fra guide-popover 🌱 Haveforum | ✅ |
