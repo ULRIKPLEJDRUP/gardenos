@@ -62,9 +62,10 @@ import {
 function PaletteIcon({ plantId, emoji, size = 16 }: { plantId: string; emoji: string; size?: number }) {
   const SvgIcon = getPlantSvgIcon(plantId);
   if (SvgIcon) {
+    // Call as function (not <SvgIcon />) to avoid "cannot create components during render"
     return (
       <svg width={size} height={size} viewBox="0 0 32 32" style={{ flexShrink: 0 }}>
-        <SvgIcon />
+        {SvgIcon({})}
       </svg>
     );
   }
@@ -891,7 +892,7 @@ function DesignLabInner({
     if (newPlants.length === 0 && removedInstanceIds.size === 0) return;
 
     // Start with existing elements, minus removed ones
-    let mergedElements = removedInstanceIds.size > 0
+    const mergedElements = removedInstanceIds.size > 0
       ? layout.elements.filter((e) => !e.instanceId || !removedInstanceIds.has(e.instanceId))
       : [...layout.elements];
 

@@ -13,6 +13,7 @@
 // ---------------------------------------------------------------------------
 
 import React from "react";
+import ReactDOMServer from "react-dom/server";
 
 /** Render an SVG plant icon into an SVG <g> at (0,0) in a 32×32 coordinate space */
 export type PlantSvgIcon = (props: { size?: number }) => React.ReactElement;
@@ -2206,7 +2207,6 @@ export function getPlantSvgIconHtml(plantId: string, size = 24): string | null {
   // Since this is client-side code, we build the SVG string manually
   // by rendering the icon to a temporary container
   try {
-    const ReactDOMServer = require("react-dom/server");
     const element = React.createElement(
       "svg",
       { width: size, height: size, viewBox: "0 0 32 32", xmlns: "http://www.w3.org/2000/svg" },

@@ -25,6 +25,8 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    // Local dev build output (distDir redirected to avoid OneDrive LMDB conflicts)
+    "tmp/**",
   ]),
 ]);
 
