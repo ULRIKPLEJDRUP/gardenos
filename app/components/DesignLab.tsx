@@ -166,19 +166,39 @@ function PlantShape({
                 const lx = Math.cos(rad) * r * 0.4;
                 const ly = Math.sin(rad) * r * 0.4;
                 return (
-                  <ellipse
-                    key={i}
-                    cx={lx}
-                    cy={ly}
-                    rx={r * 0.15}
-                    ry={r * 0.45}
-                    fill={fillFc}
-                    opacity={0.8}
-                    transform={`rotate(${angle} ${lx} ${ly})`}
-                  />
+                  <g key={i}>
+                    <ellipse
+                      cx={lx}
+                      cy={ly}
+                      rx={r * 0.15}
+                      ry={r * 0.45}
+                      fill={fillFc}
+                      opacity={0.8}
+                      transform={`rotate(${angle} ${lx} ${ly})`}
+                    />
+                    {/* Leaf vein (midrib) */}
+                    <line
+                      x1={lx - Math.cos(rad) * r * 0.02} y1={ly - Math.sin(rad) * r * 0.02}
+                      x2={lx + Math.cos(rad) * r * 0.35} y2={ly + Math.sin(rad) * r * 0.35}
+                      stroke={darkenColor(fc, 25)} strokeWidth={r * 0.018} opacity={0.3}
+                      transform={`rotate(${angle} ${lx} ${ly})`}
+                    />
+                  </g>
                 );
               })}
               <circle cx={0} cy={0} r={r * 0.2} fill={fillSc} opacity={0.9} />
+              {/* Flowering — small petal rosette at center */}
+              {phase === "flowering" && fillAc && (
+                <>
+                  {[0, 72, 144, 216, 288].map((a, i) => {
+                    const pRad = (a * Math.PI) / 180;
+                    return <ellipse key={`rf${i}`} cx={Math.cos(pRad) * r * 0.13} cy={Math.sin(pRad) * r * 0.13}
+                      rx={r * 0.06} ry={r * 0.11} fill={fillAc} opacity={0.8}
+                      transform={`rotate(${a} ${Math.cos(pRad) * r * 0.13} ${Math.sin(pRad) * r * 0.13})`} />;
+                  })}
+                  <circle cx={0} cy={0} r={r * 0.06} fill="#FFD700" opacity={0.9} />
+                </>
+              )}
             </>
           )}
 
@@ -186,15 +206,26 @@ function PlantShape({
             <>
               {[0, 72, 144, 216, 288].map((angle, i) => {
                 const rad = ((angle + 15) * Math.PI) / 180;
+                const cx = Math.cos(rad) * r * 0.35;
+                const cy = Math.sin(rad) * r * 0.35;
                 return (
-                  <circle
-                    key={`o${i}`}
-                    cx={Math.cos(rad) * r * 0.35}
-                    cy={Math.sin(rad) * r * 0.35}
-                    r={r * 0.55}
-                    fill={fillFc}
-                    opacity={0.5}
-                  />
+                  <g key={`o${i}`}>
+                    <circle
+                      cx={cx}
+                      cy={cy}
+                      r={r * 0.55}
+                      fill={fillFc}
+                      opacity={0.5}
+                    />
+                    {/* Leaf veins — 3 radial lines per lobe */}
+                    {[0, 35, -35].map((vAngle, vi) => {
+                      const vRad = ((angle + 15 + vAngle) * Math.PI) / 180;
+                      return <line key={`v${i}-${vi}`}
+                        x1={cx} y1={cy}
+                        x2={cx + Math.cos(vRad) * r * 0.35} y2={cy + Math.sin(vRad) * r * 0.35}
+                        stroke={darkenColor(fc, 20)} strokeWidth={r * 0.012} opacity={0.2} />;
+                    })}
+                  </g>
                 );
               })}
               {[0, 90, 180, 270].map((angle, i) => {
@@ -211,7 +242,19 @@ function PlantShape({
                 );
               })}
               <circle cx={0} cy={0} r={r * 0.2} fill={lightenColor(fc, 50)} opacity={0.8} />
-              {(phase === "flowering" || phase === "dying") && (
+              {/* Flowering — improved petals */}
+              {(phase === "flowering" || phase === "dying") && fillAc ? (
+                <>
+                  {[0, 72, 144, 216, 288].map((a, i) => {
+                    const pRad = (a * Math.PI) / 180;
+                    return <ellipse key={`lf${i}`}
+                      cx={Math.cos(pRad) * r * 0.18} cy={-r * 0.3 + Math.sin(pRad) * r * 0.12}
+                      rx={r * 0.05} ry={r * 0.1} fill={fillAc} opacity={0.85}
+                      transform={`rotate(${a} ${Math.cos(pRad) * r * 0.18} ${-r * 0.3 + Math.sin(pRad) * r * 0.12})`} />;
+                  })}
+                  <circle cx={0} cy={-r * 0.3} r={r * 0.04} fill="#FFD700" opacity={0.9} />
+                </>
+              ) : (phase === "flowering" || phase === "dying") && (
                 <circle cx={0} cy={-r * 0.3} r={r * 0.12} fill="#FEFAE0" opacity={0.9} />
               )}
             </>
@@ -243,45 +286,58 @@ function PlantShape({
               {[0, 51.4, 102.8, 154.2, 205.6, 257, 308.4].map((angle, i) => {
                 const rad = (angle * Math.PI) / 180;
                 const dist = r * (0.3 + (((i * 7 + 3) % 11) / 11) * 0.4);
+                const cx = Math.cos(rad) * dist;
+                const cy = Math.sin(rad) * dist;
+                const lr = r * (0.2 + (((i * 3 + 5) % 7) / 7) * 0.15);
                 return (
-                  <circle
-                    key={i}
-                    cx={Math.cos(rad) * dist}
-                    cy={Math.sin(rad) * dist}
-                    r={r * (0.2 + (((i * 3 + 5) % 7) / 7) * 0.15)}
-                    fill={lightenColor(fc, 10 + i * 3)}
-                    opacity={0.6}
-                  />
+                  <g key={i}>
+                    <circle
+                      cx={cx} cy={cy} r={lr}
+                      fill={lightenColor(fc, 10 + i * 3)} opacity={0.6}
+                    />
+                    {/* Fine leaf vein detail */}
+                    <line x1={cx} y1={cy} x2={cx + Math.cos(rad) * lr * 0.8} y2={cy + Math.sin(rad) * lr * 0.8}
+                      stroke={darkenColor(fc, 20)} strokeWidth={r * 0.01} opacity={0.2} />
+                  </g>
                 );
               })}
               {phase === "flowering" && fillAc &&
                 [0, 90, 180, 270].map((angle, i) => {
                   const rad = ((angle + 20) * Math.PI) / 180;
+                  const fx = Math.cos(rad) * r * 0.4;
+                  const fy = Math.sin(rad) * r * 0.4;
                   return (
-                    <circle
-                      key={`f${i}`}
-                      cx={Math.cos(rad) * r * 0.4}
-                      cy={Math.sin(rad) * r * 0.4}
-                      r={r * 0.12}
-                      fill={fillAc}
-                      opacity={0.9}
-                    />
+                    <g key={`f${i}`}>
+                      {/* 4-petal flower */}
+                      {[0, 90, 180, 270].map((pa, pi) => {
+                        const pRad = (pa * Math.PI) / 180;
+                        return <ellipse key={`bp${pi}`}
+                          cx={fx + Math.cos(pRad) * r * 0.04} cy={fy + Math.sin(pRad) * r * 0.04}
+                          rx={r * 0.03} ry={r * 0.06} fill={fillAc} opacity={0.85}
+                          transform={`rotate(${pa} ${fx + Math.cos(pRad) * r * 0.04} ${fy + Math.sin(pRad) * r * 0.04})`} />;
+                      })}
+                      <circle cx={fx} cy={fy} r={r * 0.025} fill="#FFD700" opacity={0.9} />
+                    </g>
                   );
                 })}
               {(phase === "fruiting" || phase === "harvesting") && fillAc &&
                 [0, 72, 144, 216, 288].map((angle, i) => {
                   const rad = ((angle + 10) * Math.PI) / 180;
+                  const fx = Math.cos(rad) * r * 0.45;
+                  const fy = Math.sin(rad) * r * 0.45;
                   return (
-                    <ellipse
-                      key={`p${i}`}
-                      cx={Math.cos(rad) * r * 0.45}
-                      cy={Math.sin(rad) * r * 0.45}
-                      rx={r * 0.06}
-                      ry={r * 0.22}
-                      fill={fillAc}
-                      opacity={0.85}
-                      transform={`rotate(${angle + 100} ${Math.cos(rad) * r * 0.45} ${Math.sin(rad) * r * 0.45})`}
-                    />
+                    <g key={`p${i}`}>
+                      <ellipse
+                        cx={fx} cy={fy}
+                        rx={r * 0.06} ry={r * 0.22}
+                        fill={fillAc} opacity={0.85}
+                        transform={`rotate(${angle + 100} ${fx} ${fy})`}
+                      />
+                      {/* Fruit highlight */}
+                      <ellipse cx={fx - r * 0.015} cy={fy - r * 0.04}
+                        rx={r * 0.02} ry={r * 0.06} fill={lightenColor(ac!, 40)} opacity={0.4}
+                        transform={`rotate(${angle + 100} ${fx - r * 0.015} ${fy - r * 0.04})`} />
+                    </g>
                   );
                 })}
             </>
@@ -291,15 +347,43 @@ function PlantShape({
             <>
               {/* Trunk */}
               <rect x={-r * 0.08} y={r * 0.15} width={r * 0.16} height={r * 0.55} rx={r * 0.04} fill={fillSc} opacity={0.8} />
+              {/* Bark detail lines */}
+              <line x1={-r * 0.02} y1={r * 0.2} x2={-r * 0.02} y2={r * 0.6} stroke={darkenColor(sc, 30)} strokeWidth={r * 0.012} opacity={0.3} />
+              <line x1={r * 0.03} y1={r * 0.25} x2={r * 0.03} y2={r * 0.55} stroke={darkenColor(sc, 30)} strokeWidth={r * 0.01} opacity={0.25} />
               {/* Crown layers */}
               <ellipse cx={0} cy={-r * 0.15} rx={r * 0.85} ry={r * 0.7} fill={fillFc} opacity={0.4} />
               <ellipse cx={-r * 0.15} cy={-r * 0.1} rx={r * 0.55} ry={r * 0.5} fill={lightenColor(fc, 10)} opacity={0.5} />
               <ellipse cx={r * 0.15} cy={-r * 0.2} rx={r * 0.5} ry={r * 0.45} fill={lightenColor(fc, 20)} opacity={0.5} />
               <ellipse cx={0} cy={-r * 0.25} rx={r * 0.35} ry={r * 0.3} fill={lightenColor(fc, 30)} opacity={0.6} />
+              {/* Leaf cluster texture — small bumps along crown edge */}
+              {[20, 70, 120, 170, 220, 270, 320].map((angle, i) => {
+                const rad = (angle * Math.PI) / 180;
+                const d = r * 0.65;
+                return <circle key={`lc${i}`}
+                  cx={Math.cos(rad) * d} cy={-r * 0.15 + Math.sin(rad) * d * 0.7}
+                  r={r * (0.12 + (i % 3) * 0.03)}
+                  fill={i % 2 === 0 ? lightenColor(fc, 5) : darkenColor(fc, 8)}
+                  opacity={0.35} />;
+              })}
               {phase === "flowering" && fillAc &&
-                [30, 150, 270].map((angle, i) => {
+                [30, 90, 150, 250, 320].map((angle, i) => {
                   const rad = (angle * Math.PI) / 180;
-                  return <circle key={`tf${i}`} cx={Math.cos(rad) * r * 0.4} cy={-r * 0.15 + Math.sin(rad) * r * 0.3} r={r * 0.1} fill={fillAc} opacity={0.85} />;
+                  const d = r * 0.45;
+                  return (
+                    <g key={`tf${i}`}>
+                      {/* 5-petal flower */}
+                      {[0, 72, 144, 216, 288].map((pa, pi) => {
+                        const pRad = (pa * Math.PI) / 180;
+                        const fx = Math.cos(rad) * d;
+                        const fy = -r * 0.15 + Math.sin(rad) * d * 0.6;
+                        return <ellipse key={`tp${pi}`}
+                          cx={fx + Math.cos(pRad) * r * 0.04} cy={fy + Math.sin(pRad) * r * 0.04}
+                          rx={r * 0.03} ry={r * 0.055}
+                          fill={fillAc} opacity={0.8}
+                          transform={`rotate(${pa} ${fx + Math.cos(pRad) * r * 0.04} ${fy + Math.sin(pRad) * r * 0.04})`} />;
+                      })}
+                    </g>
+                  );
                 })}
               {(phase === "fruiting" || phase === "harvesting") && fillAc &&
                 [45, 135, 225, 315].map((angle, i) => {
@@ -519,6 +603,16 @@ function DesignLabInner({
   // ── Drag state ──
   const [draggingElementId, setDraggingElementId] = useState<string | null>(null);
   const dragStartRef = useRef<{ elemX: number; elemY: number; pointerX: number; pointerY: number } | null>(null);
+
+  // ── Rotation drag state ──
+  const [rotatingElementId, setRotatingElementId] = useState<string | null>(null);
+  const rotateStartRef = useRef<{ startAngle: number; elemRotation: number } | null>(null);
+
+  // ── Shortcuts legend dialog ──
+  const [showShortcuts, setShowShortcuts] = useState(false);
+
+  // ── Companion lines toggle ──
+  const [showCompanionLines, setShowCompanionLines] = useState(false);
 
   // ── Row tool state ──
   const [rowStart, setRowStart] = useState<BedLocalCoord | null>(null);
@@ -826,6 +920,7 @@ function DesignLabInner({
       }
       switch (e.key) {
         case "Escape":
+          if (showShortcuts) { setShowShortcuts(false); break; }
           if (contextMenu) { setContextMenu(null); break; }
           if (placingSpeciesId || placingInfraKind) { setPlacingSpeciesId(null); setPlacingInfraKind(null); setTool("select"); setGhostPos(null); setRowStart(null); }
           else if (selectedIds.size > 0) clearSelection();
@@ -851,6 +946,7 @@ function DesignLabInner({
           if (placingSpeciesId) { setTool("row"); setRowStart(null); }
           break;
         case "d": case "D": setTool("delete"); break;
+        case "?": setShowShortcuts((v) => !v); break;
       }
     }
     window.addEventListener("keydown", handleKey);
@@ -929,13 +1025,35 @@ function DesignLabInner({
         }));
         return;
       }
+      // Rotation drag
+      if (rotatingElementId && rotateStartRef.current) {
+        const el = layout.elements.find((e) => e.id === rotatingElementId);
+        if (!el) return;
+        const pos = svgPointFromEvent(e);
+        if (!pos) return;
+        const dx = pos.x - el.position.x;
+        const dy = pos.y - el.position.y;
+        const angle = Math.atan2(dx, -dy) * (180 / Math.PI); // 0=up, CW positive
+        const deltaAngle = angle - rotateStartRef.current.startAngle;
+        let newRot = rotateStartRef.current.elemRotation + deltaAngle;
+        // Snap to 15° increments if not holding Shift
+        newRot = Math.round(newRot / 15) * 15;
+        newRot = ((newRot % 360) + 360) % 360;
+        setLayout((prev) => ({
+          ...prev,
+          elements: prev.elements.map((el) =>
+            el.id === rotatingElementId ? { ...el, rotation: newRot } : el
+          ),
+        }));
+        return;
+      }
       // Ghost preview for placement
       if ((tool === "place" || tool === "row") && (placingSpeciesId || placingInfraKind)) {
         const pos = svgPointFromEvent(e);
         if (pos) setGhostPos(pos);
       }
     },
-    [isPanning, draggingElementId, tool, placingSpeciesId, placingInfraKind, svgPointFromEvent, layout.outlineCm]
+    [isPanning, draggingElementId, rotatingElementId, tool, placingSpeciesId, placingInfraKind, svgPointFromEvent, layout.outlineCm, layout.elements]
   );
 
   const handlePointerUp = useCallback(
@@ -967,6 +1085,17 @@ function DesignLabInner({
         return;
       }
       lassoStartRef.current = null;
+      // Finalize rotation drag
+      if (rotatingElementId) {
+        const el = layout.elements.find((el) => el.id === rotatingElementId);
+        if (el) {
+          const updated = updateElement(featureId, rotatingElementId, { rotation: el.rotation });
+          if (updated) persistLayout(updated);
+        }
+        setRotatingElementId(null);
+        rotateStartRef.current = null;
+        return;
+      }
       if (draggingElementId) {
         const el = layout.elements.find((el) => el.id === draggingElementId);
         if (el) {
@@ -979,7 +1108,7 @@ function DesignLabInner({
         return;
       }
     },
-    [isPanning, draggingElementId, layout, featureId, persistLayout, lassoRect]
+    [isPanning, draggingElementId, rotatingElementId, layout, featureId, persistLayout, lassoRect]
   );
 
   // ── SVG click for placement ──
@@ -1756,6 +1885,117 @@ function DesignLabInner({
         >
           📐 Auto-fyld
         </button>
+
+        {/* Companion lines toggle */}
+        <button
+          onClick={() => setShowCompanionLines((v) => !v)}
+          className={`px-2.5 py-1 text-[11px] rounded-lg border transition-colors hover:shadow-sm ${showCompanionLines ? "shadow-sm" : ""}`}
+          style={{
+            borderColor: showCompanionLines ? "var(--accent)" : "var(--border)",
+            background: showCompanionLines ? "var(--accent)" : "transparent",
+            color: showCompanionLines ? "#fff" : "var(--foreground)",
+          }}
+          title="Vis companion-linjer (grøn = god, rød = dårlig)"
+        >
+          🤝 Companion
+        </button>
+
+        {/* Align & distribute (only when multi-selected) */}
+        {selectedIds.size >= 2 && (
+          <>
+            <div className="mx-1 h-5 w-px" style={{ background: "var(--border)" }} />
+            {([
+              { icon: "⬅", title: "Justér venstre", action: () => {
+                const els = layout.elements.filter((e) => selectedIds.has(e.id));
+                const minX = Math.min(...els.map((e) => e.position.x));
+                const updated = { ...layout, elements: layout.elements.map((e) => selectedIds.has(e.id) ? { ...e, position: { ...e.position, x: minX } } : e), version: layout.version + 1 };
+                persistLayout(updated);
+              }},
+              { icon: "↔", title: "Centrer horisontalt", action: () => {
+                const els = layout.elements.filter((e) => selectedIds.has(e.id));
+                const avgX = els.reduce((s, e) => s + e.position.x, 0) / els.length;
+                const updated = { ...layout, elements: layout.elements.map((e) => selectedIds.has(e.id) ? { ...e, position: { ...e.position, x: avgX } } : e), version: layout.version + 1 };
+                persistLayout(updated);
+              }},
+              { icon: "➡", title: "Justér højre", action: () => {
+                const els = layout.elements.filter((e) => selectedIds.has(e.id));
+                const maxX = Math.max(...els.map((e) => e.position.x));
+                const updated = { ...layout, elements: layout.elements.map((e) => selectedIds.has(e.id) ? { ...e, position: { ...e.position, x: maxX } } : e), version: layout.version + 1 };
+                persistLayout(updated);
+              }},
+              { icon: "⬆", title: "Justér top", action: () => {
+                const els = layout.elements.filter((e) => selectedIds.has(e.id));
+                const minY = Math.min(...els.map((e) => e.position.y));
+                const updated = { ...layout, elements: layout.elements.map((e) => selectedIds.has(e.id) ? { ...e, position: { ...e.position, y: minY } } : e), version: layout.version + 1 };
+                persistLayout(updated);
+              }},
+              { icon: "↕", title: "Centrer vertikalt", action: () => {
+                const els = layout.elements.filter((e) => selectedIds.has(e.id));
+                const avgY = els.reduce((s, e) => s + e.position.y, 0) / els.length;
+                const updated = { ...layout, elements: layout.elements.map((e) => selectedIds.has(e.id) ? { ...e, position: { ...e.position, y: avgY } } : e), version: layout.version + 1 };
+                persistLayout(updated);
+              }},
+              { icon: "⬇", title: "Justér bund", action: () => {
+                const els = layout.elements.filter((e) => selectedIds.has(e.id));
+                const maxY = Math.max(...els.map((e) => e.position.y));
+                const updated = { ...layout, elements: layout.elements.map((e) => selectedIds.has(e.id) ? { ...e, position: { ...e.position, y: maxY } } : e), version: layout.version + 1 };
+                persistLayout(updated);
+              }},
+            ] as const).map((btn) => (
+              <button key={btn.title} onClick={btn.action}
+                className="px-1.5 py-1 text-[11px] rounded border transition-colors hover:bg-[var(--accent-light)]"
+                style={{ borderColor: "var(--border)", color: "var(--foreground)" }}
+                title={btn.title}>
+                {btn.icon}
+              </button>
+            ))}
+            {/* Distribute evenly */}
+            {selectedIds.size >= 3 && (
+              <>
+                <button onClick={() => {
+                  const els = layout.elements.filter((e) => selectedIds.has(e.id)).sort((a, b) => a.position.x - b.position.x);
+                  if (els.length < 3) return;
+                  const minX = els[0].position.x;
+                  const maxX = els[els.length - 1].position.x;
+                  const step = (maxX - minX) / (els.length - 1);
+                  const idToX = new Map(els.map((e, i) => [e.id, minX + i * step]));
+                  const updated = { ...layout, elements: layout.elements.map((e) => idToX.has(e.id) ? { ...e, position: { ...e.position, x: idToX.get(e.id)! } } : e), version: layout.version + 1 };
+                  persistLayout(updated);
+                }}
+                  className="px-1.5 py-1 text-[11px] rounded border transition-colors hover:bg-[var(--accent-light)]"
+                  style={{ borderColor: "var(--border)", color: "var(--foreground)" }}
+                  title="Fordel jævnt horisontalt">
+                  ⇔
+                </button>
+                <button onClick={() => {
+                  const els = layout.elements.filter((e) => selectedIds.has(e.id)).sort((a, b) => a.position.y - b.position.y);
+                  if (els.length < 3) return;
+                  const minY = els[0].position.y;
+                  const maxY = els[els.length - 1].position.y;
+                  const step = (maxY - minY) / (els.length - 1);
+                  const idToY = new Map(els.map((e, i) => [e.id, minY + i * step]));
+                  const updated = { ...layout, elements: layout.elements.map((e) => idToY.has(e.id) ? { ...e, position: { ...e.position, y: idToY.get(e.id)! } } : e), version: layout.version + 1 };
+                  persistLayout(updated);
+                }}
+                  className="px-1.5 py-1 text-[11px] rounded border transition-colors hover:bg-[var(--accent-light)]"
+                  style={{ borderColor: "var(--border)", color: "var(--foreground)" }}
+                  title="Fordel jævnt vertikalt">
+                  ⇕
+                </button>
+              </>
+            )}
+          </>
+        )}
+
+        {/* Keyboard shortcuts legend */}
+        <button
+          onClick={() => setShowShortcuts((v) => !v)}
+          className="px-2 py-1 text-[11px] rounded-lg border transition-colors hover:bg-[var(--accent-light)]"
+          style={{ borderColor: "var(--border)", color: "var(--muted)" }}
+          title="Vis tastatur-genveje"
+        >
+          ⌨ ?
+        </button>
       </div>
 
       {/* ── Main area: Canvas + Sidebar ── */}
@@ -2062,6 +2302,89 @@ function DesignLabInner({
                 );
               })}
             </g>
+
+            {/* Rotation handles for selected elements */}
+            {selectedIds.size === 1 && tool === "select" && (() => {
+              const selEl = layout.elements.find((e) => selectedIds.has(e.id));
+              if (!selEl) return null;
+              const handleDist = Math.max((selEl.width || 10) * 0.7 + 6, 14);
+              const handleR = Math.max(2.5, minPlantRadius * 0.4);
+              return (
+                <g transform={`translate(${selEl.position.x},${selEl.position.y})${selEl.rotation ? ` rotate(${selEl.rotation})` : ""}`}>
+                  {/* Stem line from element center to rotation handle */}
+                  <line x1={0} y1={0} x2={0} y2={-handleDist}
+                    stroke="var(--accent, #2d7a3a)" strokeWidth={0.6} opacity={0.5}
+                    strokeDasharray="2 1" />
+                  {/* Rotation handle (circle) */}
+                  <circle cx={0} cy={-handleDist} r={handleR}
+                    fill="var(--accent, #2d7a3a)" fillOpacity={0.2}
+                    stroke="var(--accent, #2d7a3a)" strokeWidth={0.8}
+                    style={{ cursor: "grab" }}
+                    onPointerDown={(e) => {
+                      e.stopPropagation();
+                      e.preventDefault();
+                      const pos = svgPointFromEvent(e);
+                      if (!pos) return;
+                      const dx = pos.x - selEl.position.x;
+                      const dy = pos.y - selEl.position.y;
+                      const startAngle = Math.atan2(dx, -dy) * (180 / Math.PI);
+                      setRotatingElementId(selEl.id);
+                      rotateStartRef.current = { startAngle, elemRotation: selEl.rotation };
+                      (e.target as HTMLElement).setPointerCapture?.(e.pointerId);
+                    }}
+                  />
+                  {/* Rotation icon */}
+                  <text x={0} y={-handleDist + 0.3} textAnchor="middle" dominantBaseline="central"
+                    fontSize={handleR * 1.2} style={{ pointerEvents: "none" }}>
+                    🔄
+                  </text>
+                  {/* Rotation degree label */}
+                  {selEl.rotation !== 0 && (
+                    <text x={handleR + 2} y={-handleDist}
+                      fontSize={Math.max(3, handleR * 0.8)} fill="var(--accent, #2d7a3a)"
+                      dominantBaseline="central" style={{ pointerEvents: "none" }}>
+                      {selEl.rotation}°
+                    </text>
+                  )}
+                </g>
+              );
+            })()}
+
+            {/* Companion planting lines (D4) */}
+            {showCompanionLines && (() => {
+              const lines: React.ReactNode[] = [];
+              const plantEls = layout.elements.filter((e) => e.type === "plant" && e.speciesId);
+              const maxDist = Math.max(layout.widthCm, layout.lengthCm) * 0.4; // only show for nearby plants
+              for (let i = 0; i < plantEls.length; i++) {
+                const a = plantEls[i];
+                const spA = a.speciesId ? getPlantById(a.speciesId) : null;
+                if (!spA) continue;
+                for (let j = i + 1; j < plantEls.length; j++) {
+                  const b = plantEls[j];
+                  if (a.speciesId === b.speciesId) continue; // skip same species
+                  const dx = b.position.x - a.position.x;
+                  const dy = b.position.y - a.position.y;
+                  const dist = Math.sqrt(dx * dx + dy * dy);
+                  if (dist > maxDist) continue;
+                  const spB = b.speciesId ? getPlantById(b.speciesId) : null;
+                  if (!spB) continue;
+                  const isGood = spA.goodCompanions?.includes(spB.id) || spB.goodCompanions?.includes(spA.id);
+                  const isBad = spA.badCompanions?.includes(spB.id) || spB.badCompanions?.includes(spA.id);
+                  if (!isGood && !isBad) continue;
+                  lines.push(
+                    <line key={`comp-${a.id}-${b.id}`}
+                      x1={a.position.x} y1={a.position.y}
+                      x2={b.position.x} y2={b.position.y}
+                      stroke={isGood ? "#22c55e" : "#ef4444"}
+                      strokeWidth={Math.max(0.8, minPlantRadius * 0.1)}
+                      strokeDasharray={isGood ? "4 2" : "3 3"}
+                      opacity={0.45}
+                    />
+                  );
+                }
+              }
+              return lines.length > 0 ? <g>{lines}</g> : null;
+            })()}
 
             {/* Snap guides */}
             {activeGuides.length > 0 && (
@@ -2859,6 +3182,58 @@ function DesignLabInner({
           </div>
         </div>
       </div>
+
+      {/* ── Keyboard Shortcuts Legend ── */}
+      {showShortcuts && (
+        <div className="fixed inset-0 z-[10002] flex items-center justify-center"
+             style={{ background: "rgba(0,0,0,0.35)" }}
+             onClick={() => setShowShortcuts(false)}>
+          <div className="rounded-2xl shadow-2xl border p-5 max-w-md w-full mx-4"
+               style={{ background: "var(--sidebar-bg, #fff)", borderColor: "var(--border)" }}
+               onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-sm font-bold" style={{ color: "var(--foreground)" }}>⌨ Tastatur-genveje</h3>
+              <button onClick={() => setShowShortcuts(false)}
+                className="text-lg leading-none px-2 py-0.5 rounded hover:bg-black/5"
+                style={{ color: "var(--muted)" }}>✕</button>
+            </div>
+            <div className="grid grid-cols-2 gap-x-6 gap-y-1.5 text-[11px]" style={{ color: "var(--foreground)" }}>
+              {([
+                ["V", "Vælg-værktøj"],
+                ["P", "Placér-værktøj"],
+                ["R", "Række-værktøj"],
+                ["H", "Panorér (hånd)"],
+                ["D", "Slet-værktøj"],
+                ["Esc", "Annullér / Luk"],
+                ["⌘A", "Vælg alle"],
+                ["⌘C", "Kopiér"],
+                ["⌘V", "Indsæt"],
+                ["⌘D", "Duplikér"],
+                ["⌘Z", "Fortryd"],
+                ["⌘⇧Z", "Gentag"],
+                ["Delete", "Slet valgte"],
+                ["Shift+klik", "Multi-select"],
+                ["Alt+klik", "Panorér"],
+                ["Scroll", "Zoom ind/ud"],
+                ["?", "Denne dialog"],
+                ["Lasso-træk", "Område-valg"],
+              ] as const).map(([key, desc]) => (
+                <div key={key} className="flex items-center gap-2">
+                  <kbd className="inline-block px-1.5 py-0.5 rounded text-[10px] font-mono border min-w-[28px] text-center"
+                    style={{ background: "var(--toolbar-bg)", borderColor: "var(--border)", color: "var(--accent)" }}>
+                    {key}
+                  </kbd>
+                  <span style={{ color: "var(--muted)" }}>{desc}</span>
+                </div>
+              ))}
+            </div>
+            <p className="mt-4 text-[10px] text-center" style={{ color: "var(--muted)" }}>
+              Tryk <kbd className="px-1 py-0.5 rounded text-[9px] border"
+                style={{ background: "var(--toolbar-bg)", borderColor: "var(--border)" }}>Esc</kbd> eller klik udenfor for at lukke
+            </p>
+          </div>
+        </div>
+      )}
 
       {/* ── Bed Generator Dialog ── */}
       {showBedGenerator && (
