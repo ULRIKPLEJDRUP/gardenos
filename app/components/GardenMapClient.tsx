@@ -7738,20 +7738,47 @@ export function GardenMapClient({ userId }: { userId: string }) {
           renderer={L.svg({ tolerance: 12 })}
         >
           <MapToolbar />
-          <TileLayer
-            attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
-            url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
-            maxNativeZoom={19}
-            maxZoom={22}
-          />
-          {showSatellite ? (
+          {/* ── Basiskort: Datafordeler Skærmkort (høj opløsning) når login findes, ellers OSM ── */}
+          {dfReady ? (
+            <WMSTileLayer
+              key={`skaermkort-${dfUser}`}
+              url={`https://services.datafordeler.dk/Dkskaermkort/topo_skaermkort/1.0.0/wms?username=${encodeURIComponent(dfUser)}&password=${encodeURIComponent(dfPass)}&ignoreillegallayers=TRUE`}
+              layers="dtk_skaermkort"
+              format="image/png"
+              maxZoom={22}
+              attribution='&copy; <a href="https://dataforsyningen.dk/Vilkaar">Klimadatastyrelsen</a>'
+              version="1.1.1"
+            />
+          ) : (
             <TileLayer
-              attribution='Tiles &copy; Esri &mdash; Source: Esri, Maxar, Earthstar Geographics'
-              url="https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"
+              attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
+              url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
               maxNativeZoom={19}
               maxZoom={22}
-              opacity={0.85}
             />
+          )}
+          {/* ── Satellit: Datafordeler Ortofoto (12,5 cm/px!) når login findes, ellers Esri ── */}
+          {showSatellite ? (
+            dfReady ? (
+              <WMSTileLayer
+                key={`ortofoto-${dfUser}`}
+                url={`https://services.datafordeler.dk/GeoDanmarkOrto/orto_foraar/1.0.0/WMS?username=${encodeURIComponent(dfUser)}&password=${encodeURIComponent(dfPass)}&ignoreillegallayers=TRUE`}
+                layers="orto_foraar"
+                format="image/jpeg"
+                maxZoom={22}
+                opacity={0.9}
+                attribution='&copy; <a href="https://dataforsyningen.dk/Vilkaar">Klimadatastyrelsen – Ortofoto</a>'
+                version="1.1.1"
+              />
+            ) : (
+              <TileLayer
+                attribution='Tiles &copy; Esri &mdash; Source: Esri, Maxar, Earthstar Geographics'
+                url="https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"
+                maxNativeZoom={19}
+                maxZoom={22}
+                opacity={0.85}
+              />
+            )
           ) : null}
 
           {showMatrikel && dfReady ? (
