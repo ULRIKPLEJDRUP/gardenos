@@ -86,6 +86,26 @@ import { useToast } from "../hooks/useToast";
 import { useAnnouncements } from "../hooks/useAnnouncements";
 import { usePwaInstall } from "../hooks/usePwaInstall";
 import { useOfflineIndicator } from "../hooks/useOfflineIndicator";
+import {
+  M_PER_DEG_LAT,
+  pointInRing,
+  ringToMetric,
+  clipLineToPolygon,
+  computeAutoElements,
+  computeAutoRows,
+  detectExistingRowDirection,
+  getExistingRowOffsetsInBed,
+  computeSmartEdgeMarginCm,
+  getFeatureExclusionRadiusM,
+  computeBedResizeProposal,
+  type AutoRowResult,
+  type AutoElementResult,
+  type RowObstacle2D,
+  type Obstacle2D,
+  type OccupiedSlot,
+  type BedResizeRowChange,
+  type BedResizeProposal,
+} from "../lib/autoRowGeometry";
 import type { BedLayout } from "../lib/bedLayoutTypes";
 import { checkUrlForSharedBed, saveTemplate } from "../lib/templateStore";
 import { getBedLayout } from "../lib/bedLayoutStore";
@@ -307,9 +327,6 @@ function distToSegmentPx(p: L.Point, v: L.Point, w: L.Point): number {
   return Math.sqrt((p.x - projX) ** 2 + (p.y - projY) ** 2);
 }
 
-/** Approximate meters per degree of latitude (constant for all latitudes). */
-const M_PER_DEG_LAT = 111_320;
-
 /** Maximum photo file size in bytes (2 MB). */
 const MAX_PHOTO_SIZE_BYTES = 2 * 1024 * 1024;
 
@@ -378,28 +395,6 @@ async function readSSEStream(
     }
   }
   return text;
-}
-
-/**
- * Convert a GeoJSON coordinate ring ([lng, lat]) to local metric coordinates
- * (meters from centroid).  Returns the centroid, scale factors, and the
- * converted ring so callers don't need to repeat this boilerplate.
- */
-function ringToMetric(ring: [number, number][]): {
-  midLat: number;
-  midLng: number;
-  mpLat: number;
-  mpLng: number;
-  mRing: [number, number][];
-} {
-  const midLat = ring.reduce((s, p) => s + p[1], 0) / ring.length;
-  const midLng = ring.reduce((s, p) => s + p[0], 0) / ring.length;
-  const mpLng = M_PER_DEG_LAT * Math.cos((midLat * Math.PI) / 180);
-  const mRing: [number, number][] = ring.map(([lng, lat]) => [
-    (lng - midLng) * mpLng,
-    (lat - midLat) * M_PER_DEG_LAT,
-  ]);
-  return { midLat, midLng, mpLat: M_PER_DEG_LAT, mpLng, mRing };
 }
 
 /** Labels for area/condition SubGroups shown as headers in palette */
@@ -1086,20 +1081,6 @@ function ringWithoutClosure(ring: [number, number][]): [number, number][] {
   const last = ring[ring.length - 1];
   if (first[0] === last[0] && first[1] === last[1]) return ring.slice(0, -1);
   return ring;
-}
-
-// Ray casting in lng/lat plane (good enough for small garden polygons).
-function pointInRing(point: [number, number], ring: [number, number][]): boolean {
-  const [x, y] = point;
-  let inside = false;
-  for (let i = 0, j = ring.length - 1; i < ring.length; j = i, i += 1) {
-    const [xi, yi] = ring[i];
-    const [xj, yj] = ring[j];
-
-    const intersect = yi > y !== yj > y && x < ((xj - xi) * (y - yi)) / (yj - yi + 0.0) + xi;
-    if (intersect) inside = !inside;
-  }
-  return inside;
 }
 
 function polygonOuterRing(feature: Feature<Polygon, GardenFeatureProperties>): [number, number][] {
